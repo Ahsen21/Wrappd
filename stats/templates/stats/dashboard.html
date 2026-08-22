@@ -1,4 +1,5 @@
 {% extends "core/base.html" %}
+{% load humanize %}
 {% block title %}Director's Cut — {{ import_session.display_name|default:"Your" }} stats{% endblock %}
 {% block content %}
 
@@ -18,14 +19,14 @@
 
     <h2 class="sr-only">Overview</h2>
     <div class="grid hero-grid">
-      <div class="stat"><div class="value">{{ films_watched_total }}</div><div class="label">Films watched</div></div>
-      <div class="stat"><div class="value">{{ total_runtime_hours|default:"0" }}</div><div class="label">Hours watched</div></div>
-      <div class="stat"><div class="value">{{ total_films }}</div><div class="label">Films logged</div></div>
-      <div class="stat"><div class="value">{{ films_rated }}</div><div class="label">Films rated</div></div>
-      <div class="stat"><div class="value">{{ likes_count }}</div><div class="label">Likes</div></div>
-      <div class="stat"><div class="value">{{ reviews_count }}</div><div class="label">Reviews</div></div>
-      <div class="stat"><div class="value">{{ rewatch_count }}</div><div class="label">Rewatches</div></div>
-      <div class="stat"><div class="value">{{ watchlist_count }}</div><div class="label">Watchlist</div></div>
+      <div class="stat"><div class="value">{{ films_watched_total|intcomma }}</div><div class="label">Films watched</div></div>
+      <div class="stat"><div class="value">{{ total_runtime_hours|default:"0"|intcomma }}</div><div class="label">Hours watched</div></div>
+      <div class="stat"><div class="value">{{ total_films|intcomma }}</div><div class="label">Films logged</div></div>
+      <div class="stat"><div class="value">{{ films_rated|intcomma }}</div><div class="label">Films rated</div></div>
+      <div class="stat"><div class="value">{{ likes_count|intcomma }}</div><div class="label">Likes</div></div>
+      <div class="stat"><div class="value">{{ reviews_count|intcomma }}</div><div class="label">Reviews</div></div>
+      <div class="stat"><div class="value">{{ rewatch_count|intcomma }}</div><div class="label">Rewatches</div></div>
+      <div class="stat"><div class="value">{{ watchlist_count|intcomma }}</div><div class="label">Watchlist</div></div>
     </div>
 
     {% if favorites %}
@@ -47,7 +48,10 @@
     {% endif %}
   </div>
 
-  <p class="muted"><a href="#movie-stats">Movie Stats</a> &middot; <a href="#watching-stats">Watching Stats</a></p>
+  <nav class="section-nav">
+    <a href="#movie-stats" class="section-nav-link active" data-section="movie-stats">Movie Stats</a>
+    <a href="#watching-stats" class="section-nav-link" data-section="watching-stats">Watching Stats</a>
+  </nav>
 
   <h2 id="movie-stats">Movie Stats</h2>
   <p class="muted">What you watch and how you rate it.</p>
@@ -242,7 +246,7 @@
           {% for row in favorite_people.favorite_actors %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.movie__cast_members__name }}
+              {{ row.person__name }}
             </td><td>{{ row.avg|floatformat:1 }}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -367,6 +371,54 @@
 
   {{ chart_data|json_script:"chart-data" }}
   <script>
+    // Highlights whichever section ("Movie Stats" / "Watching Stats") is currently in
+    // view in the sticky nav -- observes a thin horizontal band ~45% down the viewport
+    // rather than the exact top, so a heading counts as "current" once it's scrolled
+    // into a comfortable reading position, not only at the literal top edge.
+    (function () {
+      const sectionLinks = document.querySelectorAll('.section-nav-link');
+      const sections = [...sectionLinks].map(function (link) { return document.getElementById(link.dataset.section); });
+
+      function activate(id) {
+        sectionLinks.forEach(function (link) { link.classList.toggle('active', link.dataset.section === id); });
+      }
+
+      const observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) activate(entry.target.id);
+        });
+      }, { rootMargin: '-45% 0px -50% 0px' });
+      sections.forEach(function (section) { if (section) observer.observe(section); });
+
+      // Clicking a link jumps its target to the very top of the viewport (the
+      // browser's default anchor behavior), which sits above the mid-viewport band
+      // above -- so a click alone would move the page without ever triggering the
+      // highlight; activate() here handles that immediately. But the resulting
+      // smooth-scroll animation still sweeps that same band across the *other*
+      // section's heading en route (it necessarily sits between wherever you started
+      // and the very top of the page), which can re-fire the observer mid-transition
+      // and stomp the just-clicked state before the scroll finishes settling --
+      // worse the longer the scroll, since there's more time for it to happen.
+      // Disconnecting for the duration of the scroll and re-observing once it
+      // actually settles (scrollend, with a timeout fallback for browsers without
+      // it) avoids that race instead of just guessing at a delay.
+      let reconnectTimer = null;
+      sectionLinks.forEach(function (link) {
+        link.addEventListener('click', function () {
+          activate(link.dataset.section);
+          observer.disconnect();
+          clearTimeout(reconnectTimer);
+          const reconnect = function () {
+            window.removeEventListener('scrollend', reconnect);
+            clearTimeout(reconnectTimer);
+            sections.forEach(function (section) { if (section) observer.observe(section); });
+          };
+          window.addEventListener('scrollend', reconnect, { once: true });
+          reconnectTimer = setTimeout(reconnect, 1000);
+        });
+      });
+    })();
+
     document.querySelectorAll('[data-toggle-group]').forEach(function (group) {
       const card = group.closest('.card');
       group.querySelectorAll('.toggle-btn').forEach(function (btn) {
