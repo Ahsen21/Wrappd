@@ -4,16 +4,29 @@ A Django app for visualizing stats from a [Letterboxd](https://letterboxd.com) d
 
 ## Setup
 
+Requires Python 3.12+.
+
 ```bash
+git clone https://github.com/Ahsen21/Wrappd.git
+cd Wrappd
 python -m venv venv
-venv/Scripts/pip install -r requirements-dev.txt   # or requirements.txt for prod-only deps
-cp .env.example .env                                # fill in TMDB_API_KEY (get one free at themoviedb.org)
+
+# Windows
+venv\Scripts\pip install -r requirements-dev.txt   # or requirements.txt for prod-only deps
+copy .env.example .env
+
+# macOS / Linux
+venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env
+
+# then, either OS -- swap venv/Scripts/python for venv/bin/python on macOS/Linux
+# (fill in TMDB_API_KEY in .env first -- get one free at themoviedb.org)
 venv/Scripts/python manage.py migrate
-venv/Scripts/python manage.py createsuperuser        # optional, for /admin/
+venv/Scripts/python manage.py createsuperuser  # optional, for /admin/
 venv/Scripts/python manage.py runserver
 ```
 
-Without a `TMDB_API_KEY`, uploads still work — films just won't be enriched with genre/director/cast/runtime, and the dashboard will show a "not yet enriched" count.
+Visit `http://127.0.0.1:8000/` once the server's running. Without a `TMDB_API_KEY`, uploads still work — films just won't be enriched with genre/director/cast/runtime, and the dashboard will show a "not yet enriched" count.
 
 ## Tests
 
@@ -33,6 +46,4 @@ venv/Scripts/python manage.py test
 - **Auth**: `ImportSession` is anonymous (tracked by browser session key) by design. When accounts are added, add an `owner` FK to `AUTH_USER_MODEL` on `ImportSession` (see the model's docstring in [imports/models.py](imports/models.py)) — additive migration only, nothing else needs to change.
 - Celery/background jobs for TMDB enrichment (current v1 is synchronous with a per-request cap, see `TMDB_ENRICHMENT_CAP` in settings).
 - `lists/*.csv` and `comments.csv` from the export aren't parsed yet.
-- `WatchedEntry` (from `watched.csv`) isn't TMDB-enriched — it's used for the "films watched" count and as a favorites fallback, but doesn't get a `movie` match the way diary/ratings/watchlist/likes entries do (would meaningfully increase enrichment-cap pressure for users with large watched libraries).
 - Stale TMDB cache refresh policy (`Movie.fetched_at` exists for this).
-- Multi-director support (currently first-director-only).
