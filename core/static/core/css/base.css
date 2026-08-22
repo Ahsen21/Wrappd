@@ -130,6 +130,33 @@ a { color: var(--accent-2); }
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+/* Sticks to the very top of the viewport while scrolling (the site's own .nav bar
+   above it is not sticky, so this is the first thing pinned once you scroll past it).
+   Solid background is required, not optional, for a sticky element -- otherwise
+   content scrolling underneath shows through. */
+.section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 1.5rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0;
+  margin-bottom: 1.5rem;
+}
+.section-nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.section-nav-link:hover { color: var(--text); }
+.section-nav-link.active { color: var(--text); border-bottom-color: var(--accent); }
+
 .stat {
   text-align: center;
 }
@@ -146,6 +173,10 @@ h1, h2, h3, h4 { font-weight: 700; }
 h2#movie-stats, h2#watching-stats {
   font-size: 1.5rem;
   margin: 1rem 0 0.25rem;
+  /* Without this, clicking a .section-nav-link jumps the heading to align flush
+     with the viewport top -- directly behind the sticky nav bar sitting at the
+     same position, hiding it right after the jump. */
+  scroll-margin-top: 4rem;
 }
 h2#watching-stats {
   margin-top: 3rem;

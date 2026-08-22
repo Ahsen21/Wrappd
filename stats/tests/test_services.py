@@ -283,7 +283,7 @@ class DashboardNewStatsTests(TestCase):
         # Actor Zed has 2 rated films, Actor Solo has 1 -- both below the actor
         # count>=4 threshold (actors need a stronger signal than directors, since a
         # film has a whole cast but only one director).
-        actor_names = [row['movie__cast_members__name'] for row in favorite_people['favorite_actors']]
+        actor_names = [row['person__name'] for row in favorite_people['favorite_actors']]
         self.assertNotIn('Actor Zed', actor_names)
         self.assertNotIn('Actor Solo', actor_names)
 
@@ -415,7 +415,7 @@ class FavoritePeopleTieBreakTests(TestCase):
             )
 
         actor_names = [
-            row['movie__cast_members__name']
+            row['person__name']
             for row in build_dashboard_context(session)['favorite_people']['favorite_actors']
         ]
         # Actor Few has only 3 rated films, below the actor count>=4 threshold -- excluded.
@@ -503,7 +503,7 @@ class CameoFilteringTests(TestCase):
         self.assertEqual(top_actors['Consistent Actor']['avg_rating'], Decimal('4.0'))
 
         favorite_actors = {
-            row['movie__cast_members__name']: row for row in context['favorite_people']['favorite_actors']
+            row['person__name']: row for row in context['favorite_people']['favorite_actors']
         }
         self.assertEqual(favorite_actors['Consistent Actor']['avg'], Decimal('4.0'))
         self.assertEqual(favorite_actors['Consistent Actor']['count'], 4)

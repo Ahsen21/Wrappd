@@ -684,7 +684,7 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths) -> dict:
 
     favorite_actors = [
         {
-            'movie__cast_members__name': name,
+            'person__name': name,
             'avg': sum(ratings) / len(ratings),
             'count': len(ratings),
             'profile_url': _tmdb_image_url(actor_profile_paths.get(name, ''), 'w185'),
