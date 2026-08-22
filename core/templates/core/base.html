@@ -1,0 +1,25 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Wrappd{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'core/css/base.css' %}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="{% url 'core:landing' %}">Wrappd</a>
+    <a href="{% url 'imports:upload' %}">Director's Cut</a>
+    <a href="{% url 'imports:upload_compare' %}">Double Feature</a>
+  </nav>
+  <div class="container">
+    {% if messages %}
+      {% for message in messages %}
+        <div class="card">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

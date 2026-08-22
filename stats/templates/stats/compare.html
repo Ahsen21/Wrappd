@@ -1,0 +1,85 @@
+{% extends "core/base.html" %}
+{% block title %}Double Feature — {{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}{% endblock %}
+{% block content %}
+  <p class="muted">Double Feature</p>
+  <h1>{{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}</h1>
+
+  <div class="card grid">
+    <div class="stat"><div class="value">{{ shared_count }}</div><div class="label">Shared films</div></div>
+    <div class="stat"><div class="value">{{ overlap_pct }}%</div><div class="label">Overlap</div></div>
+    <div class="stat"><div class="value">{{ agreement_pct|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label">Rating agreement</div></div>
+    <div class="stat"><div class="value">{{ avg_delta|floatformat:1|default:"—" }}</div><div class="label">Avg rating gap</div></div>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <h2>{{ session_a.display_name|default:"Person A" }}'s top genres</h2>
+      <table>
+        <thead><tr><th>Genre</th><th>Films</th></tr></thead>
+        <tbody>
+          {% for row in genres_a %}
+            <tr><td>{{ row.movie__genres__name }}</td><td>{{ row.count }}</td></tr>
+          {% empty %}<tr><td colspan="2" class="muted">No data yet</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>{{ session_b.display_name|default:"Person B" }}'s top genres</h2>
+      <table>
+        <thead><tr><th>Genre</th><th>Films</th></tr></thead>
+        <tbody>
+          {% for row in genres_b %}
+            <tr><td>{{ row.movie__genres__name }}</td><td>{{ row.count }}</td></tr>
+          {% empty %}<tr><td colspan="2" class="muted">No data yet</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Biggest disagreements</h2>
+    <table>
+      <thead><tr><th>Film</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th><th>Gap</th></tr></thead>
+      <tbody>
+        {% for film in biggest_disagreements %}
+          <tr><td>{{ film.title }} ({{ film.year }})</td><td>{{ film.rating_a|floatformat:1 }}</td><td>{{ film.rating_b|floatformat:1 }}</td><td>{{ film.delta|floatformat:1 }}</td></tr>
+        {% empty %}<tr><td colspan="4" class="muted">No rated films in common yet</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Most agreed on</h2>
+    <table>
+      <thead><tr><th>Film</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th><th>Gap</th></tr></thead>
+      <tbody>
+        {% for film in most_agreed %}
+          <tr><td>{{ film.title }} ({{ film.year }})</td><td>{{ film.rating_a|floatformat:1 }}</td><td>{{ film.rating_b|floatformat:1 }}</td><td>{{ film.delta|floatformat:1 }}</td></tr>
+        {% empty %}<tr><td colspan="4" class="muted">No rated films in common yet</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <h2>Only {{ session_a.display_name|default:"Person A" }} watched ({{ only_a_count }})</h2>
+      <table>
+        <tbody>
+          {% for film in only_a_films %}
+            <tr><td>{{ film.title }} ({{ film.year }})</td></tr>
+          {% empty %}<tr><td class="muted">Nothing unique</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Only {{ session_b.display_name|default:"Person B" }} watched ({{ only_b_count }})</h2>
+      <table>
+        <tbody>
+          {% for film in only_b_films %}
+            <tr><td>{{ film.title }} ({{ film.year }})</td></tr>
+          {% empty %}<tr><td class="muted">Nothing unique</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

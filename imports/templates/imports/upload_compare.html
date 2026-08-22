@@ -1,0 +1,65 @@
+{% extends "core/base.html" %}
+{% block title %}Double Feature{% endblock %}
+{% block content %}
+  <h1>Double Feature</h1>
+  <div class="card">
+    {% if form.non_field_errors %}
+      <ul class="errorlist">
+        {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data" id="upload-form">
+      {% csrf_token %}
+      {{ form.export_file_a.label_tag }}
+      <div class="file-picker">
+        <label for="{{ form.export_file_a.id_for_label }}" class="file-picker-btn">Choose File</label>
+        <span class="file-picker-name" id="file-picker-name-a">No file chosen</span>
+      </div>
+      {{ form.export_file_a }}
+      {% if form.export_file_a.errors %}
+        <ul class="errorlist">
+          {% for error in form.export_file_a.errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      {{ form.export_file_b.label_tag }}
+      <div class="file-picker">
+        <label for="{{ form.export_file_b.id_for_label }}" class="file-picker-btn">Choose File</label>
+        <span class="file-picker-name" id="file-picker-name-b">No file chosen</span>
+      </div>
+      {{ form.export_file_b }}
+      {% if form.export_file_b.errors %}
+        <ul class="errorlist">
+          {% for error in form.export_file_b.errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <p class="muted">Both exports are processed and enriched before you're redirected to the comparison.</p>
+      <button type="submit" id="upload-submit">Upload &amp; compare</button>
+      <div class="processing" id="upload-processing" hidden>
+        <span class="spinner"></span>
+        Processing both exports — this can take a minute or two for large diaries. Don't close this tab.
+      </div>
+    </form>
+  </div>
+
+  <script>
+    function wireFilePicker(inputId, nameSpanId) {
+      const input = document.getElementById(inputId);
+      input.addEventListener('change', function () {
+        document.getElementById(nameSpanId).textContent = input.files.length ? input.files[0].name : 'No file chosen';
+      });
+      return input;
+    }
+
+    const compareFileInputA = wireFilePicker('{{ form.export_file_a.id_for_label }}', 'file-picker-name-a');
+    const compareFileInputB = wireFilePicker('{{ form.export_file_b.id_for_label }}', 'file-picker-name-b');
+
+    document.getElementById('upload-form').addEventListener('submit', function (event) {
+      if (!compareFileInputA.files.length || !compareFileInputB.files.length) {
+        return; // let the browser's normal "required field" validation show instead
+      }
+      document.getElementById('upload-submit').disabled = true;
+      document.getElementById('upload-submit').textContent = 'Processing…';
+      document.getElementById('upload-processing').hidden = false;
+    });
+  </script>
+{% endblock %}

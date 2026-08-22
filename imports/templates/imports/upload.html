@@ -1,0 +1,49 @@
+{% extends "core/base.html" %}
+{% block title %}Director's Cut{% endblock %}
+{% block content %}
+  <h1>Director's Cut</h1>
+  <div class="card">
+    {% if form.non_field_errors %}
+      <ul class="errorlist">
+        {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data" id="upload-form">
+      {% csrf_token %}
+      {{ form.export_file.label_tag }}
+      <div class="file-picker">
+        <label for="{{ form.export_file.id_for_label }}" class="file-picker-btn">Choose File</label>
+        <span class="file-picker-name" id="file-picker-name">No file chosen</span>
+      </div>
+      {{ form.export_file }}
+      {% if form.export_file.errors %}
+        <ul class="errorlist">
+          {% for error in form.export_file.errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <p class="muted">Processing can take a little while the first time, since new films need to be looked up on TMDB.</p>
+      <button type="submit" id="upload-submit">Upload &amp; analyze</button>
+      <div class="processing" id="upload-processing" hidden>
+        <span class="spinner"></span>
+        Processing your export — this can take a minute or two for a large diary. Don't close this tab.
+      </div>
+    </form>
+  </div>
+
+  <script>
+    const uploadFileInput = document.getElementById('{{ form.export_file.id_for_label }}');
+    uploadFileInput.addEventListener('change', function () {
+      document.getElementById('file-picker-name').textContent =
+        uploadFileInput.files.length ? uploadFileInput.files[0].name : 'No file chosen';
+    });
+
+    document.getElementById('upload-form').addEventListener('submit', function (event) {
+      if (!uploadFileInput.files.length) {
+        return; // let the browser's normal "required field" validation show instead
+      }
+      document.getElementById('upload-submit').disabled = true;
+      document.getElementById('upload-submit').textContent = 'Processing…';
+      document.getElementById('upload-processing').hidden = false;
+    });
+  </script>
+{% endblock %}
