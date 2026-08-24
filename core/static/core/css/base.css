@@ -408,3 +408,76 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   justify-content: center;
   font-size: 0.9rem;
 }
+
+/* A small "i" badge that reveals a plain-English explanation on hover/focus -- for
+   spots where a number or a filtered list needs a sentence of context (e.g. what
+   "True score" means) that doesn't belong permanently on the page. cursor:help and
+   tabindex on the trigger (set in the markup) make it discoverable by mouse and
+   keyboard alike. */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 0.35rem;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  /* Not italic -- the slant visually shifts the glyph's weight to one side, which
+     reads as off-center inside a symmetric circle even though flexbox is centering
+     the character correctly. line-height: 1 matters too: without it, the "i" inherits
+     body's 1.5 line-height, and flexbox centers that taller line box, not the ink,
+     pushing the glyph up. */
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: help;
+}
+/* Precisely centers a header's text against its .info-tip icon as flex siblings --
+   more robust than vertical-align on the icon alone, which was leaving the icon
+   looking too low relative to the cap-height of the bold uppercase header text next
+   to it (vertical-align centers against a baseline-relative point, not the text's
+   visual cap-height). */
+.th-with-tip {
+  display: inline-flex;
+  align-items: center;
+}
+.info-tip .tip-bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 220px;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  z-index: 20;
+}
+.info-tip:hover .tip-bubble, .info-tip:focus-visible .tip-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* A minor caveat/footnote under a section (e.g. the minimum-films note under a
+   toggle-group) -- deliberately its own class rather than sizing .muted itself,
+   since .muted is reused all over the page (including full-size body text like the
+   Taste vs. the crowd intro) for its color alone, not its size. */
+.caption {
+  font-size: 0.75rem;
+}
