@@ -116,7 +116,7 @@
             {% endif %}
             <p class="muted">Highest rated</p>
             <p>{{ highlights.highest_rated.title }} ({{ highlights.highest_rated.year }})</p>
-            <p class="muted">{{ highlights.highest_rated.rating|floatformat:1 }}★</p>
+            <p class="muted">{{ highlights.highest_rated.rating|floatformat:1 }} ★</p>
           </div>
         {% endif %}
         {% if highlights.lowest_rated %}
@@ -128,7 +128,7 @@
             {% endif %}
             <p class="muted">Lowest rated</p>
             <p>{{ highlights.lowest_rated.title }} ({{ highlights.lowest_rated.year }})</p>
-            <p class="muted">{{ highlights.lowest_rated.rating|floatformat:1 }}★</p>
+            <p class="muted">{{ highlights.lowest_rated.rating|floatformat:1 }} ★</p>
           </div>
         {% endif %}
         {% if highlights.most_watched_film %}
@@ -146,7 +146,7 @@
 
   <div class="card">
     <h3>Rating distribution</h3>
-    <p class="muted">Average rating: <strong>{% if avg_rating %}{{ avg_rating|floatformat:2 }}★{% else %}—{% endif %}</strong></p>
+    <p class="muted">Average rating: <strong>{% if avg_rating %}{{ avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong></p>
     <canvas id="ratingDistributionChart"></canvas>
   </div>
 
@@ -199,7 +199,9 @@
       <div class="toggle-group" data-toggle-group>
         <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
         <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+        <button type="button" class="toggle-btn" data-view="true_score">True score</button>
       </div>
+      <p class="muted caption"><i>Note: Directors need at least 3 rated films to appear under Highest rated or True score.</i></p>
       <table data-view-panel="watched">
         <thead><tr><th>Director</th><th>Avg rating</th><th>Films</th></tr></thead>
         <tbody>
@@ -207,7 +209,7 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.directors__name }}
-            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }}★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
+            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -218,7 +220,18 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.movie__directors__name }}
-            </td><td>{{ row.avg|floatformat:1 }}★</td><td>{{ row.count }}</td></tr>
+            </td><td>{{ row.avg|floatformat:1 }} ★</td><td>{{ row.count }}</td></tr>
+          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      <table data-view-panel="true_score" hidden>
+        <thead><tr><th>Director</th><th><span class="th-with-tip">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></span></th><th>Films</th></tr></thead>
+        <tbody>
+          {% for row in favorite_people.favorite_directors_by_true_score %}
+            <tr><td class="name-cell">
+              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+              {{ row.movie__directors__name }}
+            </td><td>{{ row.true_score|floatformat:2 }} ★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -228,15 +241,17 @@
       <div class="toggle-group" data-toggle-group>
         <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
         <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+        <button type="button" class="toggle-btn" data-view="true_score">True score</button>
       </div>
+      <p class="muted caption"><i>Note: Actors need at least 4 rated films to appear under Highest rated or True score.</i></p>
       <table data-view-panel="watched">
-        <thead><tr><th>Actor</th><th>Avg rating</th><th>Films</th></tr></thead>
+        <thead><tr><th><span class="th-with-tip">Actor <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></th><th>Avg rating</th><th>Films</th></tr></thead>
         <tbody>
           {% for row in top_actors %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.person__name }}
-            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }}★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
+            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -247,7 +262,18 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.person__name }}
-            </td><td>{{ row.avg|floatformat:1 }}★</td><td>{{ row.count }}</td></tr>
+            </td><td>{{ row.avg|floatformat:1 }} ★</td><td>{{ row.count }}</td></tr>
+          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      <table data-view-panel="true_score" hidden>
+        <thead><tr><th>Actor</th><th><span class="th-with-tip">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></span></th><th>Films</th></tr></thead>
+        <tbody>
+          {% for row in favorite_people.favorite_actors_by_true_score %}
+            <tr><td class="name-cell">
+              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+              {{ row.person__name }}
+            </td><td>{{ row.true_score|floatformat:2 }} ★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -278,7 +304,7 @@
               <tr><td class="name-cell">
                 {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
                 {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.your_rating|floatformat:1 }}★</td><td>{{ film.crowd_rating|floatformat:1 }}★</td></tr>
+              </td><td>{{ film.your_rating|floatformat:1 }} ★</td><td>{{ film.crowd_rating|floatformat:1 }} ★</td></tr>
             {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
           </tbody>
         </table>
@@ -292,7 +318,7 @@
               <tr><td class="name-cell">
                 {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
                 {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.your_rating|floatformat:1 }}★</td><td>{{ film.crowd_rating|floatformat:1 }}★</td></tr>
+              </td><td>{{ film.your_rating|floatformat:1 }} ★</td><td>{{ film.crowd_rating|floatformat:1 }} ★</td></tr>
             {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
           </tbody>
         </table>

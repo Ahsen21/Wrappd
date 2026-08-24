@@ -14,7 +14,7 @@ Three data sources are used deliberately:
 from collections import defaultdict
 from decimal import Decimal
 
-from django.db.models import Avg, Count, Min, Sum
+from django.db.models import Avg, Count, Min, Q, Sum
 from django.db.models.functions import ExtractWeekDay, ExtractYear, TruncMonth
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
@@ -37,6 +37,26 @@ MIN_COUNT_FOR_AVERAGE = 2
 # appearances before an actor's average is as meaningful as a director's.
 MIN_COUNT_FOR_FAVORITE_DIRECTOR = 3
 MIN_COUNT_FOR_FAVORITE_ACTOR = 4
+# Separate from the two thresholds above on purpose -- this is the shrinkage strength
+# for the "True score" toggle (see _true_score), not the minimum count to qualify as
+# a favorite at all. Reusing MIN_COUNT_FOR_FAVORITE_* here (as an earlier version of
+# this did) meant every candidate sat exactly halfway shrunk toward the overall
+# average right at the qualifying threshold, which compressed the whole top-N range
+# down to a narrow band (e.g. an 0.5-star spread of raw averages became a 0.14-star
+# spread of true scores) -- tuned down independently so true_score has room to
+# actually differentiate people instead of pulling everyone toward the same point.
+TRUE_SCORE_SHRINKAGE_K = 3
+# True score's tiebreaker: a small additive bonus for a high rate of 5-star ratings,
+# so two people who land on the same true_score (or close to it) don't stay tied just
+# because a straight average can't distinguish "consistently great" from "several
+# perfect films mixed with weaker ones". Weighted by the same count/(count+k)
+# confidence factor as the shrinkage above -- a 3-film director who happens to be
+# 3-for-3 on five stars shouldn't get the same bonus as a 10-film director who's
+# 9-for-10, even though the raw *rate* is similar, since the smaller sample is
+# weaker evidence of a genuine pattern. Max possible bonus (full confidence, 100%
+# five-star rate) is this weight itself -- kept small so it nudges close scores
+# rather than overriding the primary avg-based ranking.
+FIVE_STAR_BONUS_WEIGHT = 0.2
 # A billing position at or past this fraction of a movie's total cast size is treated
 # as a cameo and excluded from every actor stat -- e.g. 0.5 means "in the back half
 # of the credited cast". Only applied to movies with at least this many total credited
@@ -251,7 +271,7 @@ def build_dashboard_context(import_session) -> dict:
     rating_by_language = _rating_by_language(rated)
     rewatch = _rewatch_leaderboard(diary)
     calendar = _viewing_calendar(diary)
-    favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths)
+    favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths, avg_rating)
     favorites = _favorite_films(import_session)
     top_tags = _tag_distribution(diary)
     highlights = _highlights(watched_movies, rated, rewatch['most_rewatched_films'])
@@ -658,45 +678,93 @@ def _highlights(watched_movies, rated, most_rewatched_films) -> dict:
     }
 
 
-def _favorite_people(rated, actor_rating_lists, actor_profile_paths) -> dict:
+def _true_score(avg, count, k, overall_avg_rating, five_star_count=0) -> float:
+    """Bayesian-shrunk rating (the classic IMDB 'weighted rating' formula) -- blends
+    a person's own average with the user's overall average rating, weighted by how
+    much evidence (count) backs it up. A low count pulls the score toward the overall
+    average (a neutral assumption) rather than crashing it toward zero the way a
+    naive count/rating multiplication would; a high count leaves it close to the raw
+    average, since the weighting shifts toward `count` as it grows relative to `k`.
+    `k` is TRUE_SCORE_SHRINKAGE_K, not MIN_COUNT_FOR_FAVORITE_* -- see that constant's
+    comment for why they're deliberately separate.
+
+    Adds a small confidence-weighted bonus for a high rate of 5-star ratings on top
+    -- see FIVE_STAR_BONUS_WEIGHT's comment for why it's weighted rather than a flat
+    proportion."""
+    confidence = count / (count + k)
+    score = confidence * float(avg) + (k / (count + k)) * overall_avg_rating
+    if count:
+        score += confidence * (five_star_count / count) * FIVE_STAR_BONUS_WEIGHT
+    return score
+
+
+def _favorite_people(rated, actor_rating_lists, actor_profile_paths, overall_avg_rating) -> dict:
     """Your highest-rated directors/actors -- an average-rating ranking, distinct from
     top_directors/top_actors which rank by how many films you've watched from them,
     not how highly you rated them. Directors need 2+ rated films, actors need 4+ (see
     MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR). actor_rating_lists/actor_profile_paths
     are built once in build_dashboard_context (already cameo-excluded) and shared
     with top_actors' own avg_rating column, so an actor's numbers agree across both
-    views."""
+    views.
+
+    overall_avg_rating can in principle be None (fewer than MIN_COUNT_FOR_AVERAGE
+    rated films total) -- practically unreachable here, since qualifying for
+    favorite_directors/_actors at all requires at least MIN_COUNT_FOR_FAVORITE_*
+    rated films from one person alone, which already exceeds MIN_COUNT_FOR_AVERAGE.
+    Defensive 0.0 fallback documents that rather than risking a crash on it."""
+    overall_avg_rating = float(overall_avg_rating) if overall_avg_rating is not None else 0.0
+
     # A tie in avg rating is broken by count (most watched) -- and vice versa for
     # top_directors/top_actors' own count-then-avg_rating ordering above. The tie
     # check has to use the *displayed* (1dp) average, not the raw one -- two people
     # can both show "4.6" while their true averages are 4.625 vs 4.55, and sorting on
     # the untruncated value would separate them by a difference the user can't even
     # see, silently skipping the count tiebreak they're expecting.
-    favorite_directors = list(
+    favorite_directors_all = list(
         rated.filter(movie__directors__isnull=False)
         .values('movie__directors__name')
-        .annotate(avg=Avg('rating'), count=Count('id'), profile_path=Min('movie__directors__profile_path'))
+        .annotate(
+            avg=Avg('rating'), count=Count('id'), profile_path=Min('movie__directors__profile_path'),
+            five_star_count=Count('id', filter=Q(rating=Decimal('5.0'))),
+        )
         .filter(count__gte=MIN_COUNT_FOR_FAVORITE_DIRECTOR)
     )
-    for row in favorite_directors:
+    for row in favorite_directors_all:
         row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
-    favorite_directors.sort(key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
+        row['true_score'] = _true_score(
+            row['avg'], row['count'], TRUE_SCORE_SHRINKAGE_K, overall_avg_rating, row['five_star_count']
+        )
+    favorite_directors = sorted(favorite_directors_all, key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
     favorite_directors = favorite_directors[:TOP_N]
+    favorite_directors_by_true_score = sorted(favorite_directors_all, key=lambda r: r['true_score'], reverse=True)
+    favorite_directors_by_true_score = favorite_directors_by_true_score[:TOP_N]
 
-    favorite_actors = [
+    favorite_actors_all = [
         {
             'person__name': name,
             'avg': sum(ratings) / len(ratings),
             'count': len(ratings),
+            'five_star_count': sum(1 for r in ratings if r == Decimal('5.0')),
             'profile_url': _tmdb_image_url(actor_profile_paths.get(name, ''), 'w185'),
         }
         for name, ratings in actor_rating_lists.items()
         if len(ratings) >= MIN_COUNT_FOR_FAVORITE_ACTOR
     ]
-    favorite_actors.sort(key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
+    for row in favorite_actors_all:
+        row['true_score'] = _true_score(
+            row['avg'], row['count'], TRUE_SCORE_SHRINKAGE_K, overall_avg_rating, row['five_star_count']
+        )
+    favorite_actors = sorted(favorite_actors_all, key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
     favorite_actors = favorite_actors[:TOP_N]
+    favorite_actors_by_true_score = sorted(favorite_actors_all, key=lambda r: r['true_score'], reverse=True)
+    favorite_actors_by_true_score = favorite_actors_by_true_score[:TOP_N]
 
-    return {'favorite_directors': favorite_directors, 'favorite_actors': favorite_actors}
+    return {
+        'favorite_directors': favorite_directors,
+        'favorite_actors': favorite_actors,
+        'favorite_directors_by_true_score': favorite_directors_by_true_score,
+        'favorite_actors_by_true_score': favorite_actors_by_true_score,
+    }
 
 
 def _films_watched_total(import_session, diary, rated) -> int:

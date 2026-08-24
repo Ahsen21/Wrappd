@@ -436,6 +436,105 @@ class FavoritePeopleTieBreakTests(TestCase):
         self.assertIn('Actor Many', actor_names)
 
 
+class TrueScoreTests(TestCase):
+    """true_score (Bayesian-shrunk rating, the 'True score' toggle on Favorite
+    Directors/Actors) should be able to actually reorder the raw-average ranking --
+    a strong average backed by a much larger sample outranking a slightly higher
+    average backed by only the bare minimum count -- without crushing the low-count
+    entry toward zero the way a naive count/rating multiplication would."""
+
+    def test_true_score_reorders_a_higher_count_director_above_a_barely_higher_raw_average(self):
+        session = ImportSession.objects.create(display_name='Alex')
+
+        # Director A: 3 films (the bare minimum) at a perfect 5.0 -- raw avg leads.
+        for i in range(3):
+            movie = _make_movie(2000 + i, f'A Film {i}', 2020, 100, 'Drama', 'Director A')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/a{i}', title=f'A Film {i}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        # Director B: 10 films at 4.9 -- close to A's average, much larger sample.
+        for i in range(10):
+            movie = _make_movie(2100 + i, f'B Film {i}', 2020, 100, 'Drama', 'Director B')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/b{i}', title=f'B Film {i}',
+                year=2020, rating=Decimal('4.9'), movie=movie,
+            )
+        # Filler: pulls the *overall* average down independently of A/B, the way a
+        # real account's broader rating history would -- no movie needed, since
+        # avg_rating is computed across every RatingEntry regardless of a movie match.
+        for i in range(20):
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=f'Filler {i}',
+                year=2015, rating=Decimal('3.0'),
+            )
+
+        context = build_dashboard_context(session)
+        by_true_score = {
+            row['movie__directors__name']: row
+            for row in context['favorite_people']['favorite_directors_by_true_score']
+        }
+        # Raw averages still favor A (5.0 vs 4.9) -- confirms the setup, not the fix.
+        by_raw = {row['movie__directors__name']: row for row in context['favorite_people']['favorite_directors']}
+        self.assertEqual(by_raw['Director A']['avg'], Decimal('5.0'))
+
+        # true_score flips the order: B's much larger sample outweighs A's razor-thin
+        # 3-film lead, while A's score stays close to its raw average rather than
+        # collapsing toward zero.
+        self.assertGreater(by_true_score['Director B']['true_score'], by_true_score['Director A']['true_score'])
+        self.assertGreater(by_true_score['Director A']['true_score'], 4.0)
+
+    def test_true_score_computed_for_favorite_actors_too(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        actor = Person.objects.get_or_create(tmdb_id=950, defaults={'name': 'Actor True'})[0]
+        for i in range(4):
+            movie = _make_movie(2200 + i, f'Actor Film {i}', 2020, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor, order=0)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/act{i}', title=f'Actor Film {i}',
+                year=2020, rating=Decimal('4.0'), movie=movie,
+            )
+
+        context = build_dashboard_context(session)
+        by_true_score = {
+            row['person__name']: row for row in context['favorite_people']['favorite_actors_by_true_score']
+        }
+        self.assertIn('Actor True', by_true_score)
+        self.assertIsInstance(by_true_score['Actor True']['true_score'], float)
+
+    def test_true_score_breaks_a_tie_in_favor_of_more_five_star_ratings(self):
+        # Same count (4) and same average (4.0) for both actors -- identical
+        # true_score before the 5-star bonus. Peaky gets there via two 5s and two 3s
+        # (2 five-star ratings); Consistent via four flat 4s (zero five-star ratings).
+        session = ImportSession.objects.create(display_name='Alex')
+        consistent = Person.objects.get_or_create(tmdb_id=960, defaults={'name': 'Actor Consistent'})[0]
+        peaky = Person.objects.get_or_create(tmdb_id=961, defaults={'name': 'Actor Peaky'})[0]
+
+        for i, rating in enumerate([Decimal('4.0')] * 4):
+            movie = _make_movie(2300 + i, f'Consistent Film {i}', 2020, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=consistent, order=0)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/con{i}', title=f'Consistent Film {i}',
+                year=2020, rating=rating, movie=movie,
+            )
+        for i, rating in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('3.0'), Decimal('3.0')]):
+            movie = _make_movie(2400 + i, f'Peaky Film {i}', 2020, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=peaky, order=0)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/peak{i}', title=f'Peaky Film {i}',
+                year=2020, rating=rating, movie=movie,
+            )
+
+        context = build_dashboard_context(session)
+        by_raw = {row['person__name']: row for row in context['favorite_people']['favorite_actors']}
+        self.assertEqual(by_raw['Actor Consistent']['avg'], by_raw['Actor Peaky']['avg'])
+
+        by_true_score = {
+            row['person__name']: row for row in context['favorite_people']['favorite_actors_by_true_score']
+        }
+        self.assertGreater(by_true_score['Actor Peaky']['true_score'], by_true_score['Actor Consistent']['true_score'])
+
+
 class CameoFilteringTests(TestCase):
     """An actor billed in the back half (CAMEO_RELATIVE_BILLING_THRESHOLD) of a big
     enough cast (MIN_CAST_SIZE_FOR_CAMEO_FILTER) is excluded from every actor stat."""
