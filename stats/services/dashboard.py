@@ -8,7 +8,7 @@ Three data sources are used deliberately:
   - DiaryEntry (one row per watch event, has watched_date + rewatch) for anything about
     viewing activity over time.
   - WatchedEntry (one row per distinct film, logged or not) for "most watched" counts
-    (genre/director/actor/country/language) -- see _watched_movies.
+    (genre/director/actor/country/language/release year) -- see _watched_movies.
 """
 
 from collections import defaultdict
@@ -242,8 +242,8 @@ def build_dashboard_context(import_session) -> dict:
 
     taste = _taste_vs_crowd(rated)
     genre_decade = _rating_by_genre_and_decade(rated)
-    release_year_range = _release_year_range(diary, rated)
-    release_year_distribution = _release_year_distribution(diary, release_year_range)
+    release_year_range = _release_year_range(watched_movies, rated)
+    release_year_distribution = _release_year_distribution(watched_movies, release_year_range)
     rating_by_release_year = _rating_by_release_year(rated, release_year_range)
     country_distribution = _films_by_country(watched_movies)
     language_distribution = _films_by_language(watched_movies)
@@ -408,27 +408,28 @@ def _rating_by_genre_and_decade(rated) -> dict:
     return {'by_genre': by_genre, 'by_decade': by_decade}
 
 
-def _release_year_range(diary, rated):
-    """The full (min, max) release year span across both diary and rated films, so the
-    two release-year charts (count / avg rating) share one continuous x-axis instead of
-    each only showing the years it happens to have data for."""
-    years = set(diary.filter(movie__release_year__isnull=False).values_list('movie__release_year', flat=True))
+def _release_year_range(watched_movies, rated):
+    """The full (min, max) release year span across both watched_movies and rated
+    films, so the two release-year charts (count / avg rating) share one continuous
+    x-axis instead of each only showing the years it happens to have data for."""
+    years = set(watched_movies.filter(release_year__isnull=False).values_list('release_year', flat=True))
     years |= set(rated.filter(movie__release_year__isnull=False).values_list('movie__release_year', flat=True))
     return (min(years), max(years)) if years else None
 
 
-def _release_year_distribution(diary, year_range) -> list:
-    """Distinct-film count per release year -- deduped by (title, year) so a heavily
-    rewatched film doesn't inflate its release year's bar. Uses diary (not RatingEntry)
-    since this characterizes everything watched, rated or not. Every year in year_range
-    is included (0 for years with no films) so the x-axis has no gaps."""
+def _release_year_distribution(watched_movies, year_range) -> list:
+    """Distinct-film count per release year, sourced from watched_movies (see
+    _watched_movies) -- the same 'most watched' source as every other distribution
+    breakdown (genre/director/actor/country/language), so a rewatch doesn't inflate a
+    release year's bar and a watched.csv-only film (never diary-logged) still counts.
+    Every year in year_range is included (0 for years with no films) so the x-axis
+    has no gaps."""
     if year_range is None:
         return []
 
-    rows = diary.filter(movie__release_year__isnull=False).values('title', 'year', 'movie__release_year').distinct()
     counts = defaultdict(int)
-    for row in rows:
-        counts[row['movie__release_year']] += 1
+    for release_year in watched_movies.filter(release_year__isnull=False).values_list('release_year', flat=True):
+        counts[release_year] += 1
 
     return [{'year': year, 'count': counts.get(year, 0)} for year in range(year_range[0], year_range[1] + 1)]
 

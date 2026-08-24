@@ -146,7 +146,7 @@
 
   <div class="card">
     <h3>Rating distribution</h3>
-    <p class="muted">Average rating: <strong>{{ avg_rating|floatformat:2|default:"—" }}</strong></p>
+    <p class="muted">Average rating: <strong>{% if avg_rating %}{{ avg_rating|floatformat:2 }}★{% else %}—{% endif %}</strong></p>
     <canvas id="ratingDistributionChart"></canvas>
   </div>
 
@@ -175,7 +175,7 @@
     </div>
 
     <div class="card">
-      <h3>Country</h3>
+      <h3>Countries</h3>
       <div class="toggle-group" data-chart-toggle="country">
         <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
         <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
@@ -184,7 +184,7 @@
     </div>
 
     <div class="card">
-      <h3>Language</h3>
+      <h3>Languages</h3>
       <div class="toggle-group" data-chart-toggle="language">
         <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
         <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
@@ -207,7 +207,7 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.directors__name }}
-            </td><td>{{ row.avg_rating|floatformat:1|default:"—" }}</td><td>{{ row.count }}</td></tr>
+            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }}★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -218,7 +218,7 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.movie__directors__name }}
-            </td><td>{{ row.avg|floatformat:1 }}</td><td>{{ row.count }}</td></tr>
+            </td><td>{{ row.avg|floatformat:1 }}★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -236,7 +236,7 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.person__name }}
-            </td><td>{{ row.avg_rating|floatformat:1|default:"—" }}</td><td>{{ row.count }}</td></tr>
+            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }}★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -247,7 +247,7 @@
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
               {{ row.person__name }}
-            </td><td>{{ row.avg|floatformat:1 }}</td><td>{{ row.count }}</td></tr>
+            </td><td>{{ row.avg|floatformat:1 }}★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -256,7 +256,7 @@
 
   <div class="card">
     <h3>Taste vs. the crowd</h3>
-    <p class="muted">Your rating vs. TMDB's community average, across {{ taste.rated_and_enriched_count }} rated &amp; enriched film(s).</p>
+    <p class="muted">Your rating vs. TMDB's community average, across {{ taste.rated_and_enriched_count }} rated films.</p>
     <div class="grid">
       <div class="stat">
         {% if taste.generosity_score == None %}
@@ -278,7 +278,7 @@
               <tr><td class="name-cell">
                 {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
                 {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.your_rating|floatformat:1 }}</td><td>{{ film.crowd_rating|floatformat:1 }}</td></tr>
+              </td><td>{{ film.your_rating|floatformat:1 }}★</td><td>{{ film.crowd_rating|floatformat:1 }}★</td></tr>
             {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
           </tbody>
         </table>
@@ -292,7 +292,7 @@
               <tr><td class="name-cell">
                 {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
                 {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.your_rating|floatformat:1 }}</td><td>{{ film.crowd_rating|floatformat:1 }}</td></tr>
+              </td><td>{{ film.your_rating|floatformat:1 }}★</td><td>{{ film.crowd_rating|floatformat:1 }}★</td></tr>
             {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
           </tbody>
         </table>
@@ -322,45 +322,34 @@
     <canvas id="weekdayChart"></canvas>
   </div>
 
-  <div class="card">
-    <h3>Rewatch leaderboard</h3>
-    <p class="muted">
-      You rate rewatches
-      {% if rewatch.rewatch_avg_rating and rewatch.first_watch_avg_rating %}
-        <strong>{{ rewatch.rewatch_avg_rating|floatformat:1 }}</strong> on average, vs. <strong>{{ rewatch.first_watch_avg_rating|floatformat:1 }}</strong> on a first watch.
-      {% else %}
-        — not enough data yet.
-      {% endif %}
-    </p>
-    <div class="two-col">
-      <div>
-        <h4>Most rewatched films</h4>
-        <table>
-          <thead><tr><th>Film</th><th>Times watched</th></tr></thead>
-          <tbody>
-            {% for film in rewatch.most_rewatched_films %}
-              <tr><td class="name-cell">
-                {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-                {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.watch_count }}</td></tr>
-            {% empty %}<tr><td colspan="2" class="muted">No rewatches yet</td></tr>{% endfor %}
-          </tbody>
-        </table>
-      </div>
-      <div>
-        <h4>Most rewatched directors</h4>
-        <table>
-          <thead><tr><th>Director</th><th>Rewatches</th></tr></thead>
-          <tbody>
-            {% for row in rewatch.most_rewatched_directors %}
-              <tr><td class="name-cell">
-                {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-                {{ row.movie__directors__name }}
-              </td><td>{{ row.count }}</td></tr>
-            {% empty %}<tr><td colspan="2" class="muted">No data yet</td></tr>{% endfor %}
-          </tbody>
-        </table>
-      </div>
+  <div class="two-col">
+    <div class="card">
+      <h3>Most rewatched films</h3>
+      <table>
+        <thead><tr><th>Film</th><th>Times watched</th></tr></thead>
+        <tbody>
+          {% for film in rewatch.most_rewatched_films %}
+            <tr><td class="name-cell">
+              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
+              {{ film.title }} ({{ film.year }})
+            </td><td>{{ film.watch_count }}</td></tr>
+          {% empty %}<tr><td colspan="2" class="muted">No rewatches yet</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Most rewatched directors</h3>
+      <table>
+        <thead><tr><th>Director</th><th>Rewatches</th></tr></thead>
+        <tbody>
+          {% for row in rewatch.most_rewatched_directors %}
+            <tr><td class="name-cell">
+              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+              {{ row.movie__directors__name }}
+            </td><td>{{ row.count }}</td></tr>
+          {% empty %}<tr><td colspan="2" class="muted">No data yet</td></tr>{% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -437,6 +426,18 @@
     const gridColor = 'rgba(138, 153, 168, 0.15)';
     const textColor = '#e5e9ec';
     Chart.defaults.color = textColor;
+    // Chart.js draws to canvas, not the DOM, so it never inherits the page's own
+    // font-family from CSS -- it has its own default font stack that has to be set
+    // explicitly to match. Mutating the existing font object's property rather than
+    // replacing Chart.defaults.font wholesale (see the animation defaults below --
+    // a full reassignment there once silently dropped keys Chart.js needed
+    // internally and broke the whole animation system).
+    Chart.defaults.font.family = "'Sora', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+    // Sora measures ~15-20% wider than Chart.js's built-in default font at the same
+    // size, which was pushing labels past the width Chart.js reserves for them in
+    // the narrower charts (genres/country/language), truncating them. Chart.js's
+    // own default is 12; sized down slightly to compensate for Sora specifically.
+    Chart.defaults.font.size = 11;
     // Applies to every chart's initial render AND to toggle-triggered .update() calls
     // (Most watched <-> Highest rated), so switching views animates consistently
     // instead of the bars snapping straight to their new lengths.
@@ -524,7 +525,8 @@
           // 1dp elsewhere); "Most watched" shows a plain film count, which stays as-is.
           label: function (context) {
             const value = context.parsed[valueAxis];
-            const formatted = context.dataset.label === 'Avg rating' ? value.toFixed(2) : value;
+            const isRating = context.dataset.label === 'Avg rating';
+            const formatted = isRating ? value.toFixed(2) + '★' : value;
             return context.dataset.label + ': ' + formatted;
           },
         },
