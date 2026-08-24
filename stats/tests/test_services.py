@@ -213,6 +213,19 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(by_year[2015], 1)
         self.assertEqual(by_year[2000], 0)  # a gap year with no films
 
+    def test_release_year_distribution_sourced_from_watched_not_diary(self):
+        # A film only in watched.csv (never diary-logged) must still count -- if this
+        # were sourced from diary alone, it would be missing entirely.
+        session = ImportSession.objects.create()
+        movie = Movie.objects.create(tmdb_id=777, title='Watched Only', release_year=2010)
+        WatchedEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/watched-only', title='Watched Only',
+            year=2010, movie=movie,
+        )
+        distribution = build_dashboard_context(session)['release_year_distribution']
+        by_year = {row['year']: row['count'] for row in distribution}
+        self.assertEqual(by_year[2010], 1)
+
     def test_rating_by_release_year_leaves_gap_years_as_none(self):
         chart_data = build_dashboard_context(self.session)['chart_data']['rating_by_release_year']
         self.assertEqual(chart_data['labels'][0], '1995')

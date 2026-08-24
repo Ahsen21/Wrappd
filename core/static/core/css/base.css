@@ -19,7 +19,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Sora", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
 }
 
@@ -340,8 +340,22 @@ button, .btn {
 }
 
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); }
+/* Default td vertical-align is baseline, not middle -- fine for plain text cells, but
+   a row with a person/film thumbnail (person-thumb, film-thumb) is taller than its
+   plain-text siblings, so their text sits low against the image instead of centered. */
+th, td { text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 th { color: var(--muted); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
+/* Sora renders ~15-20% wider than the previous system-font stack at the same size
+   (measured directly: "Science Fiction" at 16px is 125px in Sora vs 104px before) --
+   td had no explicit size before, inheriting the 16px body default, which was
+   exactly what pushed longer director/actor/film names onto a second line in the
+   narrower table columns. Sized down to compensate for Sora's extra width, not
+   because the previous size was wrong on its own terms. */
+td { font-size: 0.85rem; }
+/* Every table here follows the same shape: a name/title column first (with a
+   thumbnail, reads better left-aligned), numeric value columns after it (reads
+   better centered under a short header like "Films" or "Avg rating"). */
+th:first-child, td:first-child { text-align: left; }
 tbody tr { transition: background-color 0.15s ease; }
 tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 
@@ -361,9 +375,14 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    small poster next to a film title. Sized to sit on one line with normal table text
    rather than blowing out row height. */
 .name-cell { display: flex; align-items: center; gap: 0.6rem; }
+/* Matches film-thumb's 42px height, not an arbitrary avatar size -- so a table of
+   people (e.g. Most rewatched directors) has the same per-row height as the
+   matching table of films (Most rewatched films) it sits beside in a two-col row,
+   rather than looking shorter just because a circular headshot is naturally more
+   compact than a film poster's 2:3 aspect ratio. */
 .person-thumb, .person-thumb-placeholder {
-  width: 32px;
-  height: 32px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
