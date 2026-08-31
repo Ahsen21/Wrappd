@@ -18,6 +18,16 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
 
+# Full scheme+host origins Django will accept POSTs from (e.g. file upload forms).
+# Separate from ALLOWED_HOSTS, which only checks the Host header. Needed for tunnels
+# like ngrok where the public origin differs from localhost. Supports '*.' wildcard
+# subdomains per Django's own CSRF_TRUSTED_ORIGINS syntax.
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
+    default='',
+    cast=lambda v: [s.strip() for s in v.split(',') if s.strip()],
+)
+
 TMDB_API_KEY = config('TMDB_API_KEY', default='')
 
 
