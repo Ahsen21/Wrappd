@@ -137,6 +137,11 @@ a { color: var(--accent-2); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.25rem;
+  /* .fav-card's flex-grow is capped by its own max-width (160px), so once all 4
+     cards hit that cap, leftover row width just sat unclaimed after the last card
+     under the default flex-start -- looked left-packed rather than an even row of 4.
+     space-between claims it as equal gaps between cards instead. */
+  justify-content: space-between;
 }
 @media (max-width: 600px) {
   .hero { padding: 2rem 1.25rem; }
@@ -268,6 +273,34 @@ h2#watching-stats {
 .favs--compact .fav-card { flex-basis: 70px; max-width: 80px; }
 .favs--compact .fav-placeholder { font-size: 1.25rem; }
 .favs--compact .fav-card p { font-size: 0.75rem; }
+
+/* Most rewatched films/directors -- both force exactly 4 cards per row (3 rows of
+   4, matching REWATCH_GRID_DISPLAY_CAP=12) in a half-width .two-col card, computed
+   from the card's own width rather than a fixed px value (same reasoning as Double
+   Feature's .favs--compact/.favs--six N-per-row rules). Sized differently on
+   purpose: films' posters are grown a bit (smaller gap gives each column more room)
+   and directors' headshots are shrunk within their column (directors have an extra
+   text line -- the name, which wraps to 2 lines for most names -- that films don't,
+   so a bigger image there would only widen the height gap between the two grids). */
+.favs--four-lg { gap: 0.75rem; }
+.favs--four-lg .fav-card {
+  flex: 0 0 calc((100% - 3 * 0.75rem) / 4);
+  max-width: calc((100% - 3 * 0.75rem) / 4);
+}
+.favs--four-sm .fav-card {
+  flex: 0 0 calc((100% - 3 * 1.25rem) / 4);
+  max-width: calc((100% - 3 * 1.25rem) / 4);
+}
+.favs--four-sm .fav-card img,
+.favs--four-sm .fav-card .fav-placeholder {
+  width: 65%;
+  margin: 0 auto;
+}
+/* Reserves 2 lines' height for the director's name regardless of whether it actually
+   wraps -- without this, a 1-line name ("Sam Raimi") leaves less space above the
+   rewatch-count line than a 2-line one, so the count line lands at a different
+   height card to card instead of aligning across the row. */
+.favs--four-sm .fav-card p:first-of-type { min-height: 44px; }
 
 .processing { margin-top: 1rem; color: var(--muted); }
 .spinner {
