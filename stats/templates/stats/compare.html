@@ -2,16 +2,20 @@
 {% load humanize %}
 {% block title %}Double Feature — {{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}{% endblock %}
 {% block content %}
+<div class="compare-page">
 
   <div class="hero">
     <p class="hero-eyebrow">Double Feature</p>
     <h1>{{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}</h1>
     <div class="grid hero-grid">
-      <div class="stat"><div class="value">{{ compatibility_pct|default:"—" }}{% if compatibility_pct %}%{% endif %}</div><div class="label">Compatibility</div></div>
       <div class="stat"><div class="value">{{ shared_count|intcomma }}</div><div class="label">Shared films</div></div>
-      <div class="stat"><div class="value">{{ overlap_pct }}%</div><div class="label">Overlap</div></div>
-      <div class="stat"><div class="value">{{ agreement_pct|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label">Rating agreement</div></div>
-      <div class="stat"><div class="value">{{ avg_delta|floatformat:1|default:"—" }}</div><div class="label">Avg rating gap</div></div>
+      <div class="stat"><div class="value">{{ same_rating_total|intcomma }}</div><div class="label">Same rating</div></div>
+      <div class="stat"><div class="value">{{ rated_higher_a_count|intcomma }}</div><div class="label">{{ session_a.display_name|default:"Person A" }} rated higher</div></div>
+      <div class="stat"><div class="value">{{ rated_higher_b_count|intcomma }}</div><div class="label">{{ session_b.display_name|default:"Person B" }} rated higher</div></div>
+      <div class="stat"><div class="value">{{ avg_delta|floatformat:1|default:"—" }}</div><div class="label"><span class="th-with-tip">Per-film rating gap <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average difference between your ratings on films you've both rated</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ overlap_pct }}%</div><div class="label"><span class="th-with-tip">Watched in common <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of every film either of you has watched that you've both watched.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ agreement_pct|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Rating agreement <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of films you've both rated where your ratings landed within half a star of each other.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ compatibility_pct|default:"—" }}{% if compatibility_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Compatibility <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average of Watched in common and Rating agreement, representing how much you watch the same things and how similarly you feel about them.</span></span></span></div></div>
     </div>
   </div>
 
@@ -27,69 +31,95 @@
         <div class="label">{{ session_b.display_name|default:"Person B" }}'s avg rating</div>
       </div>
     </div>
+    <div class="toggle-group" data-chart-toggle="ratingCurve">
+      <button type="button" class="toggle-btn active" data-view="count">Films</button>
+      <button type="button" class="toggle-btn" data-view="percent">Percent</button>
+    </div>
+    <p class="muted caption"><i>Percent shows each rating as a share of that person's own rated films, useful for comparing rating tendencies when one of you has watched a lot more than the other.</i></p>
     <canvas id="ratingCurveChart"></canvas>
   </div>
 
   <div class="card">
     <h3>Same rating</h3>
-    <table>
-      <thead><tr><th>Film</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
-      <tbody>
+    {% if same_rating_total %}
+      <p class="muted">You rated {{ same_rating_total|intcomma }} film{{ same_rating_total|pluralize }} exactly the same.</p>
+    {% endif %}
+    {% if same_rating %}
+      <div class="favs favs--compact">
         {% for film in same_rating %}
-          <tr><td class="name-cell">
-            {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-            {{ film.title }} ({{ film.year }})
-          </td><td class="a-color">{{ film.rating_a|floatformat:1 }} ★</td><td class="b-color">{{ film.rating_b|floatformat:1 }} ★</td></tr>
-        {% empty %}<tr><td colspan="3" class="muted">No exact matches yet</td></tr>{% endfor %}
-      </tbody>
-    </table>
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.rating_a|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No exact matches yet</p>
+    {% endif %}
   </div>
 
   <div class="card">
     <h3>Most different ratings</h3>
-    <table>
-      <thead><tr><th>Film</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th><th>Gap</th></tr></thead>
-      <tbody>
+    <div class="color-key">
+      <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
+      <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
+    </div>
+    {% if biggest_disagreements_total > biggest_disagreements|length %}
+      <p class="muted caption">Showing {{ biggest_disagreements|length }} of {{ biggest_disagreements_total|intcomma }}.</p>
+    {% endif %}
+    {% if biggest_disagreements %}
+      <div class="favs favs--compact">
         {% for film in biggest_disagreements %}
-          <tr><td class="name-cell">
-            {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-            {{ film.title }} ({{ film.year }})
-          </td><td class="a-color">{{ film.rating_a|floatformat:1 }} ★</td><td class="b-color">{{ film.rating_b|floatformat:1 }} ★</td><td>{{ film.delta|floatformat:1 }}</td></tr>
-        {% empty %}<tr><td colspan="4" class="muted">No rated films in common yet</td></tr>{% endfor %}
-      </tbody>
-    </table>
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="a-color">{{ film.rating_a|floatformat:1 }} ★</p>
+            <p class="b-color">{{ film.rating_b|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No rated films in common yet</p>
+    {% endif %}
   </div>
 
   <div class="two-col">
     <div class="card">
       <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
-      <table>
-        <tbody>
+      <!-- {% if five_star_only_a_total > five_star_only_a|length %}
+        <p class="muted caption">Showing {{ five_star_only_a|length }} of {{ five_star_only_a_total|intcomma }}.</p>
+      {% endif %} -->
+      {% if five_star_only_a %}
+        <div class="favs favs--compact favs--six">
           {% for film in five_star_only_a %}
-            <tr><td class="name-cell">
-              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-              {{ film.title }} ({{ film.year }})
-            </td></tr>
-          {% empty %}<tr><td class="muted">None yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
+            <div class="fav-card">
+              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">None yet</p>
+      {% endif %}
     </div>
     <div class="card">
       <h3>{{ session_b.display_name|default:"Person B" }} loved it, {{ session_a.display_name|default:"Person A" }} hasn't seen it</h3>
-      <table>
-        <tbody>
+      <!-- {% if five_star_only_b_total > five_star_only_b|length %}
+        <p class="muted caption">Showing {{ five_star_only_b|length }} of {{ five_star_only_b_total|intcomma }}.</p>
+      {% endif %} -->
+      {% if five_star_only_b %}
+        <div class="favs favs--compact favs--six">
           {% for film in five_star_only_b %}
-            <tr><td class="name-cell">
-              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-              {{ film.title }} ({{ film.year }})
-            </td></tr>
-          {% empty %}<tr><td class="muted">None yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
+            <div class="fav-card">
+              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">None yet</p>
+      {% endif %}
     </div>
   </div>
 
-  <div class="two-col">
+  <!-- <div class="two-col">
     <div class="card">
       <h3>Only {{ session_a.display_name|default:"Person A" }} watched ({{ only_a_count|intcomma }})</h3>
       {% if only_a_count > only_a_films|length %}
@@ -99,8 +129,7 @@
         <tbody>
           {% for film in only_a_films %}
             <tr><td class="name-cell">
-              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-              {{ film.title }} ({{ film.year }})
+              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="film-thumb-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             </td></tr>
           {% empty %}<tr><td class="muted">Nothing unique</td></tr>{% endfor %}
         </tbody>
@@ -115,38 +144,114 @@
         <tbody>
           {% for film in only_b_films %}
             <tr><td class="name-cell">
-              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-              {{ film.title }} ({{ film.year }})
+              {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="film-thumb-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             </td></tr>
           {% empty %}<tr><td class="muted">Nothing unique</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>
+  </div> -->
+
+  <div class="card">
+    <h3>Favorite directors</h3>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
+      <button type="button" class="toggle-btn" data-view="shared">Shared</button>
+    </div>
+    <div data-view-panel="split">
+      <div class="two-col">
+        <div>
+          <h4>{{ session_a.display_name|default:"Person A" }}</h4>
+          <table>
+            <thead><tr><th>Director</th><th>Avg</th><th>Films</th></tr></thead>
+            <tbody>
+              {% for row in top_directors_a %}
+                <tr><td class="name-cell">
+                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                  {{ row.name }}
+                </td><td class="a-color">{{ row.avg|floatformat:1 }} ★</td><td class="a-color">{{ row.count }}</td></tr>
+              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h4>{{ session_b.display_name|default:"Person B" }}</h4>
+          <table>
+            <thead><tr><th>Director</th><th>Avg</th><th>Films</th></tr></thead>
+            <tbody>
+              {% for row in top_directors_b %}
+                <tr><td class="name-cell">
+                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                  {{ row.name }}
+                </td><td class="b-color">{{ row.avg|floatformat:1 }} ★</td><td class="b-color">{{ row.count }}</td></tr>
+              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <table data-view-panel="shared" hidden>
+      <thead><tr><th>Director</th><th>{{ session_a.display_name|default:"A" }}</th><th>Films</th><th>{{ session_b.display_name|default:"B" }}</th><th>Films</th></tr></thead>
+      <tbody>
+        {% for row in shared_directors %}
+          <tr><td class="name-cell">
+            {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+            {{ row.name }}
+          </td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="a-color">{{ row.count_a }}</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td><td class="b-color">{{ row.count_b }}</td></tr>
+        {% empty %}<tr><td colspan="5" class="muted">No shared favorites yet</td></tr>{% endfor %}
+      </tbody>
+    </table>
   </div>
 
-  <div class="two-col">
-    <div class="card">
-      <h3>Shared favorite directors</h3>
-      <table>
-        <thead><tr><th>Director</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
-        <tbody>
-          {% for row in shared_directors %}
-            <tr><td>{{ row.name }}</td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No shared favorites yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
+  <div class="card">
+    <h3>Favorite actors</h3>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
+      <button type="button" class="toggle-btn" data-view="shared">Shared</button>
     </div>
-    <div class="card">
-      <h3>Shared favorite actors</h3>
-      <table>
-        <thead><tr><th>Actor</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
-        <tbody>
-          {% for row in shared_actors %}
-            <tr><td>{{ row.name }}</td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No shared favorites yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
+    <div data-view-panel="split">
+      <div class="two-col">
+        <div>
+          <h4>{{ session_a.display_name|default:"Person A" }}</h4>
+          <table>
+            <thead><tr><th>Actor</th><th>Avg</th><th>Films</th></tr></thead>
+            <tbody>
+              {% for row in top_actors_a %}
+                <tr><td class="name-cell">
+                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                  {{ row.name }}
+                </td><td class="a-color">{{ row.avg|floatformat:1 }} ★</td><td class="a-color">{{ row.count }}</td></tr>
+              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h4>{{ session_b.display_name|default:"Person B" }}</h4>
+          <table>
+            <thead><tr><th>Actor</th><th>Avg</th><th>Films</th></tr></thead>
+            <tbody>
+              {% for row in top_actors_b %}
+                <tr><td class="name-cell">
+                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                  {{ row.name }}
+                </td><td class="b-color">{{ row.avg|floatformat:1 }} ★</td><td class="b-color">{{ row.count }}</td></tr>
+              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
+    <table data-view-panel="shared" hidden>
+      <thead><tr><th>Actor</th><th>{{ session_a.display_name|default:"A" }}</th><th>Films</th><th>{{ session_b.display_name|default:"B" }}</th><th>Films</th></tr></thead>
+      <tbody>
+        {% for row in shared_actors %}
+          <tr><td class="name-cell">
+            {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+            {{ row.name }}
+          </td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="a-color">{{ row.count_a }}</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td><td class="b-color">{{ row.count_b }}</td></tr>
+        {% empty %}<tr><td colspan="5" class="muted">No shared favorites yet</td></tr>{% endfor %}
+      </tbody>
+    </table>
   </div>
 
   <div class="card">
@@ -154,32 +259,75 @@
     {% if watchlist_matches_total > watchlist_matches|length %}
       <p class="muted caption">Showing {{ watchlist_matches|length }} of {{ watchlist_matches_total|intcomma }}.</p>
     {% endif %}
-    <table>
-      <tbody>
+    {% if watchlist_matches %}
+      <div class="favs favs--compact">
         {% for film in watchlist_matches %}
-          <tr><td class="name-cell">
-            {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-            {{ film.title }} ({{ film.year }})
-          </td></tr>
-        {% empty %}<tr><td class="muted">No shared watchlist films yet</td></tr>{% endfor %}
-      </tbody>
-    </table>
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No shared watchlist films yet</p>
+    {% endif %}
   </div>
 
   <div class="card">
-    <h3>Same day, movie night</h3>
-    <p class="muted">Days you both logged a film -- not necessarily the same one.</p>
-    {% if same_day_logs_total > same_day_logs|length %}
-      <p class="muted caption">Showing {{ same_day_logs|length }} of {{ same_day_logs_total|intcomma }}.</p>
-    {% endif %}
-    <table>
-      <thead><tr><th>Date</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
-      <tbody>
-        {% for row in same_day_logs %}
-          <tr><td>{{ row.date }}</td><td class="a-color">{{ row.films_a|join:", " }}</td><td class="b-color">{{ row.films_b|join:", " }}</td></tr>
-        {% empty %}<tr><td colspan="3" class="muted">No shared logging days yet</td></tr>{% endfor %}
-      </tbody>
-    </table>
+    <h3>Same day logs</h3>
+    <p class="muted">Days you both logged a film (not necessarily the same one).</p>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="all">All</button>
+      <button type="button" class="toggle-btn" data-view="exact">Exact matches</button>
+    </div>
+    <div data-view-panel="all">
+      <div class="color-key">
+        <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
+        <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
+      </div>
+      <!-- {% if same_day_logs_total > same_day_logs|length %}
+        <p class="muted caption">Showing {{ same_day_logs|length }} of {{ same_day_logs_total|intcomma }}.</p>
+      {% endif %} -->
+      {% if same_day_logs %}
+        <div class="day-grid">
+          {% for row in same_day_logs %}
+            <div class="day-card">
+              <p class="muted day-card-date">{{ row.date }}</p>
+              <div class="day-card-films">
+                <div>
+                  {% for film in row.films_a %}
+                    {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="film-thumb-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+                  {% endfor %}
+                </div>
+                <div>
+                  {% for film in row.films_b %}
+                    {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="film-thumb-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No shared logging days yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="exact" hidden>
+      {% if same_day_exact_matches_total > same_day_exact_matches|length %}
+        <p class="muted caption">Showing {{ same_day_exact_matches|length }} of {{ same_day_exact_matches_total|intcomma }}.</p>
+      {% endif %}
+      {% if same_day_exact_matches %}
+        <div class="favs favs--compact">
+          {% for film in same_day_exact_matches %}
+            <div class="fav-card">
+              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+              <p class="muted">{{ film.date }}</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No exact matches yet</p>
+      {% endif %}
+    </div>
   </div>
 
   {% comment %}
@@ -211,6 +359,23 @@
 
   {{ chart_data|json_script:"chart-data" }}
   <script>
+    // Generic toggle-group/view-panel wiring, mirrored from dashboard.html -- lets a
+    // card swap between markup panels (e.g. Favorite directors' Side-by-side/Shared)
+    // purely via data attributes, no per-feature JS needed.
+    document.querySelectorAll('[data-toggle-group]').forEach(function (group) {
+      const card = group.closest('.card');
+      group.querySelectorAll('.toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const view = btn.dataset.view;
+          card.querySelectorAll('[data-view-panel]').forEach(function (panel) {
+            panel.hidden = panel.dataset.viewPanel !== view;
+          });
+        });
+      });
+    });
+
     const chartData = JSON.parse(document.getElementById('chart-data').textContent);
     const gridColor = 'rgba(138, 153, 168, 0.15)';
     const textColor = '#e5e9ec';
@@ -238,7 +403,18 @@
     // deliberately not used here -- it's the site's general interactive accent
     // (toggle-btn.active, .stat .value's default), and reusing it as "person A" too
     // would blur that meaning on a page that's fundamentally about two people.
-    new Chart(document.getElementById('ratingCurveChart'), {
+    // Films-vs-Percent toggle: counts are the raw server data, percent is derived
+    // client-side (count / that session's own rated total) so a person who's rated
+    // far more films doesn't just visually dominate every bucket -- the toggle is
+    // about comparing rating *tendency*, not volume.
+    function toPercent(counts, total) {
+      if (!total) return counts.map(function () { return 0; });
+      return counts.map(function (c) { return Math.round((c / total) * 1000) / 10; });
+    }
+
+    let ratingCurveMode = 'count';
+
+    const ratingCurveChart = new Chart(document.getElementById('ratingCurveChart'), {
       type: 'bar',
       data: {
         labels: chartData.rating_curve.labels,
@@ -260,12 +436,43 @@
         ],
       },
       options: {
-        scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } },
+        scales: {
+          x: { grid: { color: gridColor } },
+          y: { grid: { color: gridColor }, beginAtZero: true, ticks: {} },
+        },
         // Unlike Director's Cut's single-dataset charts (legend always off, redundant
         // with the card title), this chart has two same-shaped datasets distinguished
         // only by color -- the legend is what tells the two people's bars apart.
-        plugins: { legend: { display: true } },
+        plugins: {
+          legend: { display: true },
+          tooltip: {
+            callbacks: {
+              label: function (context) {
+                const suffix = ratingCurveMode === 'percent' ? '%' : ' film' + (context.parsed.y === 1 ? '' : 's');
+                return context.dataset.label + ': ' + context.parsed.y + suffix;
+              },
+            },
+          },
+        },
       },
     });
+
+    document.querySelectorAll('[data-chart-toggle="ratingCurve"] .toggle-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('[data-chart-toggle="ratingCurve"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        ratingCurveMode = btn.dataset.view === 'percent' ? 'percent' : 'count';
+        const percent = ratingCurveMode === 'percent';
+        ratingCurveChart.data.datasets[0].data = percent
+          ? toPercent(chartData.rating_curve.data_a, chartData.rating_curve.count_a)
+          : chartData.rating_curve.data_a;
+        ratingCurveChart.data.datasets[1].data = percent
+          ? toPercent(chartData.rating_curve.data_b, chartData.rating_curve.count_b)
+          : chartData.rating_curve.data_b;
+        ratingCurveChart.options.scales.y.ticks.callback = percent ? function (value) { return value + '%'; } : undefined;
+        ratingCurveChart.update();
+      });
+    });
   </script>
+</div>
 {% endblock %}

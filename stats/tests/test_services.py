@@ -924,9 +924,33 @@ class BuildCompareContextTests(TestCase):
         self.assertEqual(context['only_b_count'], 0)
         self.assertEqual(context['overlap_pct'], round(2 / 3 * 100, 1))
 
+    def test_rated_higher_counts(self):
+        # Both shared films ('Shared Close': A 4.0/B 4.5, 'Shared Far': A 1.0/B 5.0)
+        # have B rating higher -- A never rates higher in this fixture.
+        context = build_compare_context(self.session_a, self.session_b)
+        self.assertEqual(context['rated_higher_a_count'], 0)
+        self.assertEqual(context['rated_higher_b_count'], 2)
+
     def test_disagreement_ordering(self):
         context = build_compare_context(self.session_a, self.session_b)
         self.assertEqual(context['biggest_disagreements'][0]['title'], 'Shared Far')
+
+    def test_disagreements_capped_at_grid_display_cap_but_total_stays_accurate(self):
+        # Most different ratings renders as a 2-rows-of-8 poster grid
+        # (GRID_DISPLAY_CAP=16), not the old table's TOP_N=10.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(17):
+            uri, title = f'https://boxd.it/gap{i}', f'Gap Film {i}'
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('5.0'),
+            )
+            RatingEntry.objects.create(
+                import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('1.0'),
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['biggest_disagreements']), 16)
+        self.assertEqual(context['biggest_disagreements_total'], 17)
 
     def test_agreement_pct_uses_half_star_threshold(self):
         context = build_compare_context(self.session_a, self.session_b)
@@ -975,29 +999,29 @@ class BuildCompareContextTests(TestCase):
 
 
 class SharedPeopleTests(TestCase):
-    """Shared favorite directors/actors: both sessions need MIN_COUNT_FOR_AVERAGE+
-    rated films from the same person, ranked by whichever of the two averages is
-    lower -- a real shared favorite, not one person dragging a blended average up."""
+    """Shared favorite directors/actors: both sessions need MIN_COUNT_FOR_FAVORITE_DIRECTOR+
+    (directors) / MIN_COUNT_FOR_FAVORITE_ACTOR+ (actors) rated films from the same
+    person -- same thresholds as Director's Cut's own favorites -- ranked by whichever
+    of the two averages is lower -- a real shared favorite, not one person dragging a
+    blended average up."""
 
     def test_shared_director_needs_min_count_in_both_sessions(self):
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        movie1 = _make_movie(2500, 'Dir Film 1', 2020, 100, 'Drama', 'Shared Director')
-        movie2 = _make_movie(2501, 'Dir Film 2', 2021, 100, 'Drama', 'Shared Director')
+        movies = [_make_movie(2500 + j, f'Dir Film {j}', 2020, 100, 'Drama', 'Shared Director') for j in range(3)]
 
-        RatingEntry.objects.create(
-            import_session=session_a, letterboxd_uri='https://boxd.it/d1a', title='Dir Film 1', year=2020,
-            rating=Decimal('5.0'), movie=movie1,
-        )
-        RatingEntry.objects.create(
-            import_session=session_a, letterboxd_uri='https://boxd.it/d2a', title='Dir Film 2', year=2021,
-            rating=Decimal('4.0'), movie=movie2,
-        )
-        # Session B only rates ONE film from this director -- below MIN_COUNT_FOR_AVERAGE.
-        RatingEntry.objects.create(
-            import_session=session_b, letterboxd_uri='https://boxd.it/d1b', title='Dir Film 1', year=2020,
-            rating=Decimal('5.0'), movie=movie1,
-        )
+        # Session A rates all 3 (meets MIN_COUNT_FOR_FAVORITE_DIRECTOR).
+        for j, movie in enumerate(movies):
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/d{j}a', title=f'Dir Film {j}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        # Session B only rates 2 -- below MIN_COUNT_FOR_FAVORITE_DIRECTOR (3).
+        for j, movie in enumerate(movies[:2]):
+            RatingEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/d{j}b', title=f'Dir Film {j}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
         context = build_compare_context(session_a, session_b)
         self.assertNotIn('Shared Director', [row['name'] for row in context['shared_directors']])
 
@@ -1006,26 +1030,26 @@ class SharedPeopleTests(TestCase):
         session_b = ImportSession.objects.create(display_name='Sam')
 
         # Weak Link: A loves them (5.0 avg), B is lukewarm (2.0 avg) -- min = 2.0.
-        for j in range(2):
+        for j in range(3):
             movie = _make_movie(2600 + j, f'Weak A{j}', 2020, 100, 'Drama', 'Weak Link Director')
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/weakA{j}', title=f'Weak A{j}',
                 year=2020, rating=Decimal('5.0'), movie=movie,
             )
-        for j in range(2):
+        for j in range(3):
             movie = _make_movie(2610 + j, f'Weak B{j}', 2020, 100, 'Drama', 'Weak Link Director')
             RatingEntry.objects.create(
                 import_session=session_b, letterboxd_uri=f'https://boxd.it/weakB{j}', title=f'Weak B{j}',
                 year=2020, rating=Decimal('2.0'), movie=movie,
             )
         # Consistently Loved: both average 4.0 -- min = 4.0, higher than Weak Link's 2.0.
-        for j in range(2):
+        for j in range(3):
             movie = _make_movie(2700 + j, f'Strong A{j}', 2020, 100, 'Drama', 'Consistently Loved Director')
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/strongA{j}', title=f'Strong A{j}',
                 year=2020, rating=Decimal('4.0'), movie=movie,
             )
-        for j in range(2):
+        for j in range(3):
             movie = _make_movie(2710 + j, f'Strong B{j}', 2020, 100, 'Drama', 'Consistently Loved Director')
             RatingEntry.objects.create(
                 import_session=session_b, letterboxd_uri=f'https://boxd.it/strongB{j}', title=f'Strong B{j}',
@@ -1035,19 +1059,23 @@ class SharedPeopleTests(TestCase):
         context = build_compare_context(session_a, session_b)
         names = [row['name'] for row in context['shared_directors']]
         self.assertEqual(names, ['Consistently Loved Director', 'Weak Link Director'])
+        # Films-watched count travels alongside the average for each person.
+        weak = next(row for row in context['shared_directors'] if row['name'] == 'Weak Link Director')
+        self.assertEqual(weak['count_a'], 3)
+        self.assertEqual(weak['count_b'], 3)
 
     def test_shared_actor_appears_when_both_qualify(self):
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         actor = Person.objects.get_or_create(tmdb_id=980, defaults={'name': 'Shared Actor'})[0]
-        for j in range(2):
+        for j in range(4):
             movie = _make_movie(2800 + j, f'Actor Film A{j}', 2020, 100, 'Drama')
             Credit.objects.create(movie=movie, person=actor, order=0)
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/actA{j}', title=f'Actor Film A{j}',
                 year=2020, rating=Decimal('4.0'), movie=movie,
             )
-        for j in range(2):
+        for j in range(4):
             movie = _make_movie(2810 + j, f'Actor Film B{j}', 2020, 100, 'Drama')
             Credit.objects.create(movie=movie, person=actor, order=0)
             RatingEntry.objects.create(
@@ -1057,10 +1085,150 @@ class SharedPeopleTests(TestCase):
         context = build_compare_context(session_a, session_b)
         self.assertIn('Shared Actor', [row['name'] for row in context['shared_actors']])
 
+    def test_shared_actor_needs_min_count_in_both_sessions(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        actor = Person.objects.get_or_create(tmdb_id=981, defaults={'name': 'Under-Qualified Actor'})[0]
+        for j in range(4):
+            movie = _make_movie(2900 + j, f'Under Film A{j}', 2020, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor, order=0)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/underA{j}', title=f'Under Film A{j}',
+                year=2020, rating=Decimal('4.0'), movie=movie,
+            )
+        # Session B only rates 3 films from this actor -- below MIN_COUNT_FOR_FAVORITE_ACTOR (4).
+        for j in range(3):
+            movie = _make_movie(2910 + j, f'Under Film B{j}', 2020, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor, order=0)
+            RatingEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/underB{j}', title=f'Under Film B{j}',
+                year=2020, rating=Decimal('4.5'), movie=movie,
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertNotIn('Under-Qualified Actor', [row['name'] for row in context['shared_actors']])
+
+
+class TopPeopleTests(TestCase):
+    """Each session's own top 10 favorite directors/actors (the 'Side by side' view),
+    independent of the other session -- same MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR
+    qualifying bar as the Shared list, since both represent 'favorite'."""
+
+    def test_own_top_directors_uses_favorite_director_threshold(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        movies = [_make_movie(3000 + j, f'Solo Dir Film {j}', 2020, 100, 'Drama', 'Solo Director') for j in range(2)]
+        # Only 2 films -- below MIN_COUNT_FOR_FAVORITE_DIRECTOR (3), should not appear.
+        for j, movie in enumerate(movies):
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/solo{j}', title=f'Solo Dir Film {j}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertNotIn('Solo Director', [row['name'] for row in context['top_directors_a']])
+
+    def test_own_top_directors_includes_film_count(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        movies = [_make_movie(3100 + j, f'Qual Dir Film {j}', 2020, 100, 'Drama', 'Qualified Director') for j in range(3)]
+        for j, movie in enumerate(movies):
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/qual{j}', title=f'Qual Dir Film {j}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        context = build_compare_context(session_a, session_b)
+        row = next(row for row in context['top_directors_a'] if row['name'] == 'Qualified Director')
+        self.assertEqual(row['count'], 3)
+
+    def test_own_top_actors_excludes_cameo_appearances(self):
+        # Same cameo semantics as dashboard.py's favorite_actors -- a cameo appearance
+        # doesn't count toward the MIN_COUNT_FOR_FAVORITE_ACTOR qualifying count.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        actor = Person.objects.get_or_create(tmdb_id=990, defaults={'name': 'Cameo-Prone Actor'})[0]
+
+        # 3 lead-billed rated films -- one short of MIN_COUNT_FOR_FAVORITE_ACTOR (4).
+        for j in range(3):
+            movie = _make_movie(3200 + j, f'Lead Film {j}', 2020, 100, 'Drama')
+            _cast_movie(movie, actor, order=1, total_cast_size=40)  # 1/40, nowhere near a cameo
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/lead{j}', title=f'Lead Film {j}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        # A 4th rated film, but only as a cameo (30/40 = 0.75 relative billing in a
+        # 40-person cast) -- without cameo filtering this would push the count to 4
+        # and qualify the actor; with it, the count should stay at 3 and the actor
+        # should not appear at all.
+        cameo_movie = _make_movie(3210, 'Cameo Film', 2021, 100, 'Drama')
+        _cast_movie(cameo_movie, actor, order=30, total_cast_size=40)
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/cameo', title='Cameo Film',
+            year=2021, rating=Decimal('5.0'), movie=cameo_movie,
+        )
+
+        context = build_compare_context(session_a, session_b)
+        self.assertNotIn('Cameo-Prone Actor', [row['name'] for row in context['top_actors_a']])
+
+    def test_own_top_actors_cameo_rating_excluded_from_avg(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        actor = Person.objects.get_or_create(tmdb_id=991, defaults={'name': 'Steady Actor'})[0]
+
+        # 4 lead-billed films, all rated 5.0 -- meets MIN_COUNT_FOR_FAVORITE_ACTOR.
+        for j in range(4):
+            movie = _make_movie(3300 + j, f'Steady Film {j}', 2020, 100, 'Drama')
+            _cast_movie(movie, actor, order=1, total_cast_size=40)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/steady{j}', title=f'Steady Film {j}',
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        # A cameo film rated very differently -- if it leaked into the average or
+        # count, both would visibly shift.
+        cameo_movie = _make_movie(3310, 'Steady Cameo Film', 2021, 100, 'Drama')
+        _cast_movie(cameo_movie, actor, order=30, total_cast_size=40)
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/steady-cameo', title='Steady Cameo Film',
+            year=2021, rating=Decimal('0.5'), movie=cameo_movie,
+        )
+
+        context = build_compare_context(session_a, session_b)
+        row = next(row for row in context['top_actors_a'] if row['name'] == 'Steady Actor')
+        self.assertEqual(row['count'], 4)
+        self.assertEqual(row['avg'], 5.0)
+
+    def test_own_top_directors_tie_break_uses_displayed_not_raw_average(self):
+        # Same values/reasoning as dashboard.py's own
+        # test_favorite_directors_tie_break_uses_displayed_not_raw_average: Director
+        # Fewer's true average (4.625) is HIGHER than Director More's (4.5714), but
+        # both round to the same displayed "4.6" -- so the tiebreak must use the
+        # rounded value, or More (7 films) would wrongly rank below Fewer (4 films).
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        fewer_ratings = [Decimal('4.5'), Decimal('4.5'), Decimal('4.5'), Decimal('5.0')]
+        more_ratings = [Decimal('4.5')] * 6 + [Decimal('5.0')]
+
+        for i, rating in enumerate(fewer_ratings):
+            movie = _make_movie(3400 + i, f'Fewer Film {i}', 2020 + i, 100, 'Drama', 'Director Fewer')
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+        for i, rating in enumerate(more_ratings):
+            movie = _make_movie(3410 + i, f'More Film {i}', 2020 + i, 100, 'Drama', 'Director More')
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+
+        top_directors_a = build_compare_context(session_a, session_b)['top_directors_a']
+        by_name = {row['name']: row for row in top_directors_a}
+        self.assertEqual(round(by_name['Director Fewer']['avg'], 1), round(by_name['Director More']['avg'], 1))
+        self.assertEqual(top_directors_a[0]['name'], 'Director More')
+
 
 class SameDayLogsTests(TestCase):
-    """'Same day, movie night' -- dates both sessions logged at least one film on,
-    not necessarily the same film."""
+    """'Same day logs' -- dates both sessions logged at least one film on, not
+    necessarily the same film -- plus exact_matches, the strict subset where the
+    *same* (title, year) was logged by both on the same date."""
 
     def test_only_shared_dates_included(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1081,8 +1249,57 @@ class SameDayLogsTests(TestCase):
         dates = [row['date'].isoformat() for row in context['same_day_logs']]
         self.assertEqual(dates, ['2024-01-01'])
         row = context['same_day_logs'][0]
-        self.assertEqual(row['films_a'], ['A Film (2020)'])
-        self.assertEqual(row['films_b'], ['B Film (2021)'])
+        self.assertEqual([f['title'] for f in row['films_a']], ['A Film'])
+        self.assertEqual([f['title'] for f in row['films_b']], ['B Film'])
+
+    def test_exact_matches_only_when_same_title_and_year_same_date(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        # Same film, same date -- an exact match.
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/m1a', title='Movie Night Film', year=2020,
+            watched_date='2024-03-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/m1b', title='Movie Night Film', year=2020,
+            watched_date='2024-03-01',
+        )
+        # Same date, different films -- a shared logging day, but NOT an exact match.
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/m2a', title='A Only Film', year=2021,
+            watched_date='2024-04-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/m2b', title='B Only Film', year=2021,
+            watched_date='2024-04-01',
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['same_day_logs']), 2)
+        self.assertEqual(context['same_day_exact_matches_total'], 1)
+        match = context['same_day_exact_matches'][0]
+        self.assertEqual(match['title'], 'Movie Night Film')
+        self.assertEqual(match['date'].isoformat(), '2024-03-01')
+
+    def test_exact_matches_capped_at_grid_display_cap_not_top_n(self):
+        # Exact matches renders as the same .favs--compact poster grid as Same
+        # rating/Watchlist matches (GRID_DISPLAY_CAP=16), not same_day_logs' own
+        # TOP_N=10 -- they're two different caps on the same build_compare_context
+        # call, easy to accidentally cross-wire.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(17):
+            date = f'2024-05-{i + 1:02d}'
+            DiaryEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/ea{i}', title=f'Exact Film {i}',
+                year=2020, watched_date=date,
+            )
+            DiaryEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/eb{i}', title=f'Exact Film {i}',
+                year=2020, watched_date=date,
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['same_day_exact_matches']), 16)
+        self.assertEqual(context['same_day_exact_matches_total'], 17)
 
     def test_multiple_films_same_day_all_listed(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1101,7 +1318,7 @@ class SameDayLogsTests(TestCase):
         )
         context = build_compare_context(session_a, session_b)
         row = context['same_day_logs'][0]
-        self.assertEqual(sorted(row['films_a']), ['First Film (2020)', 'Second Film (2021)'])
+        self.assertEqual(sorted(f['title'] for f in row['films_a']), ['First Film', 'Second Film'])
 
     def test_capped_but_total_stays_accurate(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1364,10 +1581,12 @@ class SameRatingTests(TestCase):
         titles = [f['title'] for f in context['same_rating']]
         self.assertEqual(titles, ['Alpha Tie', 'High Tie', 'Zeta Tie', 'Mid Tie', 'Low Tie'])
 
-    def test_capped_at_top_n(self):
+    def test_capped_at_grid_display_cap_but_total_stays_accurate(self):
+        # Same rating renders as a 2-rows-of-8 poster grid (GRID_DISPLAY_CAP=16), not
+        # the table-based TOP_N=10 lists elsewhere on the page.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(11):
+        for i in range(17):
             uri, title = f'https://boxd.it/tie{i}', f'Tie Film {i}'
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('4.0'),
@@ -1376,7 +1595,80 @@ class SameRatingTests(TestCase):
                 import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('4.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['same_rating']), 10)
+        self.assertEqual(len(context['same_rating']), 16)
+        self.assertEqual(context['same_rating_total'], 17)
+
+    def test_displayed_subset_spreads_across_rating_tiers(self):
+        # 20 films tied at 5.0 would fill the whole 16-slot grid on their own if it
+        # were a plain top-16 slice -- the grid should instead pull from every tier
+        # that has films (4.0 and 3.0 here), not just the oversized top one, while
+        # still displaying highest-to-lowest overall.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for rating, count in [(Decimal('5.0'), 20), (Decimal('4.0'), 3), (Decimal('3.0'), 3)]:
+            for i in range(count):
+                uri, title = f'https://boxd.it/{rating}-{i}', f'{rating} Film {i}'
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+                )
+                RatingEntry.objects.create(
+                    import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+                )
+        context = build_compare_context(session_a, session_b)
+        same_rating = context['same_rating']
+        self.assertEqual(len(same_rating), 16)
+
+        ratings_shown = [f['rating_a'] for f in same_rating]
+        self.assertIn(Decimal('4.0'), ratings_shown)
+        self.assertIn(Decimal('3.0'), ratings_shown)
+        # Both lower tiers are small enough (3 each) to be fully included.
+        self.assertEqual(ratings_shown.count(Decimal('4.0')), 3)
+        self.assertEqual(ratings_shown.count(Decimal('3.0')), 3)
+        self.assertEqual(ratings_shown.count(Decimal('5.0')), 10)
+        # Still displayed highest-to-lowest despite the round-robin selection.
+        self.assertEqual(ratings_shown, sorted(ratings_shown, reverse=True))
+
+    def test_grid_weighted_toward_high_ratings(self):
+        # GRID_HIGH_RATING_SLOTS (10) of the 16 slots go to 4.0+ films, the rest to
+        # whatever's below -- with plenty of films on both sides of that line (12
+        # each here), the split should land at exactly 10 high / 6 low, not an even
+        # 8/8 or a plain top-16 slice that's all 5.0s.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for rating, count in [(Decimal('5.0'), 12), (Decimal('2.0'), 12)]:
+            for i in range(count):
+                uri, title = f'https://boxd.it/{rating}-{i}', f'{rating} Film {i}'
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+                )
+                RatingEntry.objects.create(
+                    import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+                )
+        context = build_compare_context(session_a, session_b)
+        ratings_shown = [f['rating_a'] for f in context['same_rating']]
+        self.assertEqual(len(ratings_shown), 16)
+        self.assertEqual(ratings_shown.count(Decimal('5.0')), 10)
+        self.assertEqual(ratings_shown.count(Decimal('2.0')), 6)
+
+    def test_grid_low_tier_shortfall_reclaimed_by_high_tier(self):
+        # Only 2 films below 4.0 stars exist -- the other 14 slots should all go to
+        # 4.0+ films instead of leaving 4 slots empty.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for rating, count in [(Decimal('4.5'), 20), (Decimal('2.0'), 2)]:
+            for i in range(count):
+                uri, title = f'https://boxd.it/{rating}-{i}', f'{rating} Film {i}'
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+                )
+                RatingEntry.objects.create(
+                    import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+                )
+        context = build_compare_context(session_a, session_b)
+        ratings_shown = [f['rating_a'] for f in context['same_rating']]
+        self.assertEqual(len(ratings_shown), 16)
+        self.assertEqual(ratings_shown.count(Decimal('2.0')), 2)
+        self.assertEqual(ratings_shown.count(Decimal('4.5')), 14)
 
 
 class RatingCurveTests(TestCase):
@@ -1430,9 +1722,11 @@ class WatchlistMatchesTests(TestCase):
         self.assertEqual([f['title'] for f in context['watchlist_matches']], ['Shared Watchlist Film'])
 
     def test_cap_and_total(self):
+        # Watchlist matches renders as a 2-rows-of-8 poster grid (GRID_DISPLAY_CAP=16),
+        # not the table-based TOP_N=10 lists elsewhere on the page.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(11):
+        for i in range(17):
             title = f'Watchlist Film {i}'
             WatchlistEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/a-w{i}', title=title, year=2020,
@@ -1441,8 +1735,8 @@ class WatchlistMatchesTests(TestCase):
                 import_session=session_b, letterboxd_uri=f'https://boxd.it/b-w{i}', title=title, year=2020,
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['watchlist_matches']), 10)
-        self.assertEqual(context['watchlist_matches_total'], 11)
+        self.assertEqual(len(context['watchlist_matches']), 16)
+        self.assertEqual(context['watchlist_matches_total'], 17)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1525,16 +1819,19 @@ class FiveStarExclusiveTests(TestCase):
         context = build_compare_context(session_a, session_b)
         self.assertIn('Five Star Film', [f['title'] for f in context['five_star_only_a']])
 
-    def test_capped_at_top_n(self):
+    def test_capped_at_grid_display_cap_narrow_but_total_stays_accurate(self):
+        # Five-star exclusives renders as a 2-rows-of-6 poster grid
+        # (GRID_DISPLAY_CAP_NARROW=12), not the table-based TOP_N=10 lists elsewhere.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(11):
+        for i in range(13):
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/five{i}', title=f'Five Star Film {i}',
                 year=2020, rating=Decimal('5.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['five_star_only_a']), 10)
+        self.assertEqual(len(context['five_star_only_a']), 12)
+        self.assertEqual(context['five_star_only_a_total'], 13)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')
