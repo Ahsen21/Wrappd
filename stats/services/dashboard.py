@@ -26,6 +26,10 @@ WEEKDAY_NAMES = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thu
 # abbreviations for chart labels, which get cramped in the narrow three-across layout.
 COUNTRY_NAME_OVERRIDES = {'United States of America': 'USA', 'United Kingdom': 'UK'}
 TOP_N = 10
+# Most rewatched films/directors both render as a fixed poster grid (see .favs--four
+# in base.css), not a table -- 3 rows of 4 (12) rather than TOP_N's 10, so the grid
+# fills evenly instead of leaving a sparse partial last row.
+REWATCH_GRID_DISPLAY_CAP = 12
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
 # rather than asserting a fake average.
@@ -557,19 +561,26 @@ def _rewatch_leaderboard(diary) -> dict:
         diary.values('title', 'year')
         .annotate(watch_count=Count('id'), poster_path=Min('movie__poster_path'))
         .filter(watch_count__gt=1)
-        .order_by('-watch_count')[:TOP_N]
+        .order_by('-watch_count')[:REWATCH_GRID_DISPLAY_CAP]
     )
     for row in most_rewatched_films:
-        row['poster_url'] = _tmdb_image_url(row.pop('poster_path'), 'w185')
+        # w342, not w185 -- this renders as a full poster card now (.favs--four), not
+        # the small inline .film-thumb it was originally sized for. TMDB's smaller
+        # size tiers are more aggressively compressed at the source, so w185 still
+        # looks visibly softer than w342 even scaled down to the same final size.
+        row['poster_url'] = _tmdb_image_url(row.pop('poster_path'), 'w342')
 
     most_rewatched_directors = list(
         diary.filter(rewatch=True, movie__directors__isnull=False)
         .values('movie__directors__name')
         .annotate(count=Count('id'), profile_path=Min('movie__directors__profile_path'))
-        .order_by('-count')[:TOP_N]
+        .order_by('-count')[:REWATCH_GRID_DISPLAY_CAP]
     )
     for row in most_rewatched_directors:
-        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
+        # w342, not w185 -- same reasoning as most_rewatched_films' poster_url above:
+        # this now renders as a full .fav-card photo, not the small .person-thumb it
+        # was originally sized for.
+        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w342')
 
     rewatch_qs = diary.filter(rewatch=True, rating__isnull=False)
     rewatch_avg = rewatch_qs.aggregate(avg=Avg('rating'))['avg'] if rewatch_qs.count() >= MIN_COUNT_FOR_AVERAGE else None

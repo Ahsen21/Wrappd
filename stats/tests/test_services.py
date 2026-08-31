@@ -276,6 +276,31 @@ class DashboardNewStatsTests(TestCase):
         self.assertIsNone(rewatch['rewatch_avg_rating'])
         self.assertAlmostEqual(float(rewatch['first_watch_avg_rating']), 10 / 3, places=4)
 
+    def test_rewatch_leaderboard_capped_at_grid_display_cap(self):
+        # Most rewatched films renders as a 3-rows-of-4 poster grid
+        # (REWATCH_GRID_DISPLAY_CAP=12), not TOP_N's 10.
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(13):
+            movie = _make_movie(2000 + i, f'Rewatch Film {i}', 2020, 100, 'Drama')
+            for _ in range(2):
+                DiaryEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}-{_}', title=movie.title,
+                    year=movie.release_year, watched_date='2024-01-01', movie=movie,
+                )
+        rewatch = build_dashboard_context(session)['rewatch']
+        self.assertEqual(len(rewatch['most_rewatched_films']), 12)
+
+    def test_rewatch_leaderboard_directors_capped_at_grid_display_cap(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(13):
+            movie = _make_movie(2100 + i, f'Rewatch Dir Film {i}', 2020, 100, 'Drama', f'Rewatch Dir {i}')
+            DiaryEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/rwd{i}', title=movie.title,
+                year=movie.release_year, watched_date='2024-01-01', movie=movie, rewatch=True,
+            )
+        rewatch = build_dashboard_context(session)['rewatch']
+        self.assertEqual(len(rewatch['most_rewatched_directors']), 12)
+
     def test_viewing_calendar(self):
         calendar = build_dashboard_context(self.session)['calendar']
         self.assertEqual(calendar['longest_streak_days'], 3)
