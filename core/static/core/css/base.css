@@ -66,6 +66,13 @@ a { color: var(--accent-2); }
   background: linear-gradient(135deg, var(--surface), var(--bg));
   isolation: isolate;
 }
+/* Double Feature's hero never sets --hero-image (no single poster represents a
+   two-person comparison, so it always falls through to the plain gradient) -- so
+   unlike Director's Cut, there's no backdrop image here that overflow:hidden needs
+   to keep clipped to the rounded corners. Freeing it up lets the rightmost hero-grid
+   tiles' .info-tip bubbles (position:absolute, centered under the icon) actually
+   extend past the hero's own edge instead of being cut off there. */
+.compare-page .hero { overflow: visible; }
 .hero::before {
   content: '';
   position: absolute;
@@ -102,6 +109,17 @@ a { color: var(--accent-2); }
 }
 .hero h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0; }
 .hero-grid { margin-top: 1.75rem; }
+/* Forces exactly 4 columns (2 rows of 4, in DOM order) regardless of viewport width
+   -- .grid.hero-grid, not .hero-grid alone, so this beats .grid's own auto-fit
+   columns rule on specificity rather than depending on which rule happens to come
+   later in the file. Without it, .grid's auto-fit would fit however many 180px+
+   tiles the hero's full width allows (5 on a typical desktop), breaking the
+   intentional row1/row2 grouping (Shared films/Same rating/rated-higher counts vs.
+   the summary percentages) into an uneven 5+3 split instead. */
+.grid.hero-grid { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 700px) {
+  .grid.hero-grid { grid-template-columns: repeat(2, 1fr); }
+}
 .hero-favs { margin-top: 1.75rem; }
 .hero-favs-label {
   color: var(--muted);
@@ -242,6 +260,14 @@ h2#watching-stats {
   font-size: 2.5rem;
 }
 .fav-card p { margin: 0.5rem 0 0; font-size: 0.9rem; }
+
+/* Scoped override for Double Feature's Same rating grid -- roughly half the usual
+   fav-card size. Same-rating can list up to TOP_N (10) posters at once, more than
+   any .favs usage on Director's Cut (Highlights tops out around 7), so full-size
+   tiles there would run noticeably taller/wider than every other card on the page. */
+.favs--compact .fav-card { flex-basis: 70px; max-width: 80px; }
+.favs--compact .fav-placeholder { font-size: 1.25rem; }
+.favs--compact .fav-card p { font-size: 0.75rem; }
 
 .processing { margin-top: 1rem; color: var(--muted); }
 .spinner {
@@ -409,6 +435,66 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   font-size: 0.9rem;
 }
 
+/* Double Feature only -- every poster/headshot thumbnail on that page, ~20% larger
+   than Director's Cut's own sizing. Scoped to .compare-page (compare.html's content
+   wrapper) rather than changing the shared classes outright, since Director's Cut
+   uses the exact same .film-thumb/.person-thumb/.favs--compact classes and its
+   current sizing wasn't part of this request. */
+.compare-page .person-thumb, .compare-page .person-thumb-placeholder { width: 50px; height: 50px; }
+/* Sized well beyond the base 28x42 -- .film-thumb is only used by Most different
+   ratings and Same day logs now (every other film list on this page moved to the
+   .fav-card poster grid), and both wanted bigger posters specifically to fill the
+   dead space a lone thumbnail left in its column once the title text next to it
+   was dropped. */
+.compare-page .film-thumb, .compare-page .film-thumb-placeholder { width: 50px; height: 75px; }
+/* Same rating and Watchlist matches display as a fixed 2 rows of 8
+   (GRID_DISPLAY_CAP=16 in compare.py) -- flex-basis computed from the card's own
+   width and the row's gap, rather than a fixed px value, so it lands on exactly 8
+   per row regardless of the card's actual rendered width (unlike a fixed max-width,
+   which only *happens* to fit 8 at one particular viewport width). */
+.compare-page .favs--compact .fav-card {
+  flex: 0 0 calc((100% - 7 * 1.25rem) / 8);
+  max-width: calc((100% - 7 * 1.25rem) / 8);
+}
+.compare-page .favs--compact .fav-placeholder { font-size: 1.5rem; }
+/* Five-star exclusives sits in a half-width .two-col card, not the full-width card
+   Same rating/Watchlist matches use -- 2 rows of 6 (GRID_DISPLAY_CAP_NARROW=12 in
+   compare.py) fits that narrower card the way 2 rows of 8 fits a full-width one.
+   Same specificity as the 8-column rule above, so source order (this rule coming
+   later) is what makes it win on .favs--six grids. */
+.compare-page .favs--six .fav-card {
+  flex: 0 0 calc((100% - 5 * 1.25rem) / 6);
+  max-width: calc((100% - 5 * 1.25rem) / 6);
+}
+
+/* Same day logs -- replaces a Date/A/B table (mostly empty column width on days with
+   just one film each) with a flow of day cards, each only as wide as its own content
+   needs. flex-wrap, not grid -- grid's auto-fill tracks stretch every card to the
+   same track width regardless of content (a 1-film day and a 4-film day would render
+   identically wide), which defeats the point; flex items size to content by default
+   and just wrap to a new row when a row fills up. */
+/* center, not flex-start -- flex-start left-packs each row and dumps all the
+   leftover width as a single gap on the right, which reads as uneven since the last
+   (partial) row looks nothing like the others; centering balances every row instead. */
+.day-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.25rem; }
+.day-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem;
+  text-align: center;
+}
+.day-card-date { margin: 0 0 0.75rem; font-weight: 700; }
+.day-card-films { display: flex; justify-content: center; align-items: flex-start; gap: 1rem; }
+.day-card-films > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; }
+/* Colors each side's posters to match the page's a-color/b-color convention -- the
+   only other cue a day card gives for "whose films are these" is left-vs-right
+   position, which isn't self-explanatory without the .color-key legend above it.
+   outline, not border, so it doesn't add to each thumbnail's box size. */
+.day-card-films > div:first-child .film-thumb,
+.day-card-films > div:first-child .film-thumb-placeholder { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.day-card-films > div:last-child .film-thumb,
+.day-card-films > div:last-child .film-thumb-placeholder { outline: 2px solid var(--accent-3); outline-offset: 2px; }
+
 /* A small "i" badge that reveals a plain-English explanation on hover/focus -- for
    spots where a number or a filtered list needs a sentence of context (e.g. what
    "True score" means) that doesn't belong permanently on the page. cursor:help and
@@ -493,3 +579,13 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .b-color { color: var(--accent-3); }
 .stat .value.a-color { color: var(--accent-2); }
 .stat .value.b-color { color: var(--accent-3); }
+
+/* Small "which color is which person" legend -- for sections whose only cue that a
+   value/poster belongs to A or B is its color (e.g. Most different ratings' two
+   rating lines, Same day logs' two poster groups per card), where there's no table
+   header or label doing that job otherwise. */
+.color-key { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 0 0 1rem; }
+.color-key-item { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.85rem; }
+.color-key-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.color-key-dot.a-color { background: var(--accent-2); }
+.color-key-dot.b-color { background: var(--accent-3); }
