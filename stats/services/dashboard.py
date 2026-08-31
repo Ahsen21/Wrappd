@@ -30,6 +30,9 @@ TOP_N = 10
 # in base.css), not a table -- 3 rows of 4 (12) rather than TOP_N's 10, so the grid
 # fills evenly instead of leaving a sparse partial last row.
 REWATCH_GRID_DISPLAY_CAP = 12
+# Biggest over-rates/under-rates render as a fixed poster grid (see .favs--three in
+# base.css), not a table -- 4 rows of 3 (12) rather than TOP_N's 10.
+TASTE_GRID_DISPLAY_CAP = 12
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
 # rather than asserting a fake average.
@@ -203,7 +206,10 @@ def build_dashboard_context(import_session) -> dict:
     top_directors = list(
         watched_movies.filter(directors__isnull=False)
         .values('directors__name')
-        .annotate(count=Count('tmdb_id'), profile_path=Min('directors__profile_path'))
+        .annotate(
+            count=Count('tmdb_id'), profile_path=Min('directors__profile_path'),
+            director_tmdb_id=Min('directors__tmdb_id'),
+        )
     )
     for row in top_directors:
         stats = director_ratings.get(row['directors__name'])
@@ -229,19 +235,27 @@ def build_dashboard_context(import_session) -> dict:
     # so favorite_actors (built from actor_rating_lists in _favorite_people) can show
     # a headshot too, without a second query back through Credit.
     actor_profile_paths = {}
-    for person_name, movie_id, profile_path in (
+    # Alongside profile_path, also track one tmdb_id per name -- same reason as
+    # top_directors' director_tmdb_id below, so the template can link to a person
+    # filmography view without a second name-based lookup.
+    actor_tmdb_ids = {}
+    for person_name, movie_id, profile_path, person_tmdb_id in (
         Credit.objects.filter(movie_id__in=rated_ratings_by_movie)
         .exclude(id__in=cameo_credit_ids)
-        .values_list('person__name', 'movie_id', 'person__profile_path')
+        .values_list('person__name', 'movie_id', 'person__profile_path', 'person__tmdb_id')
     ):
         actor_rating_lists[person_name].append(rated_ratings_by_movie[movie_id])
         actor_profile_paths[person_name] = profile_path
+        actor_tmdb_ids[person_name] = person_tmdb_id
 
     top_actors = list(
         Credit.objects.filter(movie__in=watched_movies)
         .exclude(id__in=cameo_credit_ids)
         .values('person__name')
-        .annotate(count=Count('movie', distinct=True), profile_path=Min('person__profile_path'))
+        .annotate(
+            count=Count('movie', distinct=True), profile_path=Min('person__profile_path'),
+            actor_tmdb_id=Min('person__tmdb_id'),
+        )
     )
     for row in top_actors:
         ratings = actor_rating_lists.get(row['person__name'], [])
@@ -275,7 +289,7 @@ def build_dashboard_context(import_session) -> dict:
     rating_by_language = _rating_by_language(rated)
     rewatch = _rewatch_leaderboard(diary)
     calendar = _viewing_calendar(diary)
-    favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths, avg_rating)
+    favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, avg_rating)
     favorites = _favorite_films(import_session)
     top_tags = _tag_distribution(diary)
     highlights = _highlights(watched_movies, rated, rewatch['most_rewatched_films'])
@@ -388,13 +402,17 @@ def _taste_vs_crowd(rated) -> dict:
             'your_rating': row['rating'],
             'crowd_rating': crowd_rating,
             'delta': delta,
-            'poster_url': _tmdb_image_url(row['movie__poster_path'], 'w92'),
+            # w342, not w92 -- this renders as a full poster grid card now, not the
+            # small inline .film-thumb it was originally sized for. TMDB's smaller
+            # size tiers are more aggressively compressed at the source, so w92
+            # would look visibly softer than w342 even scaled down to the same size.
+            'poster_url': _tmdb_image_url(row['movie__poster_path'], 'w342'),
         })
 
     raw_avg = _avg_or_none([d['delta'] for d in deltas])
     generosity_score = round(raw_avg, 2) if raw_avg is not None else None
-    overrates = sorted(deltas, key=lambda d: d['delta'], reverse=True)[:TOP_N]
-    underrates = sorted(deltas, key=lambda d: d['delta'])[:TOP_N]
+    overrates = sorted(deltas, key=lambda d: d['delta'], reverse=True)[:TASTE_GRID_DISPLAY_CAP]
+    underrates = sorted(deltas, key=lambda d: d['delta'])[:TASTE_GRID_DISPLAY_CAP]
 
     return {
         'rated_and_enriched_count': len(deltas),
@@ -573,7 +591,10 @@ def _rewatch_leaderboard(diary) -> dict:
     most_rewatched_directors = list(
         diary.filter(rewatch=True, movie__directors__isnull=False)
         .values('movie__directors__name')
-        .annotate(count=Count('id'), profile_path=Min('movie__directors__profile_path'))
+        .annotate(
+            count=Count('id'), profile_path=Min('movie__directors__profile_path'),
+            director_tmdb_id=Min('movie__directors__tmdb_id'),
+        )
         .order_by('-count')[:REWATCH_GRID_DISPLAY_CAP]
     )
     for row in most_rewatched_directors:
@@ -709,7 +730,7 @@ def _true_score(avg, count, k, overall_avg_rating, five_star_count=0) -> float:
     return score
 
 
-def _favorite_people(rated, actor_rating_lists, actor_profile_paths, overall_avg_rating) -> dict:
+def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, overall_avg_rating) -> dict:
     """Your highest-rated directors/actors -- an average-rating ranking, distinct from
     top_directors/top_actors which rank by how many films you've watched from them,
     not how highly you rated them. Directors need 2+ rated films, actors need 4+ (see
@@ -737,6 +758,7 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, overall_avg
         .annotate(
             avg=Avg('rating'), count=Count('id'), profile_path=Min('movie__directors__profile_path'),
             five_star_count=Count('id', filter=Q(rating=Decimal('5.0'))),
+            director_tmdb_id=Min('movie__directors__tmdb_id'),
         )
         .filter(count__gte=MIN_COUNT_FOR_FAVORITE_DIRECTOR)
     )
@@ -757,6 +779,7 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, overall_avg
             'count': len(ratings),
             'five_star_count': sum(1 for r in ratings if r == Decimal('5.0')),
             'profile_url': _tmdb_image_url(actor_profile_paths.get(name, ''), 'w185'),
+            'actor_tmdb_id': actor_tmdb_ids.get(name),
         }
         for name, ratings in actor_rating_lists.items()
         if len(ratings) >= MIN_COUNT_FOR_FAVORITE_ACTOR

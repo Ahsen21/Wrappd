@@ -18,10 +18,15 @@ TOP_N = 10
 # .favs--compact in base.css), not a table -- capped at 2 full rows of 8 (16) rather
 # than TOP_N's 10, since 10 left an awkward sparse second row of 2.
 GRID_DISPLAY_CAP = 16
-# Five-star exclusives renders the same kind of poster grid, but inside a .two-col
-# half-width card rather than a full-width one -- 2 rows of 6 (12) fits that narrower
-# card the way GRID_DISPLAY_CAP's 2 rows of 8 fits a full-width one.
-GRID_DISPLAY_CAP_NARROW = 12
+# Top unseen (formerly "five-star exclusives") renders the same kind of poster grid,
+# but inside a .two-col half-width card rather than a full-width one -- 2 rows of 5
+# (10) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 8 fits a
+# full-width one.
+GRID_DISPLAY_CAP_NARROW = 10
+# Qualifying bar for _top_unseen_by_other -- "X loved it, Y hasn't seen it" needs to
+# stay a genuine "loved it" claim, not just whatever happens to be the highest-rated
+# film left after excluding what the other person's seen.
+TOP_UNSEEN_MIN_RATING = Decimal('4.0')
 # Same rating's grid is weighted toward higher ratings rather than an even spread --
 # up to GRID_HIGH_RATING_SLOTS of the GRID_DISPLAY_CAP slots go to 4.0+ tiers, the
 # rest to whatever's left (typically low-to-mid tiers, since same_rating_all is
@@ -135,24 +140,29 @@ def _same_day_logs(session_a, session_b) -> dict:
     return {'logs': logs, 'exact_matches': exact_matches}
 
 
-def _five_star_only(import_session, other_watched_keys):
-    """Films this session rated a perfect 5.0 that the other session has no record of
-    at all -- not just a different rating. other_watched_keys is the other session's
-    _film_map key set (rated union diary), reusing the same 'watched' identity this
-    whole file already establishes rather than a separate WatchedEntry-based
-    definition just for this one list. Returns every match, uncapped -- the caller
-    slices to GRID_DISPLAY_CAP_NARROW and tracks the true total, same cap-with-total
-    pattern as watchlist_matches/only_a_films."""
-    rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session, rating=Decimal('5.0')))
+def _top_unseen_by_other(import_session, other_watched_keys):
+    """This session's TOP_UNSEEN_MIN_RATING+ films, ranked highest rating first, that
+    the other session has no record of watching at all -- not restricted to a
+    perfect 5.0 (that returned nothing for anyone who rarely hands out perfect
+    scores), but still a real "loved it" bar, not just "the best of whatever's left."
+    other_watched_keys is the other session's _film_map key set (rated union diary),
+    reusing the same 'watched' identity this whole file already establishes rather
+    than a separate WatchedEntry-based definition just for this one list. Returns
+    every match, uncapped -- the caller slices to GRID_DISPLAY_CAP_NARROW and tracks
+    the true total, same cap-with-total pattern as watchlist_matches/only_a_films.
+
+    Sorted by rating descending, (title, year) as the tiebreak for determinism --
+    `rated` is a QuerySet with unspecified DB ordering otherwise, and two different
+    films can also share a title (a remake)."""
+    rated = exclude_tv_shows(
+        RatingEntry.objects.filter(import_session=import_session, rating__gte=TOP_UNSEEN_MIN_RATING)
+    )
     films = [
-        {'title': r.title, 'year': r.year, 'movie_id': r.movie_id}
+        {'title': r.title, 'year': r.year, 'movie_id': r.movie_id, 'rating': r.rating}
         for r in rated
         if (r.title, r.year) not in other_watched_keys
     ]
-    # year, not just title, as the sort key -- two different films can share a title
-    # (a remake), and title alone would leave their relative order dependent on
-    # `rated`'s unspecified DB iteration order.
-    films.sort(key=lambda f: (f['title'], f['year']))
+    films.sort(key=lambda f: (-f['rating'], f['title'], f['year']))
     return films
 
 
@@ -442,8 +452,8 @@ def build_compare_context(session_a, session_b) -> dict:
     same_day_films_a = [f for entry in same_day_logs_all for f in entry['films_a']]
     same_day_films_b = [f for entry in same_day_logs_all for f in entry['films_b']]
 
-    five_star_only_a_all = _five_star_only(session_a, keys_b)
-    five_star_only_b_all = _five_star_only(session_b, keys_a)
+    top_unseen_a_all = _top_unseen_by_other(session_a, keys_b)
+    top_unseen_b_all = _top_unseen_by_other(session_b, keys_a)
 
     curve_a = _rating_curve(session_a)
     curve_b = _rating_curve(session_b)
@@ -466,14 +476,14 @@ def build_compare_context(session_a, session_b) -> dict:
     # One bulk lookup spanning every film list on the page rather than a query per
     # list. Resolves onto shared_films (and therefore biggest_disagreements/
     # same_rating too, since they're built via sorted() on the same dict objects),
-    # only_a/b_films, five_star_only_a/b, watchlist_matches_all (and therefore its
+    # only_a/b_films, top_unseen_a/b, watchlist_matches_all (and therefore its
     # capped watchlist_matches slice), the same-day films (and therefore
     # same_day_logs_all's nested films_a/films_b), and same_day_exact_matches_all.
     movie_ids = {
         f['movie_id']
         for f in (
             shared_films + only_a_films_all + only_b_films_all
-            + five_star_only_a_all + five_star_only_b_all + watchlist_matches_all
+            + top_unseen_a_all + top_unseen_b_all + watchlist_matches_all
             + same_day_films_a + same_day_films_b + same_day_exact_matches_all
         )
         if f.get('movie_id')
@@ -481,7 +491,7 @@ def build_compare_context(session_a, session_b) -> dict:
     movies_by_id = Movie.objects.in_bulk(movie_ids)
     _resolve_posters(
         movies_by_id, shared_films, only_a_films_all, only_b_films_all,
-        five_star_only_a_all, five_star_only_b_all, watchlist_matches_all,
+        top_unseen_a_all, top_unseen_b_all, watchlist_matches_all,
         same_day_films_a, same_day_films_b, same_day_exact_matches_all,
     )
 
@@ -540,10 +550,10 @@ def build_compare_context(session_a, session_b) -> dict:
         # same_day_logs' TOP_N.
         'same_day_exact_matches': same_day_exact_matches_all[:GRID_DISPLAY_CAP],
         'same_day_exact_matches_total': len(same_day_exact_matches_all),
-        'five_star_only_a': five_star_only_a_all[:GRID_DISPLAY_CAP_NARROW],
-        'five_star_only_a_total': len(five_star_only_a_all),
-        'five_star_only_b': five_star_only_b_all[:GRID_DISPLAY_CAP_NARROW],
-        'five_star_only_b_total': len(five_star_only_b_all),
+        'top_unseen_a': top_unseen_a_all[:GRID_DISPLAY_CAP_NARROW],
+        'top_unseen_a_total': len(top_unseen_a_all),
+        'top_unseen_b': top_unseen_b_all[:GRID_DISPLAY_CAP_NARROW],
+        'top_unseen_b_total': len(top_unseen_b_all),
         'avg_rating_a': curve_a['avg'],
         'avg_rating_b': curve_b['avg'],
         'chart_data': {

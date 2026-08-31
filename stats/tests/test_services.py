@@ -13,6 +13,7 @@ from imports.models import (
 )
 from stats.services.compare import build_compare_context
 from stats.services.dashboard import build_dashboard_context
+from stats.services.person_filmography import build_person_filmography
 from tmdb.models import Country, Credit, Genre, Movie, Person, TitleYearLookup
 
 
@@ -178,6 +179,20 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(taste['underrates'][0]['title'], 'Beta')
         self.assertEqual(taste['underrates'][0]['delta'], Decimal('-2.0'))
 
+    def test_taste_capped_at_grid_display_cap(self):
+        # Biggest over-rates/under-rates render as a 4-rows-of-3 poster grid
+        # (TASTE_GRID_DISPLAY_CAP=12), not TOP_N's 10.
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(13):
+            movie = Movie.objects.create(tmdb_id=3000 + i, title=f'Taste Film {i}', tmdb_rating=Decimal('5.0'))
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/taste{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        taste = build_dashboard_context(session)['taste']
+        self.assertEqual(len(taste['overrates']), 12)
+        self.assertEqual(len(taste['underrates']), 12)
+
     def test_rating_by_genre_and_decade(self):
         genre_decade = build_dashboard_context(self.session)['genre_decade']
 
@@ -271,6 +286,9 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(rewatch['most_rewatched_films'][0]['title'], 'Alpha')
         self.assertEqual(rewatch['most_rewatched_films'][0]['watch_count'], 2)
         self.assertEqual(rewatch['most_rewatched_directors'][0]['movie__directors__name'], 'Dir X')
+        self.assertEqual(
+            rewatch['most_rewatched_directors'][0]['director_tmdb_id'], Person.objects.get(name='Dir X').tmdb_id
+        )
         # Only 1 rated rewatch (Alpha) in this fixture -- below the count>=2 threshold,
         # so rewatch_avg_rating is None rather than a single-film "average".
         self.assertIsNone(rewatch['rewatch_avg_rating'])
@@ -370,6 +388,8 @@ class FavoritePeopleTieBreakTests(TestCase):
         top_directors = build_dashboard_context(session)['top_directors']
         self.assertEqual(top_directors[0]['count'], top_directors[1]['count'])  # tied on count
         self.assertEqual(top_directors[0]['directors__name'], 'Director High')
+        # director_tmdb_id threads Person.tmdb_id through for the filmography modal.
+        self.assertEqual(top_directors[0]['director_tmdb_id'], Person.objects.get(name='Director High').tmdb_id)
 
     def test_favorite_directors_tied_on_avg_broken_by_count(self):
         session = ImportSession.objects.create(display_name='Alex')
@@ -387,6 +407,9 @@ class FavoritePeopleTieBreakTests(TestCase):
         favorite_directors = build_dashboard_context(session)['favorite_people']['favorite_directors']
         self.assertEqual(favorite_directors[0]['avg'], favorite_directors[1]['avg'])  # tied on avg
         self.assertEqual(favorite_directors[0]['movie__directors__name'], 'Director Many')
+        self.assertEqual(
+            favorite_directors[0]['director_tmdb_id'], Person.objects.get(name='Director Many').tmdb_id
+        )
 
     def test_favorite_directors_tie_break_uses_displayed_not_raw_average(self):
         # Director Fewer's true average (4.625) is HIGHER than Director More's (4.5714),
@@ -526,6 +549,7 @@ class TrueScoreTests(TestCase):
         }
         self.assertIn('Actor True', by_true_score)
         self.assertIsInstance(by_true_score['Actor True']['true_score'], float)
+        self.assertEqual(by_true_score['Actor True']['actor_tmdb_id'], 950)
 
     def test_true_score_breaks_a_tie_in_favor_of_more_five_star_ratings(self):
         # Same count (4) and same average (4.0) for both actors -- identical
@@ -581,6 +605,7 @@ class CameoFilteringTests(TestCase):
 
         top_actors = {row['person__name']: row for row in build_dashboard_context(session)['top_actors']}
         self.assertEqual(top_actors['Cameo Actor']['count'], 1)  # only the lead-role film counts
+        self.assertEqual(top_actors['Cameo Actor']['actor_tmdb_id'], 700)
 
     def test_same_relative_billing_not_a_cameo_in_a_small_cast(self):
         # Same 0.583 relative billing as the cameo case above, but the cast is only
@@ -1802,9 +1827,10 @@ class WatchlistMatchesTests(TestCase):
         self.assertEqual(by_title['No Movie Match']['poster_url'], '')
 
 
-class FiveStarExclusiveTests(TestCase):
+class TopUnseenByOtherTests(TestCase):
     """'Not the other' means the other session has no record of the film at all --
-    not just a different rating, and not an unrated diary log either."""
+    not just a different rating, and not an unrated diary log either. Ranked by
+    rating descending, not restricted to a perfect 5.0."""
 
     def test_excluded_when_other_diary_logged_but_unrated(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1818,7 +1844,7 @@ class FiveStarExclusiveTests(TestCase):
             watched_date='2024-01-01',
         )
         context = build_compare_context(session_a, session_b)
-        self.assertNotIn('Five Star Film', [f['title'] for f in context['five_star_only_a']])
+        self.assertNotIn('Five Star Film', [f['title'] for f in context['top_unseen_a']])
 
     def test_excluded_when_other_also_rated_it(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1832,7 +1858,7 @@ class FiveStarExclusiveTests(TestCase):
             rating=Decimal('5.0'),
         )
         context = build_compare_context(session_a, session_b)
-        self.assertNotIn('Five Star Film', [f['title'] for f in context['five_star_only_a']])
+        self.assertNotIn('Five Star Film', [f['title'] for f in context['top_unseen_a']])
 
     def test_included_when_other_has_no_record_at_all(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1842,21 +1868,56 @@ class FiveStarExclusiveTests(TestCase):
             rating=Decimal('5.0'),
         )
         context = build_compare_context(session_a, session_b)
-        self.assertIn('Five Star Film', [f['title'] for f in context['five_star_only_a']])
+        self.assertIn('Five Star Film', [f['title'] for f in context['top_unseen_a']])
 
-    def test_capped_at_grid_display_cap_narrow_but_total_stays_accurate(self):
-        # Five-star exclusives renders as a 2-rows-of-6 poster grid
-        # (GRID_DISPLAY_CAP_NARROW=12), not the table-based TOP_N=10 lists elsewhere.
+    def test_not_restricted_to_five_stars_but_needs_four_plus(self):
+        # A 4.5-star film unseen by the other still qualifies (not restricted to a
+        # perfect 5.0) -- but a 3.5-star one doesn't, since TOP_UNSEEN_MIN_RATING=4.0
+        # keeps this a genuine "loved it" claim, not just "the best of whatever's left."
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(13):
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/high', title='High Rated Film', year=2020,
+            rating=Decimal('4.5'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/mid', title='Mid Rated Film', year=2021,
+            rating=Decimal('3.5'),
+        )
+        context = build_compare_context(session_a, session_b)
+        titles = [f['title'] for f in context['top_unseen_a']]
+        self.assertIn('High Rated Film', titles)
+        self.assertNotIn('Mid Rated Film', titles)
+
+    def test_ranked_by_rating_descending(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for uri, title, rating in [
+            ('https://boxd.it/mid', 'Mid Film', Decimal('4.0')),
+            ('https://boxd.it/high', 'High Film', Decimal('5.0')),
+            ('https://boxd.it/upper-mid', 'Upper Mid Film', Decimal('4.5')),
+        ]:
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=rating,
+            )
+        context = build_compare_context(session_a, session_b)
+        titles = [f['title'] for f in context['top_unseen_a']]
+        self.assertEqual(titles, ['High Film', 'Upper Mid Film', 'Mid Film'])
+
+    def test_capped_at_grid_display_cap_narrow_but_total_stays_accurate(self):
+        # Renders as a 2-rows-of-5 poster grid (GRID_DISPLAY_CAP_NARROW=10), not the
+        # table-based TOP_N=10 lists elsewhere (same number, different reason -- this
+        # one's a hard cap on a fixed grid shape, not "top N by some ranking").
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(11):
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/five{i}', title=f'Five Star Film {i}',
                 year=2020, rating=Decimal('5.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['five_star_only_a']), 12)
-        self.assertEqual(context['five_star_only_a_total'], 13)
+        self.assertEqual(len(context['top_unseen_a']), 10)
+        self.assertEqual(context['top_unseen_a_total'], 11)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -1867,4 +1928,120 @@ class FiveStarExclusiveTests(TestCase):
             rating=Decimal('5.0'),
         )
         context = build_compare_context(session_a, session_b)
-        self.assertNotIn('Some TV Show', [f['title'] for f in context['five_star_only_a']])
+        self.assertNotIn('Some TV Show', [f['title'] for f in context['top_unseen_a']])
+
+
+class PersonFilmographyTests(TestCase):
+    """build_person_filmography -- the click-a-name modal's data source. 'Watched'
+    here means the same thing as everywhere else on the dashboard: watched.csv,
+    diary.csv, or ratings.csv, via _watched_movies."""
+
+    def test_director_role_only_includes_their_films(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=501, name='Director X')
+        their_movie = Movie.objects.create(tmdb_id=601, title='Their Film', release_year=2020)
+        their_movie.directors.add(director)
+        other_movie = _make_movie(602, 'Someone Else\'s Film', 2020, 100, 'Drama', 'Director Y')
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/a', title='Their Film', year=2020,
+            rating=Decimal('4.5'), movie=their_movie,
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/b', title='Someone Else\'s Film', year=2020,
+            rating=Decimal('3.0'), movie=other_movie,
+        )
+        result = build_person_filmography(session, director, 'director')
+        titles = [f['title'] for f in result['films']]
+        self.assertEqual(titles, ['Their Film'])
+        self.assertEqual(result['films'][0]['rating'], '4.5')
+        self.assertEqual(result['person_name'], 'Director X')
+        self.assertEqual(result['role'], 'director')
+
+    def test_actor_role_excludes_cameo(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        actor = Person.objects.create(tmdb_id=502, name='Actor X')
+        lead_movie = _make_movie(610, 'Lead Film', 2020, 100, 'Drama')
+        _cast_movie(lead_movie, actor, order=1, total_cast_size=40)  # 1/40, not a cameo
+        cameo_movie = _make_movie(611, 'Cameo Film', 2021, 100, 'Drama')
+        _cast_movie(cameo_movie, actor, order=30, total_cast_size=40)  # 30/40 = 0.75, a cameo
+        for movie, uri in [(lead_movie, 'https://boxd.it/lead'), (cameo_movie, 'https://boxd.it/cameo')]:
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=uri, title=movie.title, year=movie.release_year,
+                rating=Decimal('4.0'), movie=movie,
+            )
+        result = build_person_filmography(session, actor, 'actor')
+        titles = [f['title'] for f in result['films']]
+        self.assertEqual(titles, ['Lead Film'])
+
+    def test_excludes_confirmed_tv(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=503, name='Director Z')
+        movie = Movie.objects.create(tmdb_id=612, title='Some TV Show', release_year=2020)
+        movie.directors.add(director)
+        TitleYearLookup.objects.create(title='Some TV Show', year=2020, movie=None, is_tv_show=True)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
+            rating=Decimal('5.0'), movie=movie,
+        )
+        result = build_person_filmography(session, director, 'director')
+        self.assertEqual(result['films'], [])
+
+    def test_diary_only_rating_used_when_no_rating_entry(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=504, name='Director Diary')
+        movie = Movie.objects.create(tmdb_id=613, title='Diary Rated Film', release_year=2020)
+        movie.directors.add(director)
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/d', title='Diary Rated Film', year=2020,
+            watched_date='2024-01-01', rating=Decimal('3.5'), movie=movie,
+        )
+        result = build_person_filmography(session, director, 'director')
+        self.assertEqual(result['films'][0]['rating'], '3.5')
+
+    def test_diary_logged_unrated(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=505, name='Director Unrated')
+        movie = Movie.objects.create(tmdb_id=614, title='Unrated Diary Film', release_year=2020)
+        movie.directors.add(director)
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/u', title='Unrated Diary Film', year=2020,
+            watched_date='2024-01-01', movie=movie,
+        )
+        result = build_person_filmography(session, director, 'director')
+        self.assertEqual(result['films'][0]['rating'], None)
+
+    def test_watched_csv_only_still_appears_as_unrated(self):
+        # No RatingEntry, no DiaryEntry -- only a watched.csv row. This is the
+        # explicitly-decided behavior: still shown, rating=None, so the modal's film
+        # count doesn't fall short of what "Most watched" already counted.
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=506, name='Director Watched Only')
+        movie = Movie.objects.create(tmdb_id=615, title='Watched Only Film', release_year=2020)
+        movie.directors.add(director)
+        WatchedEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/w', title='Watched Only Film', year=2020,
+            movie=movie,
+        )
+        result = build_person_filmography(session, director, 'director')
+        self.assertEqual(len(result['films']), 1)
+        self.assertEqual(result['films'][0]['rating'], None)
+
+    def test_no_films_returns_empty_list(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=507, name='Unwatched Director')
+        Movie.objects.create(tmdb_id=616, title='Never Watched', release_year=2020).directors.add(director)
+        result = build_person_filmography(session, director, 'director')
+        self.assertEqual(result['films'], [])
+
+    def test_ranked_by_rating_descending(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=508, name='Ranked Director')
+        for tmdb_id, title, rating in [(620, 'Low Film', '2.0'), (621, 'High Film', '5.0'), (622, 'Mid Film', '3.5')]:
+            movie = Movie.objects.create(tmdb_id=tmdb_id, title=title, release_year=2020)
+            movie.directors.add(director)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/{tmdb_id}', title=title, year=2020,
+                rating=Decimal(rating), movie=movie,
+            )
+        result = build_person_filmography(session, director, 'director')
+        self.assertEqual([f['title'] for f in result['films']], ['High Film', 'Mid Film', 'Low Film'])
