@@ -302,6 +302,17 @@ h2#watching-stats {
    height card to card instead of aligning across the row. */
 .favs--four-sm .fav-card p:first-of-type { min-height: 44px; }
 
+/* Biggest over-rates/under-rates -- forces exactly 6 posters per row (2 rows of 6,
+   matching TASTE_GRID_DISPLAY_CAP=12), computed from the card's own width rather
+   than a fixed px value (same reasoning as this file's other N-per-row rules). Own
+   name (not .favs--four-lg/-sm) since those two carry Most rewatched films/
+   directors' own size tuning -- this grid needs plain 6-column math, not their
+   enlarged/shrunk image sizing. */
+.favs--taste .fav-card {
+  flex: 0 0 calc((100% - 5 * 1.25rem) / 6);
+  max-width: calc((100% - 5 * 1.25rem) / 6);
+}
+
 .processing { margin-top: 1rem; color: var(--muted); }
 .spinner {
   display: inline-block;
@@ -490,14 +501,14 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   max-width: calc((100% - 7 * 1.25rem) / 8);
 }
 .compare-page .favs--compact .fav-placeholder { font-size: 1.5rem; }
-/* Five-star exclusives sits in a half-width .two-col card, not the full-width card
-   Same rating/Watchlist matches use -- 2 rows of 6 (GRID_DISPLAY_CAP_NARROW=12 in
-   compare.py) fits that narrower card the way 2 rows of 8 fits a full-width one.
-   Same specificity as the 8-column rule above, so source order (this rule coming
-   later) is what makes it win on .favs--six grids. */
-.compare-page .favs--six .fav-card {
-  flex: 0 0 calc((100% - 5 * 1.25rem) / 6);
-  max-width: calc((100% - 5 * 1.25rem) / 6);
+/* "X loved it, Y hasn't seen it" sits in a half-width .two-col card, not the
+   full-width card Same rating/Watchlist matches use -- 2 rows of 5
+   (GRID_DISPLAY_CAP_NARROW=10 in compare.py) fits that narrower card the way 2 rows
+   of 8 fits a full-width one. Same specificity as the 8-column rule above, so
+   source order (this rule coming later) is what makes it win on .favs--five grids. */
+.compare-page .favs--five .fav-card {
+  flex: 0 0 calc((100% - 4 * 1.25rem) / 5);
+  max-width: calc((100% - 4 * 1.25rem) / 5);
 }
 
 /* Same day logs -- replaces a Date/A/B table (mostly empty column width on days with
@@ -622,3 +633,73 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .color-key-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .color-key-dot.a-color { background: var(--accent-2); }
 .color-key-dot.b-color { background: var(--accent-3); }
+
+/* Director's Cut's person-filmography modal -- click a director/actor's name to see
+   which of their films this session has watched and how it rated them. No modal
+   pattern existed anywhere in the site before this; built from scratch rather than
+   stretching .info-tip (hover-only, capped at 220px -- wrong interaction model and
+   far too small for a scrollable film list). */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 100;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(560px, 100%);
+  max-height: min(80vh, 700px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; }
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.25rem;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { overflow-y: auto; padding: 1rem 1.25rem; }
+/* Fixed 4 columns -- the modal's own width is fixed (min(560px, 100%)), not a
+   variable page-width container like the site's other poster grids, so a plain
+   CSS grid is simpler here than their flex-basis-percentage N-per-row trick. Reuses
+   .fav-card for each poster (its own img/placeholder/aspect-ratio/caption styling),
+   with max-width cleared since that's a flex-context constraint that would otherwise
+   leave dead space inside a grid cell instead of filling it. */
+.modal-film-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; }
+.modal-film-grid .fav-card { max-width: none; }
+.modal-loading, .modal-empty, .modal-error { color: var(--muted); padding: 1rem 0; text-align: center; }
+/* Wraps just the name text next to a person-thumb, not the whole row -- the
+   thumbnail stays non-interactive. Inherits the surrounding table/card font instead
+   of looking like a generic <button>. */
+.person-trigger {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.person-trigger:hover, .person-trigger:focus-visible { text-decoration: underline; }

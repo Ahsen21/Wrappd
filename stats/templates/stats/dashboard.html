@@ -200,7 +200,7 @@
           {% for row in top_directors %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.directors__name }}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.directors__name }}</button>
             </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -211,7 +211,7 @@
           {% for row in favorite_people.favorite_directors %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.movie__directors__name }}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
             </td><td>{{ row.avg|floatformat:1 }} ★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -222,7 +222,7 @@
           {% for row in favorite_people.favorite_directors_by_true_score %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.movie__directors__name }}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
             </td><td>{{ row.true_score|floatformat:2 }} ★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -242,7 +242,7 @@
           {% for row in top_actors %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.person__name }}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
             </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -253,7 +253,7 @@
           {% for row in favorite_people.favorite_actors %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.person__name }}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
             </td><td>{{ row.avg|floatformat:1 }} ★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -264,7 +264,7 @@
           {% for row in favorite_people.favorite_actors_by_true_score %}
             <tr><td class="name-cell">
               {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              {{ row.person__name }}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
             </td><td>{{ row.true_score|floatformat:2 }} ★</td><td>{{ row.count }}</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
         </tbody>
@@ -274,48 +274,44 @@
 
   <div class="card">
     <h3>Taste vs. the crowd</h3>
-    <p class="muted">Your rating vs. TMDB's community average, across {{ taste.rated_and_enriched_count }} rated films.</p>
+    <p class="muted">Your rating compared to TMDB's community average.</p>
     <div class="grid">
       <div class="stat">
         {% if taste.generosity_score == None %}
           <div class="value">—</div>
           <div class="label">Not enough data yet</div>
         {% else %}
-          <div class="value">{% if taste.generosity_score > 0 %}+{% endif %}{{ taste.generosity_score|floatformat:1 }}</div>
+          <div class="value">{% if taste.generosity_score > 0 %}+{% endif %}{{ taste.generosity_score|floatformat:2 }}</div>
           <div class="label">{% if taste.generosity_score > 0 %}More generous{% elif taste.generosity_score < 0 %}Harsher{% else %}Generosity{% endif %} than the crowd</div>
         {% endif %}
       </div>
     </div>
-    <div class="two-col">
-      <div>
-        <h4>Biggest over-rates</h4>
-        <table>
-          <thead><tr><th>Film</th><th>You</th><th>Crowd</th></tr></thead>
-          <tbody>
-            {% for film in taste.overrates %}
-              <tr><td class="name-cell">
-                {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-                {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.your_rating|floatformat:1 }} ★</td><td>{{ film.crowd_rating|floatformat:1 }} ★</td></tr>
-            {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-          </tbody>
-        </table>
+    <h4>Biggest over-rates</h4>
+    {% if taste.overrates %}
+      <div class="favs favs--taste">
+        {% for film in taste.overrates %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
       </div>
-      <div>
-        <h4>Biggest under-rates</h4>
-        <table>
-          <thead><tr><th>Film</th><th>You</th><th>Crowd</th></tr></thead>
-          <tbody>
-            {% for film in taste.underrates %}
-              <tr><td class="name-cell">
-                {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
-                {{ film.title }} ({{ film.year }})
-              </td><td>{{ film.your_rating|floatformat:1 }} ★</td><td>{{ film.crowd_rating|floatformat:1 }} ★</td></tr>
-            {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-          </tbody>
-        </table>
+    {% else %}
+      <p class="muted">No data yet</p>
+    {% endif %}
+    <h4>Biggest under-rates</h4>
+    {% if taste.underrates %}
+      <div class="favs favs--taste">
+        {% for film in taste.underrates %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
       </div>
-    </div>
+    {% else %}
+      <p class="muted">No data yet</p>
+    {% endif %}
   </div>
 
   <h2 id="watching-stats">Watching Stats</h2>
@@ -377,6 +373,16 @@
   <div class="card">
     <h3>Tags</h3>
     <div class="h-chart"><canvas id="tagsChart"></canvas></div>
+  </div>
+
+  <div class="modal-backdrop" id="personModalBackdrop" hidden>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="personModalTitle">
+      <div class="modal-header">
+        <h3 id="personModalTitle"></h3>
+        <button type="button" class="modal-close" id="personModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="personModalBody"></div>
+    </div>
   </div>
 
   {{ chart_data|json_script:"chart-data" }}
@@ -442,6 +448,78 @@
         });
       });
     });
+
+    // Person filmography modal -- click a director/actor's name (.person-trigger,
+    // wired up throughout Favorite Directors/Actors) to fetch and show which of
+    // their films this session has watched. First
+    // fetch()-based feature in this codebase -- every other view is a full server
+    // render, and building this as its own IIFE (rather than folding it into the
+    // data-toggle-group block above) keeps that boundary clear.
+    (function () {
+      const backdrop = document.getElementById('personModalBackdrop');
+      const titleEl = document.getElementById('personModalTitle');
+      const bodyEl = document.getElementById('personModalBody');
+      const closeBtn = document.getElementById('personModalClose');
+      // Sentinel tmdb_id swapped for the real one at click time -- keeps this
+      // script decoupled from the URL's literal path shape rather than
+      // hardcoding "/dashboard/.../person/<id>/" directly.
+      const urlTemplate = "{% url 'stats:person_filmography' session_id=import_session.id tmdb_id=999999999 %}";
+      let lastTrigger = null;
+
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      function openModal() {
+        backdrop.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeModal() {
+        backdrop.hidden = true;
+        document.body.style.overflow = '';
+        if (lastTrigger) lastTrigger.focus();
+      }
+
+      function renderFilms(data) {
+        if (!data.films.length) {
+          bodyEl.innerHTML = '<p class="modal-empty">No watched films from this session yet.</p>';
+          return;
+        }
+        const cards = data.films.map(function (film) {
+          const yearText = film.year ? ' (' + film.year + ')' : '';
+          const tooltip = escapeHtml(film.title + yearText);
+          const poster = film.poster_url
+            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
+            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
+          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
+          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
+        }).join('');
+        bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
+      }
+
+      document.querySelectorAll('.person-trigger').forEach(function (trigger) {
+        trigger.addEventListener('click', function () {
+          lastTrigger = trigger;
+          titleEl.textContent = trigger.textContent;
+          bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
+          openModal();
+          const url = urlTemplate.replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
+          fetch(url)
+            .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
+            .then(renderFilms)
+            .catch(function () {
+              bodyEl.innerHTML = '<p class="modal-error">Couldn’t load this person’s films. Try again.</p>';
+            });
+        });
+      });
+
+      closeBtn.addEventListener('click', closeModal);
+      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !backdrop.hidden) closeModal(); });
+    })();
 
     const chartData = JSON.parse(document.getElementById('chart-data').textContent);
     const gridColor = 'rgba(138, 153, 168, 0.15)';

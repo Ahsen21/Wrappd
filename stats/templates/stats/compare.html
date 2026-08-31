@@ -85,14 +85,12 @@
   <div class="two-col">
     <div class="card">
       <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
-      <!-- {% if five_star_only_a_total > five_star_only_a|length %}
-        <p class="muted caption">Showing {{ five_star_only_a|length }} of {{ five_star_only_a_total|intcomma }}.</p>
-      {% endif %} -->
-      {% if five_star_only_a %}
-        <div class="favs favs--compact favs--six">
-          {% for film in five_star_only_a %}
+      {% if top_unseen_a %}
+        <div class="favs favs--compact favs--five">
+          {% for film in top_unseen_a %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+              <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
             </div>
           {% endfor %}
         </div>
@@ -102,14 +100,12 @@
     </div>
     <div class="card">
       <h3>{{ session_b.display_name|default:"Person B" }} loved it, {{ session_a.display_name|default:"Person A" }} hasn't seen it</h3>
-      <!-- {% if five_star_only_b_total > five_star_only_b|length %}
-        <p class="muted caption">Showing {{ five_star_only_b|length }} of {{ five_star_only_b_total|intcomma }}.</p>
-      {% endif %} -->
-      {% if five_star_only_b %}
-        <div class="favs favs--compact favs--six">
-          {% for film in five_star_only_b %}
+      {% if top_unseen_b %}
+        <div class="favs favs--compact favs--five">
+          {% for film in top_unseen_b %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+              <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
             </div>
           {% endfor %}
         </div>
