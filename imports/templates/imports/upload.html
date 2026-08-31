@@ -21,11 +21,11 @@
           {% for error in form.export_file.errors %}<li>{{ error }}</li>{% endfor %}
         </ul>
       {% endif %}
-      <p class="muted">Processing can take a little while the first time, since new films need to be looked up on TMDB.</p>
+      <p class="muted">This can take a little while the first time, since new films need to be processed first.</p>
       <button type="submit" id="upload-submit">Upload &amp; analyze</button>
       <div class="processing" id="upload-processing" hidden>
         <span class="spinner"></span>
-        Processing your export — this can take a minute or two for a large diary. Don't close this tab.
+        Processing your export — this can take a few minutes. Don't close this tab.
       </div>
     </form>
   </div>

@@ -481,3 +481,15 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .caption {
   font-size: 0.75rem;
 }
+
+/* Person-A/person-B value coloring on Double Feature -- blue/orange, not green.
+   Green is the site's general interactive accent (toggle-btn.active, .stat .value's
+   own default, etc.); reusing it here too would blur that meaning with "this
+   specific number belongs to person A" on a page that's fundamentally about two
+   people, not one. The .stat .value compound selectors exist to outrank
+   .stat .value's own default color rule (equal specificity otherwise, would depend
+   on source order). */
+.a-color { color: var(--accent-2); }
+.b-color { color: var(--accent-3); }
+.stat .value.a-color { color: var(--accent-2); }
+.stat .value.b-color { color: var(--accent-3); }

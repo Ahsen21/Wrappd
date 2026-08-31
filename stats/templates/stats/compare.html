@@ -19,11 +19,11 @@
     <h3>Rating distributions</h3>
     <div class="grid">
       <div class="stat">
-        <div class="value">{% if avg_rating_a %}{{ avg_rating_a|floatformat:2 }} ★{% else %}—{% endif %}</div>
+        <div class="value a-color">{% if avg_rating_a %}{{ avg_rating_a|floatformat:2 }} ★{% else %}—{% endif %}</div>
         <div class="label">{{ session_a.display_name|default:"Person A" }}'s avg rating</div>
       </div>
       <div class="stat">
-        <div class="value">{% if avg_rating_b %}{{ avg_rating_b|floatformat:2 }} ★{% else %}—{% endif %}</div>
+        <div class="value b-color">{% if avg_rating_b %}{{ avg_rating_b|floatformat:2 }} ★{% else %}—{% endif %}</div>
         <div class="label">{{ session_b.display_name|default:"Person B" }}'s avg rating</div>
       </div>
     </div>
@@ -39,7 +39,7 @@
           <tr><td class="name-cell">
             {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
             {{ film.title }} ({{ film.year }})
-          </td><td>{{ film.rating_a|floatformat:1 }} ★</td><td>{{ film.rating_b|floatformat:1 }} ★</td></tr>
+          </td><td class="a-color">{{ film.rating_a|floatformat:1 }} ★</td><td class="b-color">{{ film.rating_b|floatformat:1 }} ★</td></tr>
         {% empty %}<tr><td colspan="3" class="muted">No exact matches yet</td></tr>{% endfor %}
       </tbody>
     </table>
@@ -54,7 +54,7 @@
           <tr><td class="name-cell">
             {% if film.poster_url %}<img class="film-thumb" src="{{ film.poster_url }}" alt="">{% else %}<div class="film-thumb-placeholder">🎬</div>{% endif %}
             {{ film.title }} ({{ film.year }})
-          </td><td>{{ film.rating_a|floatformat:1 }} ★</td><td>{{ film.rating_b|floatformat:1 }} ★</td><td>{{ film.delta|floatformat:1 }}</td></tr>
+          </td><td class="a-color">{{ film.rating_a|floatformat:1 }} ★</td><td class="b-color">{{ film.rating_b|floatformat:1 }} ★</td><td>{{ film.delta|floatformat:1 }}</td></tr>
         {% empty %}<tr><td colspan="4" class="muted">No rated films in common yet</td></tr>{% endfor %}
       </tbody>
     </table>
@@ -131,7 +131,7 @@
         <thead><tr><th>Director</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
         <tbody>
           {% for row in shared_directors %}
-            <tr><td>{{ row.name }}</td><td>{{ row.avg_a|floatformat:1 }} ★</td><td>{{ row.avg_b|floatformat:1 }} ★</td></tr>
+            <tr><td>{{ row.name }}</td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No shared favorites yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -142,7 +142,7 @@
         <thead><tr><th>Actor</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
         <tbody>
           {% for row in shared_actors %}
-            <tr><td>{{ row.name }}</td><td>{{ row.avg_a|floatformat:1 }} ★</td><td>{{ row.avg_b|floatformat:1 }} ★</td></tr>
+            <tr><td>{{ row.name }}</td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td></tr>
           {% empty %}<tr><td colspan="3" class="muted">No shared favorites yet</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -176,7 +176,7 @@
       <thead><tr><th>Date</th><th>{{ session_a.display_name|default:"A" }}</th><th>{{ session_b.display_name|default:"B" }}</th></tr></thead>
       <tbody>
         {% for row in same_day_logs %}
-          <tr><td>{{ row.date }}</td><td>{{ row.films_a|join:", " }}</td><td>{{ row.films_b|join:", " }}</td></tr>
+          <tr><td>{{ row.date }}</td><td class="a-color">{{ row.films_a|join:", " }}</td><td class="b-color">{{ row.films_b|join:", " }}</td></tr>
         {% empty %}<tr><td colspan="3" class="muted">No shared logging days yet</td></tr>{% endfor %}
       </tbody>
     </table>
@@ -231,9 +231,13 @@
       return 'rgb(' + r + ', ' + g + ', ' + b + ')';
     }
 
-    // Green = session A, blue = session B -- this page's own color convention
+    // Blue = session A, orange = session B -- this page's own color convention
     // (distinct from Director's Cut's topic-based coloring), applied consistently
-    // anywhere the two people's data needs telling apart at a glance.
+    // anywhere the two people's data needs telling apart at a glance (matches the
+    // .a-color/.b-color classes used on every table's per-person values). Green is
+    // deliberately not used here -- it's the site's general interactive accent
+    // (toggle-btn.active, .stat .value's default), and reusing it as "person A" too
+    // would blur that meaning on a page that's fundamentally about two people.
     new Chart(document.getElementById('ratingCurveChart'), {
       type: 'bar',
       data: {
@@ -242,15 +246,15 @@
           {
             label: chartData.rating_curve.label_a,
             data: chartData.rating_curve.data_a,
-            backgroundColor: '#00e054',
-            hoverBackgroundColor: lighten('#00e054', 40),
+            backgroundColor: '#40bcf4',
+            hoverBackgroundColor: lighten('#40bcf4', 40),
             borderRadius: 4,
           },
           {
             label: chartData.rating_curve.label_b,
             data: chartData.rating_curve.data_b,
-            backgroundColor: '#40bcf4',
-            hoverBackgroundColor: lighten('#40bcf4', 40),
+            backgroundColor: '#ff8000',
+            hoverBackgroundColor: lighten('#ff8000', 40),
             borderRadius: 4,
           },
         ],
