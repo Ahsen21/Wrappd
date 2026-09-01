@@ -12,7 +12,7 @@
       {% csrf_token %}
       {{ form.export_file_a.label_tag }}
       <div class="file-picker">
-        <label for="{{ form.export_file_a.id_for_label }}" class="file-picker-btn">Choose File</label>
+        <label for="{{ form.export_file_a.id_for_label }}" class="btn file-picker-btn">Choose File</label>
         <span class="file-picker-name" id="file-picker-name-a">No file chosen</span>
       </div>
       {{ form.export_file_a }}
@@ -23,7 +23,7 @@
       {% endif %}
       {{ form.export_file_b.label_tag }}
       <div class="file-picker">
-        <label for="{{ form.export_file_b.id_for_label }}" class="file-picker-btn">Choose File</label>
+        <label for="{{ form.export_file_b.id_for_label }}" class="btn file-picker-btn">Choose File</label>
         <span class="file-picker-name" id="file-picker-name-b">No file chosen</span>
       </div>
       {{ form.export_file_b }}

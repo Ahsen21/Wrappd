@@ -26,13 +26,13 @@ WEEKDAY_NAMES = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thu
 # abbreviations for chart labels, which get cramped in the narrow three-across layout.
 COUNTRY_NAME_OVERRIDES = {'United States of America': 'USA', 'United Kingdom': 'UK'}
 TOP_N = 10
-# Most rewatched films/directors both render as a fixed poster grid (see .favs--four
-# in base.css), not a table -- 3 rows of 4 (12) rather than TOP_N's 10, so the grid
+# Most rewatched films/directors both render as a fixed poster grid (see .favs--eight
+# in base.css), not a table -- 2 rows of 8 (16) rather than TOP_N's 10, so the grid
 # fills evenly instead of leaving a sparse partial last row.
-REWATCH_GRID_DISPLAY_CAP = 12
-# Biggest over-rates/under-rates render as a fixed poster grid (see .favs--three in
-# base.css), not a table -- 4 rows of 3 (12) rather than TOP_N's 10.
-TASTE_GRID_DISPLAY_CAP = 12
+REWATCH_GRID_DISPLAY_CAP = 16
+# Biggest over-rates/under-rates render as a fixed poster grid (see .favs--eight in
+# base.css), not a table -- 2 rows of 8 (16) rather than TOP_N's 10.
+TASTE_GRID_DISPLAY_CAP = 16
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
 # rather than asserting a fake average.
@@ -582,7 +582,7 @@ def _rewatch_leaderboard(diary) -> dict:
         .order_by('-watch_count')[:REWATCH_GRID_DISPLAY_CAP]
     )
     for row in most_rewatched_films:
-        # w342, not w185 -- this renders as a full poster card now (.favs--four), not
+        # w342, not w185 -- this renders as a full poster card now (.favs--eight), not
         # the small inline .film-thumb it was originally sized for. TMDB's smaller
         # size tiers are more aggressively compressed at the source, so w185 still
         # looks visibly softer than w342 even scaled down to the same final size.

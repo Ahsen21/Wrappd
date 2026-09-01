@@ -180,18 +180,18 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(taste['underrates'][0]['delta'], Decimal('-2.0'))
 
     def test_taste_capped_at_grid_display_cap(self):
-        # Biggest over-rates/under-rates render as a 4-rows-of-3 poster grid
-        # (TASTE_GRID_DISPLAY_CAP=12), not TOP_N's 10.
+        # Biggest over-rates/under-rates render as a 2-rows-of-8 poster grid
+        # (TASTE_GRID_DISPLAY_CAP=16), not TOP_N's 10.
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(13):
+        for i in range(17):
             movie = Movie.objects.create(tmdb_id=3000 + i, title=f'Taste Film {i}', tmdb_rating=Decimal('5.0'))
             RatingEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/taste{i}', title=movie.title,
                 year=movie.release_year, rating=Decimal('5.0'), movie=movie,
             )
         taste = build_dashboard_context(session)['taste']
-        self.assertEqual(len(taste['overrates']), 12)
-        self.assertEqual(len(taste['underrates']), 12)
+        self.assertEqual(len(taste['overrates']), 16)
+        self.assertEqual(len(taste['underrates']), 16)
 
     def test_rating_by_genre_and_decade(self):
         genre_decade = build_dashboard_context(self.session)['genre_decade']
@@ -295,10 +295,10 @@ class DashboardNewStatsTests(TestCase):
         self.assertAlmostEqual(float(rewatch['first_watch_avg_rating']), 10 / 3, places=4)
 
     def test_rewatch_leaderboard_capped_at_grid_display_cap(self):
-        # Most rewatched films renders as a 3-rows-of-4 poster grid
-        # (REWATCH_GRID_DISPLAY_CAP=12), not TOP_N's 10.
+        # Most rewatched films renders as a 2-rows-of-8 poster grid
+        # (REWATCH_GRID_DISPLAY_CAP=16), not TOP_N's 10.
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(13):
+        for i in range(17):
             movie = _make_movie(2000 + i, f'Rewatch Film {i}', 2020, 100, 'Drama')
             for _ in range(2):
                 DiaryEntry.objects.create(
@@ -306,18 +306,18 @@ class DashboardNewStatsTests(TestCase):
                     year=movie.release_year, watched_date='2024-01-01', movie=movie,
                 )
         rewatch = build_dashboard_context(session)['rewatch']
-        self.assertEqual(len(rewatch['most_rewatched_films']), 12)
+        self.assertEqual(len(rewatch['most_rewatched_films']), 16)
 
     def test_rewatch_leaderboard_directors_capped_at_grid_display_cap(self):
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(13):
+        for i in range(17):
             movie = _make_movie(2100 + i, f'Rewatch Dir Film {i}', 2020, 100, 'Drama', f'Rewatch Dir {i}')
             DiaryEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/rwd{i}', title=movie.title,
                 year=movie.release_year, watched_date='2024-01-01', movie=movie, rewatch=True,
             )
         rewatch = build_dashboard_context(session)['rewatch']
-        self.assertEqual(len(rewatch['most_rewatched_directors']), 12)
+        self.assertEqual(len(rewatch['most_rewatched_directors']), 16)
 
     def test_viewing_calendar(self):
         calendar = build_dashboard_context(self.session)['calendar']
@@ -1331,7 +1331,7 @@ class SameDayLogsTests(TestCase):
         self.assertEqual(match['date'].isoformat(), '2024-03-01')
 
     def test_exact_matches_capped_at_grid_display_cap_not_top_n(self):
-        # Exact matches renders as the same .favs--compact poster grid as Same
+        # Exact matches renders as the same .favs--eight poster grid as Same
         # rating/Watchlist matches (GRID_DISPLAY_CAP=16), not same_day_logs' own
         # TOP_N=10 -- they're two different caps on the same build_compare_context
         # call, easy to accidentally cross-wire.

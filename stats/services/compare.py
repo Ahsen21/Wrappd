@@ -14,9 +14,9 @@ from tmdb.models import Credit, Movie
 
 AGREEMENT_THRESHOLD = Decimal('0.5')
 TOP_N = 10
-# Same rating and Watchlist matches render as a fixed-width poster grid (see
-# .favs--compact in base.css), not a table -- capped at 2 full rows of 8 (16) rather
-# than TOP_N's 10, since 10 left an awkward sparse second row of 2.
+# Same rating and Watchlist matches render as a fixed-width poster grid (see the
+# site-wide .favs--eight in base.css), not a table -- capped at 2 full rows of 8 (16)
+# rather than TOP_N's 10, since 10 left an awkward sparse second row of 2.
 GRID_DISPLAY_CAP = 16
 # Top unseen (formerly "five-star exclusives") renders the same kind of poster grid,
 # but inside a .two-col half-width card rather than a full-width one -- 2 rows of 5
@@ -545,7 +545,7 @@ def build_compare_context(session_a, session_b) -> dict:
         'same_day_logs': same_day_logs_all[:TOP_N],
         'same_day_logs_total': len(same_day_logs_all),
         # GRID_DISPLAY_CAP here, unlike same_day_logs just above -- Exact matches
-        # renders as the same fixed .favs--compact poster grid as Same rating/
+        # renders as the same fixed .favs--eight poster grid as Same rating/
         # Watchlist matches/Most different ratings, so it gets their cap, not
         # same_day_logs' TOP_N.
         'same_day_exact_matches': same_day_exact_matches_all[:GRID_DISPLAY_CAP],

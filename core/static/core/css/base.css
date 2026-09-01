@@ -1,5 +1,6 @@
 :root {
   --bg: #14181c;
+  --bg-rgb: 20, 24, 28;
   --surface: #1c2228;
   --border: #2c3440;
   --text: #e5e9ec;
@@ -7,6 +8,7 @@
   --accent: #00e054;
   --accent-2: #40bcf4;
   --accent-3: #ff8000;
+  --accent-text: #05130a;
   --danger: #ff4d4d;
   --radius: 8px;
 }
@@ -95,13 +97,23 @@ a { color: var(--accent-2); }
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(20, 24, 28, 0) 0%, rgba(20, 24, 28, 0.55) 55%, rgba(20, 24, 28, 0.85) 100%);
+  background: linear-gradient(180deg, rgba(var(--bg-rgb), 0) 0%, rgba(var(--bg-rgb), 0.55) 55%, rgba(var(--bg-rgb), 0.85) 100%);
   z-index: -1;
   pointer-events: none;
 }
+/* Shared base for the site's several small "eyebrow" labels -- uppercase text used
+   for quiet sub-headings and captions (this hero eyebrow above the h1, the poster
+   row's "FAVORITES" label below, in-card sub-group titles like "Day of week", and
+   the Overview grid's stat captions). Grouped for text-transform, the one property
+   truly common to all four; .hero-favs-label/.card h4/.stat .label below also share
+   color and letter-spacing exactly, so those are grouped separately -- but this
+   hero eyebrow is a bigger, accent-colored attention-getter above the h1, so its own
+   color/letter-spacing/font-size/margin stay on its own selector. */
+.hero-eyebrow, .hero-favs-label, .card h4, .stat .label {
+  text-transform: uppercase;
+}
 .hero-eyebrow {
   color: var(--accent-2);
-  text-transform: uppercase;
   letter-spacing: 0.1em;
   font-size: 0.85rem;
   font-weight: 700;
@@ -121,10 +133,11 @@ a { color: var(--accent-2); }
   .grid.hero-grid { grid-template-columns: repeat(2, 1fr); }
 }
 .hero-favs { margin-top: 1.75rem; }
-.hero-favs-label {
+.hero-favs-label, .card h4, .stat .label {
   color: var(--muted);
-  text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+.hero-favs-label {
   font-size: 0.8rem;
   font-weight: 700;
   margin: 0 0 0.9rem;
@@ -133,7 +146,7 @@ a { color: var(--accent-2); }
    photographic backdrop -- crisp posters-on-blurred-poster otherwise blend at the
    edges, and it guarantees a consistent surface tone under the fav-card captions. */
 .hero-favs .favs {
-  background: rgba(20, 24, 28, 0.55);
+  background: rgba(var(--bg-rgb), 0.55);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.25rem;
@@ -184,7 +197,7 @@ a { color: var(--accent-2); }
   text-align: center;
 }
 .stat .value { font-size: 2rem; font-weight: 700; color: var(--accent); }
-.stat .label { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat .label { font-size: 0.85rem; }
 
 h1, h2, h3, h4 { font-weight: 700; }
 
@@ -211,11 +224,9 @@ h2#watching-stats {
 
 /* In-card sub-group labels (e.g. "Day of week" within Viewing calendar, "Biggest
    over-rates" within Taste vs. the crowd) -- demoted below the card's own h3 title,
-   styled as a quiet label rather than a heading, same recipe as .hero-favs-label. */
+   styled as a quiet label rather than a heading, same shared recipe as
+   .hero-favs-label/.stat .label above. */
 .card h4 {
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   font-size: 0.8rem;
   margin: 1.5rem 0 0.75rem;
 }
@@ -244,7 +255,7 @@ h2#watching-stats {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 .toggle-btn:hover:not(.active) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
-.toggle-btn.active { background: var(--accent); color: #05130a; }
+.toggle-btn.active { background: var(--accent); color: var(--accent-text); }
 
 .favs { display: flex; gap: 1.25rem; flex-wrap: wrap; }
 .fav-card { flex: 1 1 140px; max-width: 160px; text-align: center; }
@@ -266,52 +277,34 @@ h2#watching-stats {
 }
 .fav-card p { margin: 0.5rem 0 0; font-size: 0.9rem; }
 
-/* Scoped override for Double Feature's Same rating grid -- roughly half the usual
-   fav-card size. Same-rating can list up to TOP_N (10) posters at once, more than
-   any .favs usage on Director's Cut (Highlights tops out around 7), so full-size
-   tiles there would run noticeably taller/wider than every other card on the page. */
-.favs--compact .fav-card { flex-basis: 70px; max-width: 80px; }
-.favs--compact .fav-placeholder { font-size: 1.25rem; }
-.favs--compact .fav-card p { font-size: 0.75rem; }
+/* Shared 2-rows-of-8 poster grid (a 16-item cap) -- every list on the site that's
+   capped at 16 uses this same class instead of a near-duplicate per section:
+   Director's Cut's Most rewatched films/directors and Biggest over-/under-rates,
+   and Double Feature's Same rating, Most different ratings, Watchlist matches, and
+   Same day exact matches (GRID_DISPLAY_CAP=16 in compare.py, REWATCH_GRID_DISPLAY_CAP
+   and TASTE_GRID_DISPLAY_CAP=16 in dashboard.py). flex-basis is computed from the
+   card's own width and the row's gap, rather than a fixed px value, so it lands on
+   exactly 8 per row regardless of the card's actual rendered width (unlike a fixed
+   max-width, which only *happens* to fit 8 at one particular viewport width). */
+.favs--eight { gap: 0.75rem; }
+.favs--eight .fav-card {
+  flex: 0 0 calc((100% - 7 * 0.75rem) / 8);
+  max-width: calc((100% - 7 * 0.75rem) / 8);
+}
 
-/* Most rewatched films/directors -- both force exactly 4 cards per row (3 rows of
-   4, matching REWATCH_GRID_DISPLAY_CAP=12) in a half-width .two-col card, computed
-   from the card's own width rather than a fixed px value (same reasoning as Double
-   Feature's .favs--compact/.favs--six N-per-row rules). Sized differently on
-   purpose: films' posters are grown a bit (smaller gap gives each column more room)
-   and directors' headshots are shrunk within their column (directors have an extra
-   text line -- the name, which wraps to 2 lines for most names -- that films don't,
-   so a bigger image there would only widen the height gap between the two grids). */
-.favs--four-lg { gap: 0.75rem; }
-.favs--four-lg .fav-card {
-  flex: 0 0 calc((100% - 3 * 0.75rem) / 4);
-  max-width: calc((100% - 3 * 0.75rem) / 4);
-}
-.favs--four-sm .fav-card {
-  flex: 0 0 calc((100% - 3 * 1.25rem) / 4);
-  max-width: calc((100% - 3 * 1.25rem) / 4);
-}
-.favs--four-sm .fav-card img,
-.favs--four-sm .fav-card .fav-placeholder {
+/* Most rewatched directors only, layered on top of .favs--eight above -- headshots
+   shrunk within their column (directors have an extra text line, the name, which
+   wraps to 2 lines for most names, so a bigger image would only push the card
+   taller) and 2 lines' height reserved for that name regardless of whether it
+   actually wraps -- without the reservation, a 1-line name ("Sam Raimi") leaves less
+   space above the rewatch-count line than a 2-line one, so the count line lands at a
+   different height card to card instead of aligning across the row. */
+.favs--eight-headshots .fav-card img,
+.favs--eight-headshots .fav-card .fav-placeholder {
   width: 65%;
   margin: 0 auto;
 }
-/* Reserves 2 lines' height for the director's name regardless of whether it actually
-   wraps -- without this, a 1-line name ("Sam Raimi") leaves less space above the
-   rewatch-count line than a 2-line one, so the count line lands at a different
-   height card to card instead of aligning across the row. */
-.favs--four-sm .fav-card p:first-of-type { min-height: 44px; }
-
-/* Biggest over-rates/under-rates -- forces exactly 6 posters per row (2 rows of 6,
-   matching TASTE_GRID_DISPLAY_CAP=12), computed from the card's own width rather
-   than a fixed px value (same reasoning as this file's other N-per-row rules). Own
-   name (not .favs--four-lg/-sm) since those two carry Most rewatched films/
-   directors' own size tuning -- this grid needs plain 6-column math, not their
-   enlarged/shrunk image sizing. */
-.favs--taste .fav-card {
-  flex: 0 0 calc((100% - 5 * 1.25rem) / 6);
-  max-width: calc((100% - 5 * 1.25rem) / 6);
-}
+.favs--eight-headshots .fav-card p:first-of-type { min-height: 44px; }
 
 .processing { margin-top: 1rem; color: var(--muted); }
 .spinner {
@@ -348,24 +341,12 @@ form p { margin: 1rem 0; }
    browser/locale and can't be overridden with CSS -- ::file-selector-button only
    controls its appearance, not its text. To get a consistent, fully-styled button we
    hide the real input (accessibly, not display:none) and drive it via a <label for>,
-   which still opens the native file picker on click. */
-/* Visually hidden but still present for screen readers -- same clip-based recipe as
-   input[type="file"] below, extracted as a reusable class since the hero's Overview
-   heading needs it too (keeps the h1->h2 heading outline intact for screen readers
-   without a redundant visible "Overview" label right under the h1). */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-input[type="file"] {
+   which still opens the native file picker on click. Shares this rule with .sr-only
+   (the hero's "Overview" heading, kept for screen readers without a redundant
+   visible label under the h1) rather than repeating the same clip-based recipe --
+   the file input is Django-rendered from a form field, so it can't easily carry the
+   class itself, but the attribute selector reaches it just as well. */
+.sr-only, input[type="file"] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -377,23 +358,11 @@ input[type="file"] {
   border: 0;
 }
 .file-picker { display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0 1rem; flex-wrap: wrap; }
-.file-picker-btn {
-  display: inline-block;
-  background: var(--accent);
-  color: #05130a;
-  border-radius: var(--radius);
-  padding: 0.6rem 1.2rem;
-  font-weight: 700;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: filter 0.15s ease;
-}
-.file-picker-btn:hover { filter: brightness(1.1); }
 .file-picker-name { font-size: 0.9rem; color: var(--muted); }
 
 button, .btn {
   background: var(--accent);
-  color: #05130a;
+  color: var(--accent-text);
   border: none;
   border-radius: var(--radius);
   padding: 0.7rem 1.4rem;
@@ -401,6 +370,20 @@ button, .btn {
   cursor: pointer;
   font-size: 1rem;
 }
+/* Reuses .btn above (via class="btn file-picker-btn" in the template) for the
+   shared background/color/border-radius/font-weight/cursor -- this adds only what's
+   actually different: a <label> is inline by default, so it needs its own block-ish
+   display to accept the padding; sized a touch smaller than a real <button>; and its
+   own hover feedback, which .btn doesn't have. Declared after .btn, not before --
+   equal specificity (one class each), so source order is what lets its smaller
+   padding/font-size actually win over .btn's. */
+.file-picker-btn {
+  display: inline-block;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.9rem;
+  transition: filter 0.15s ease;
+}
+.file-picker-btn:hover { filter: brightness(1.1); }
 
 .errorlist {
   color: var(--danger);
@@ -457,13 +440,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   object-fit: cover;
   flex-shrink: 0;
 }
-.person-thumb-placeholder {
-  background: var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.9rem;
-}
 .film-thumb, .film-thumb-placeholder {
   width: 28px;
   height: 42px;
@@ -471,7 +447,9 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   object-fit: cover;
   flex-shrink: 0;
 }
-.film-thumb-placeholder {
+/* Placeholder icon look (the emoji-in-a-box shown when a person/film has no
+   thumbnail image) is identical for both -- only the box shape above differs. */
+.person-thumb-placeholder, .film-thumb-placeholder {
   background: var(--border);
   display: flex;
   align-items: center;
@@ -482,30 +460,22 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 /* Double Feature only -- every poster/headshot thumbnail on that page, ~20% larger
    than Director's Cut's own sizing. Scoped to .compare-page (compare.html's content
    wrapper) rather than changing the shared classes outright, since Director's Cut
-   uses the exact same .film-thumb/.person-thumb/.favs--compact classes and its
-   current sizing wasn't part of this request. */
+   uses the exact same .film-thumb/.person-thumb classes and its current sizing
+   wasn't part of this request. */
 .compare-page .person-thumb, .compare-page .person-thumb-placeholder { width: 50px; height: 50px; }
-/* Sized well beyond the base 28x42 -- .film-thumb is only used by Most different
-   ratings and Same day logs now (every other film list on this page moved to the
-   .fav-card poster grid), and both wanted bigger posters specifically to fill the
-   dead space a lone thumbnail left in its column once the title text next to it
-   was dropped. */
+/* Sized well beyond the base 28x42 -- .film-thumb is only used by Same day logs now
+   (every other film list on this page moved to the .fav-card poster grid), which
+   wanted bigger posters specifically to fill the dead space a lone thumbnail left in
+   its column once the title text next to it was dropped. */
 .compare-page .film-thumb, .compare-page .film-thumb-placeholder { width: 50px; height: 75px; }
-/* Same rating and Watchlist matches display as a fixed 2 rows of 8
-   (GRID_DISPLAY_CAP=16 in compare.py) -- flex-basis computed from the card's own
-   width and the row's gap, rather than a fixed px value, so it lands on exactly 8
-   per row regardless of the card's actual rendered width (unlike a fixed max-width,
-   which only *happens* to fit 8 at one particular viewport width). */
-.compare-page .favs--compact .fav-card {
-  flex: 0 0 calc((100% - 7 * 1.25rem) / 8);
-  max-width: calc((100% - 7 * 1.25rem) / 8);
-}
-.compare-page .favs--compact .fav-placeholder { font-size: 1.5rem; }
-/* "X loved it, Y hasn't seen it" sits in a half-width .two-col card, not the
-   full-width card Same rating/Watchlist matches use -- 2 rows of 5
+/* "X loved it, Y hasn't seen it" (the only grid still using .favs--five) sits in a
+   half-width .two-col card, not the full-width card the site's shared .favs--eight
+   grid (Same rating, Watchlist matches, etc.) uses -- 2 rows of 5
    (GRID_DISPLAY_CAP_NARROW=10 in compare.py) fits that narrower card the way 2 rows
-   of 8 fits a full-width one. Same specificity as the 8-column rule above, so
-   source order (this rule coming later) is what makes it win on .favs--five grids. */
+   of 8 fits a full-width one, at a smaller card size (roughly half a full .fav-card)
+   since this is the one poster grid on the site that can show up to 10 at once. */
+.favs--five .fav-card p { font-size: 0.75rem; }
+.compare-page .favs--five .fav-placeholder { font-size: 1.5rem; }
 .compare-page .favs--five .fav-card {
   flex: 0 0 calc((100% - 4 * 1.25rem) / 5);
   max-width: calc((100% - 4 * 1.25rem) / 5);

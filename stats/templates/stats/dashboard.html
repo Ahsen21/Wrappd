@@ -288,7 +288,7 @@
     </div>
     <h4>Biggest over-rates</h4>
     {% if taste.overrates %}
-      <div class="favs favs--taste">
+      <div class="favs favs--eight">
         {% for film in taste.overrates %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -301,7 +301,7 @@
     {% endif %}
     <h4>Biggest under-rates</h4>
     {% if taste.underrates %}
-      <div class="favs favs--taste">
+      <div class="favs favs--eight">
         {% for film in taste.underrates %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -336,38 +336,37 @@
     <canvas id="weekdayChart"></canvas>
   </div>
 
-  <div class="two-col">
-    <div class="card">
-      <h3>Most rewatched films</h3>
-      {% if rewatch.most_rewatched_films %}
-        <div class="favs favs--four-lg">
-          {% for film in rewatch.most_rewatched_films %}
-            <div class="fav-card">
-              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-              <p class="muted">{{ film.watch_count }}×</p>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="muted">No rewatches yet</p>
-      {% endif %}
-    </div>
-    <div class="card">
-      <h3>Most rewatched directors</h3>
-      {% if rewatch.most_rewatched_directors %}
-        <div class="favs favs--four-sm">
-          {% for row in rewatch.most_rewatched_directors %}
-            <div class="fav-card">
-              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-              <p>{{ row.movie__directors__name }}</p>
-              <p class="muted">{{ row.count }}×</p>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="muted">No data yet</p>
-      {% endif %}
-    </div>
+  <div class="card">
+    <h3>Most rewatched films</h3>
+    {% if rewatch.most_rewatched_films %}
+      <div class="favs favs--eight">
+        {% for film in rewatch.most_rewatched_films %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.watch_count }}×</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No rewatches yet</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Most rewatched directors</h3>
+    {% if rewatch.most_rewatched_directors %}
+      <div class="favs favs--eight favs--eight-headshots">
+        {% for row in rewatch.most_rewatched_directors %}
+          <div class="fav-card">
+            {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+            <p>{{ row.movie__directors__name }}</p>
+            <p class="muted">{{ row.count }}×</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No data yet</p>
+    {% endif %}
   </div>
 
   <div class="card">
