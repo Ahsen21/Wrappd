@@ -343,6 +343,21 @@ class DashboardNewStatsTests(TestCase):
         self.assertNotIn('Actor Zed', actor_names)
         self.assertNotIn('Actor Solo', actor_names)
 
+    def test_top_directors_capped_at_favorite_people_grid_cap(self):
+        # Renders as the .favs--six poster grid (FAVORITE_PEOPLE_GRID_CAP=12), not
+        # TOP_N's 10. top_directors has no MIN_COUNT_FOR_FAVORITE_DIRECTOR threshold
+        # (unlike favorite_directors above) -- one watched film each is enough to
+        # qualify for this "Most watched" list.
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(13):
+            movie = _make_movie(6000 + i, f'Cap Dir Film {i}', 2020, 100, 'Drama', f'Cap Director {i}')
+            WatchedEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/capdir{i}', title=movie.title,
+                year=movie.release_year, movie=movie,
+            )
+        context = build_dashboard_context(session)
+        self.assertEqual(len(context['top_directors']), 12)
+
 
 class FavoritePeopleTieBreakTests(TestCase):
     """A tie on the primary sort key must be broken by the other metric -- 'most
@@ -1157,6 +1172,50 @@ class SharedPeopleTests(TestCase):
         context = build_compare_context(session_a, session_b)
         self.assertNotIn('Under-Qualified Actor', [row['name'] for row in context['shared_actors']])
 
+    def test_shared_directors_capped_at_shared_people_grid_cap(self):
+        # Renders as the .favs--six poster grid (SHARED_PEOPLE_GRID_CAP=12), not
+        # the table-based TOP_N=10.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(17):
+            movies = [
+                _make_movie(4000 + i * 10 + j, f'Cap Dir Film {i}-{j}', 2020, 100, 'Drama', f'Cap Director {i}')
+                for j in range(3)
+            ]
+            for j, movie in enumerate(movies):
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=f'https://boxd.it/capA{i}-{j}', title=movie.title,
+                    year=2020, rating=Decimal('5.0'), movie=movie,
+                )
+                RatingEntry.objects.create(
+                    import_session=session_b, letterboxd_uri=f'https://boxd.it/capB{i}-{j}', title=movie.title,
+                    year=2020, rating=Decimal('5.0'), movie=movie,
+                )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['shared_directors']), 12)
+
+    def test_shared_actors_capped_at_shared_people_grid_cap(self):
+        # Same cap, actors' own path (non-cameo Credit-based, not the plain M2M
+        # _director_averages uses) -- see _actor_averages for why they're separate
+        # functions.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(17):
+            actor = Person.objects.get_or_create(tmdb_id=5000 + i, defaults={'name': f'Cap Actor {i}'})[0]
+            for j in range(4):
+                movie = _make_movie(5100 + i * 10 + j, f'Cap Actor Film {i}-{j}', 2020, 100, 'Drama')
+                Credit.objects.create(movie=movie, person=actor, order=0)
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=f'https://boxd.it/capActA{i}-{j}', title=movie.title,
+                    year=2020, rating=Decimal('5.0'), movie=movie,
+                )
+                RatingEntry.objects.create(
+                    import_session=session_b, letterboxd_uri=f'https://boxd.it/capActB{i}-{j}', title=movie.title,
+                    year=2020, rating=Decimal('5.0'), movie=movie,
+                )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['shared_actors']), 12)
+
 
 class TopPeopleTests(TestCase):
     """Each session's own top 10 favorite directors/actors (the 'Side by side' view),
@@ -1189,6 +1248,39 @@ class TopPeopleTests(TestCase):
         row = next(row for row in context['top_directors_a'] if row['name'] == 'Qualified Director')
         self.assertEqual(row['count'], 3)
         self.assertEqual(row['tmdb_id'], Person.objects.get(name='Qualified Director').tmdb_id)
+
+    def test_own_top_directors_capped_at_grid_display_cap_narrow(self):
+        # Renders as the "Side by side" .favs--four poster grid
+        # (GRID_DISPLAY_CAP_NARROW=12), not the table-based TOP_N=10.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(13):
+            movies = [
+                _make_movie(4100 + i * 10 + j, f'Narrow Dir Film {i}-{j}', 2020, 100, 'Drama', f'Narrow Director {i}')
+                for j in range(3)
+            ]
+            for j, movie in enumerate(movies):
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=f'https://boxd.it/narrow{i}-{j}', title=movie.title,
+                    year=2020, rating=Decimal('5.0'), movie=movie,
+                )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['top_directors_a']), 12)
+
+    def test_own_top_actors_capped_at_grid_display_cap_narrow(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i in range(13):
+            actor = Person.objects.get_or_create(tmdb_id=5200 + i, defaults={'name': f'Narrow Actor {i}'})[0]
+            for j in range(4):
+                movie = _make_movie(5300 + i * 10 + j, f'Narrow Actor Film {i}-{j}', 2020, 100, 'Drama')
+                Credit.objects.create(movie=movie, person=actor, order=0)
+                RatingEntry.objects.create(
+                    import_session=session_a, letterboxd_uri=f'https://boxd.it/narrowAct{i}-{j}', title=movie.title,
+                    year=2020, rating=Decimal('5.0'), movie=movie,
+                )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(len(context['top_actors_a']), 12)
 
     def test_own_top_actors_excludes_cameo_appearances(self):
         # Same cameo semantics as dashboard.py's favorite_actors -- a cameo appearance

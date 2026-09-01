@@ -162,7 +162,7 @@ a { color: var(--accent-2); }
   /* Explicit, not inherited from .favs's own gap -- the fixed 4-column math right
      below assumes this exact value, so it needs to stay stable even where a mobile
      rule changes .favs's general gap elsewhere on the page. */
-  gap: 1.25rem;
+  gap: 1rem;
   /* If there are ever fewer than 4 favorites, the fixed-width cards below leave
      leftover row width unclaimed under the default flex-start -- looked left-packed
      rather than an even spread. space-between claims it as equal gaps instead. */
@@ -173,41 +173,41 @@ a { color: var(--accent-2); }
    flex-basis (140px here) to decide how many fit per line, not its shrunk size, so
    the default flex:1 1 140px/max-width:160px combo wraps every card onto its own
    line once 4*140px no longer fits, regardless of flex-shrink being enabled. Fixed
-   percentage math (same recipe as .favs--four/--five below) sidesteps that
-   entirely: each card is always exactly 1/4 of the row, shrinking smoothly with the
-   viewport instead of ever wrapping. */
+   percentage math (same recipe as .favs--four below) sidesteps that entirely: each
+   card is always exactly 1/4 of the row, shrinking smoothly with the viewport
+   instead of ever wrapping. */
 .hero-favs .favs .fav-card {
-  flex: 0 0 calc((100% - 3 * 1.25rem) / 4);
-  max-width: calc((100% - 3 * 1.25rem) / 4);
+  flex: 0 0 calc((100% - 3 * 1rem) / 4);
+  max-width: calc((100% - 3 * 1rem) / 4);
 }
 /* Forcing 4 posters into a phone-width row already makes each one small; trimming
    the panel's own padding and the gap between cards claws back some of that width
    for the posters themselves rather than the whitespace around/between them. The
-   fav-card rule's math has to shrink its own gap value to match (0.5rem here, not
-   the base rule's 1.25rem) or the 4 columns' widths would stop summing to exactly
+   fav-card rule's math has to shrink its own gap value to match (0.4rem here, not
+   the base rule's 1rem) or the 4 columns' widths would stop summing to exactly
    100% of this smaller-padding row. */
 @media (max-width: 700px) {
-  .hero-favs .favs { padding: 0.5rem; gap: 0.5rem; }
+  .hero-favs .favs { padding: 0.5rem; gap: 0.4rem; }
   .hero-favs .favs .fav-card {
-    flex: 0 0 calc((100% - 3 * 0.5rem) / 4);
-    max-width: calc((100% - 3 * 0.5rem) / 4);
+    flex: 0 0 calc((100% - 3 * 0.4rem) / 4);
+    max-width: calc((100% - 3 * 0.4rem) / 4);
   }
 }
 
 .grid {
   display: grid;
-  gap: 1.25rem;
+  gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 /* Viewing calendar's 3 highlight stats -- forced onto one row even on a phone
    (rather than .grid's own auto-fit, which stacks anything under ~180px per item --
    the right default everywhere else .grid is used, but 3 short numbers read better
-   side by side than stacked here). Smaller gap than .grid's own 1.25rem so 3
-   columns actually have room at phone width. */
+   side by side than stacked here). Smaller gap than .grid's own 1rem so 3 columns
+   actually have room at phone width. */
 @media (max-width: 700px) {
   .grid--calendar-stats {
     grid-template-columns: repeat(3, 1fr);
-    gap: 0.75rem;
+    gap: 0.6rem;
   }
 }
 /* Double Feature's Rating distributions -- same reasoning as
@@ -219,7 +219,7 @@ a { color: var(--accent-2); }
 @media (max-width: 700px) {
   .grid--rating-avg {
     grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
+    gap: 0.6rem;
   }
   .grid--rating-avg .stat .value { font-size: 1.5rem; }
 }
@@ -315,7 +315,7 @@ h2#watching-stats {
 .toggle-btn:hover:not(.active) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .toggle-btn.active { background: var(--accent); color: var(--accent-text); }
 
-.favs { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.favs { display: flex; gap: 1rem; flex-wrap: wrap; }
 .fav-card { flex: 1 1 140px; max-width: 160px; text-align: center; }
 .fav-card img {
   width: 100%;
@@ -339,15 +339,17 @@ h2#watching-stats {
    capped at 16 uses this same class instead of a near-duplicate per section:
    Director's Cut's Most rewatched films/directors and Biggest over-/under-rates,
    and Double Feature's Same rating, Most different ratings, Watchlist matches, and
-   Same day exact matches (GRID_DISPLAY_CAP=16 in compare.py, REWATCH_GRID_DISPLAY_CAP
-   and TASTE_GRID_DISPLAY_CAP=16 in dashboard.py). flex-basis is computed from the
-   card's own width and the row's gap, rather than a fixed px value, so it lands on
-   exactly 8 per row regardless of the card's actual rendered width (unlike a fixed
-   max-width, which only *happens* to fit 8 at one particular viewport width). */
-.favs--eight { gap: 0.75rem; }
+   Same day exact matches (GRID_DISPLAY_CAP=16 in compare.py,
+   REWATCH_GRID_DISPLAY_CAP/TASTE_GRID_DISPLAY_CAP=16 in dashboard.py). flex-basis is
+   computed from the card's own width and the row's gap, rather than a fixed px
+   value, so it lands on exactly 8 per row regardless of the card's actual rendered
+   width (unlike a fixed max-width, which only *happens* to fit 8 at one particular
+   viewport width). Favorite Directors/Actors used to be here too, on both pages, but
+   moved to the smaller .favs--six below (12-item cap) instead. */
+.favs--eight { gap: 0.6rem; }
 .favs--eight .fav-card {
-  flex: 0 0 calc((100% - 7 * 0.75rem) / 8);
-  max-width: calc((100% - 7 * 0.75rem) / 8);
+  flex: 0 0 calc((100% - 7 * 0.6rem) / 8);
+  max-width: calc((100% - 7 * 0.6rem) / 8);
 }
 /* 8 columns is desktop-only math -- unwound to a 4x4 grid (2 even rows of 4 for the
    16-item cap) at the same 700px breakpoint the rest of the site's responsive grids
@@ -356,24 +358,51 @@ h2#watching-stats {
    a phone, unreadable and barely tappable, but 4x4 stays legible at any width. */
 @media (max-width: 700px) {
   .favs--eight .fav-card {
-    flex: 0 0 calc((100% - 3 * 0.75rem) / 4);
-    max-width: calc((100% - 3 * 0.75rem) / 4);
+    flex: 0 0 calc((100% - 3 * 0.6rem) / 4);
+    max-width: calc((100% - 3 * 0.6rem) / 4);
   }
 }
 
-/* Most rewatched directors only, layered on top of .favs--eight above -- headshots
-   shrunk within their column (directors have an extra text line, the name, which
-   wraps to 2 lines for most names, so a bigger image would only push the card
-   taller) and 2 lines' height reserved for that name regardless of whether it
-   actually wraps -- without the reservation, a 1-line name ("Sam Raimi") leaves less
-   space above the rewatch-count line than a 2-line one, so the count line lands at a
-   different height card to card instead of aligning across the row. */
-.favs--eight-headshots .fav-card img,
-.favs--eight-headshots .fav-card .fav-placeholder {
-  width: 65%;
+/* For any grid of people rather than films -- headshots shrunk within their column
+   (a full-width circular-ish headshot looks odd blown up to a poster's 2:3 box) and
+   2 lines' height reserved for the name below it regardless of whether it actually
+   wraps, whether that name is plain text (Most rewatched directors) or a clickable
+   .person-trigger (Favorite Directors/Actors) -- without the reservation, a 1-line
+   name ("Sam Raimi") leaves less space above the next line than a 2-line one, so
+   that line lands at a different height card to card instead of aligning across the
+   row. Named for the name, specifically (.fav-name), rather than matched by DOM
+   position (e.g. p:first-of-type) -- Favorite Directors/Actors' rating/count line is
+   two separate <p>s, not one, so a position-based selector would just as easily grab
+   the wrong paragraph the moment that markup changes shape. Not tied to any one
+   column count (unlike .favs--eight) since it layers onto any grid of people. */
+.favs--headshots .fav-card img,
+.favs--headshots .fav-card .fav-placeholder {
+  width: 75%;
   margin: 0 auto;
 }
-.favs--eight-headshots .fav-card p:first-of-type { min-height: 44px; }
+.favs--headshots .fav-card .fav-name,
+.favs--headshots .fav-card .person-trigger {
+  min-height: 44px;
+  /* Default text wrapping only breaks at spaces -- a single long word (a surname
+     like "Cumberbatch") has nowhere to wrap at 4 columns on a phone, so without
+     this it just overflows past the card's edge into its neighbor instead of
+     wrapping. break-word only splits mid-word as a last resort, when that word
+     alone doesn't fit its own line -- "Benedict Cumberbatch" still wraps at the
+     natural space first, same as it already did for shorter names. */
+  overflow-wrap: break-word;
+}
+/* .person-trigger's own left-aligned, inline-block default is tuned for a table's
+   name-cell -- centered and block-level here to match the plain <p> name this modal
+   trigger sits alongside in a .fav-card (Favorite Directors/Actors), which is
+   already centered by .fav-card itself. width:100% is the part that actually makes
+   text-align:center visible -- display:block alone doesn't stretch a <button> to
+   its container the way it would a <div>, so without it the button stays
+   shrink-wrapped to its own text and just sits flush left instead. */
+.fav-card .person-trigger {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
 
 .processing { margin-top: 1rem; color: var(--muted); }
 .spinner {
@@ -482,8 +511,29 @@ tbody tr { transition: background-color 0.15s ease; }
 tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 
 .muted { color: var(--muted); }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+/* A plain vertical rule down the middle, for two-col layouts that need a clearer
+   split than the gap alone gives (Double Feature's Favorite directors "Side by
+   side" grids) -- a modifier, not baked into .two-col itself, since that class is
+   also used plenty of places (e.g. "X loved it, Y hasn't seen it") that were never
+   asked for a divider. A centered pseudo-element rather than a border on the second
+   column: it bisects the gap exactly regardless of the gap's own width, and doesn't
+   eat into either column's padding to make room for itself. Skipped at the 700px
+   breakpoint where .two-col already collapses to one column -- nothing left to
+   divide once the columns stack. */
+.two-col--divided { position: relative; }
+@media (min-width: 701px) {
+  .two-col--divided::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--border);
+  }
+}
 
 /* minmax(0, 1fr), not plain 1fr -- the chart canvases inside each card have an
    intrinsic content width, and grid items default to min-width:auto, which stops a
@@ -492,7 +542,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    responsive breakpoints below too, not just the base 3-column rule: a plain 1fr at
    either breakpoint reintroduces the same floor, which is what let a chart canvas
    balloon its whole .card out to nearly double a phone's viewport width. */
-.three-col { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; }
+.three-col { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; }
 @media (max-width: 900px) { .three-col { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* gap: 0, not just the single column -- once there's only one column, every card is
    stacked instead of side by side, and the grid's own 1.5rem row-gap then adds on
@@ -546,19 +596,47 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    wanted bigger posters specifically to fill the dead space a lone thumbnail left in
    its column once the title text next to it was dropped. */
 .compare-page .film-thumb, .compare-page .film-thumb-placeholder { width: 50px; height: 75px; }
-/* "X loved it, Y hasn't seen it" (the only grid still using .favs--four) sits in a
-   half-width .two-col card, not the full-width card the site's shared .favs--eight
-   grid (Same rating, Watchlist matches, etc.) uses -- 3 rows of 4
+/* "X loved it, Y hasn't seen it" and Favorite directors' "Side by side" grids both
+   sit in a half-width .two-col card, not the full-width card the site's shared
+   .favs--eight grid (Same rating, Watchlist matches, etc.) uses -- 3 rows of 4
    (GRID_DISPLAY_CAP_NARROW=12 in compare.py) fits that narrower card the way 2 rows
    of 8 fits a full-width one, at a smaller card size (roughly half a full .fav-card)
-   since this is a denser grid than a plain .favs. Fixed at 4 columns on every
-   viewport, desktop and mobile alike -- unlike .favs--eight, this one doesn't step
-   down further at narrower widths. */
+   since this is a denser grid than a plain .favs. */
 .favs--four .fav-card p { font-size: 0.75rem; }
 .compare-page .favs--four .fav-placeholder { font-size: 1.5rem; }
 .compare-page .favs--four .fav-card {
-  flex: 0 0 calc((100% - 3 * 1.25rem) / 4);
-  max-width: calc((100% - 3 * 1.25rem) / 4);
+  flex: 0 0 calc((100% - 3 * 1rem) / 4);
+  max-width: calc((100% - 3 * 1rem) / 4);
+}
+/* Favorite directors' "Side by side" grids only, not "loved it" -- 4x3 (3 columns,
+   4 rows) at every viewport, desktop included, rather than .favs--four's own 4
+   columns. Scoped via the toggle panel's own attribute rather than a template
+   class, so it'll pick up Favorite actors' matching grid for free whenever that
+   gets the same conversion. Unconditional, not inside a media query -- desktop and
+   mobile want the same 3-column shape here, unlike most of this file's other
+   grids. */
+.compare-page [data-view-panel="split"] .favs--four .fav-card {
+  flex: 0 0 calc((100% - 2 * 1rem) / 3);
+  max-width: calc((100% - 2 * 1rem) / 3);
+}
+
+/* Favorite Directors/Actors on both pages -- Double Feature's "Shared" grid and
+   Director's Cut's own Favorite Directors/Actors card (FAVORITE_PEOPLE_GRID_CAP in
+   dashboard.py, SHARED_PEOPLE_GRID_CAP in compare.py -- see either's comment for why
+   this isn't .favs--eight's shape). 2 rows of 6 on desktop, unwound to 4 rows of 3
+   on mobile rather than .favs--eight's own 4-columns-at-every-narrow-width behavior
+   -- a plain .favs--eight instinct here would leave an oddly sparse partial row
+   against this grid's 12-item cap. */
+.favs--six { gap: 0.6rem; }
+.favs--six .fav-card {
+  flex: 0 0 calc((100% - 5 * 0.6rem) / 6);
+  max-width: calc((100% - 5 * 0.6rem) / 6);
+}
+@media (max-width: 700px) {
+  .favs--six .fav-card {
+    flex: 0 0 calc((100% - 2 * 0.6rem) / 3);
+    max-width: calc((100% - 2 * 0.6rem) / 3);
+  }
 }
 
 /* Same day logs -- replaces a Date/A/B table (mostly empty column width on days with
@@ -745,7 +823,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    own min(560px, 100%) cap keeps its rendered width close to the full 560px anyway,
    so 5 columns already has room; it's specifically when the viewport itself drops
    below ~560px that the panel (and so this grid) gets squeezed. */
-.modal-film-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; }
+.modal-film-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; }
 .modal-film-grid .fav-card { max-width: none; }
 @media (max-width: 480px) {
   .modal-film-grid { grid-template-columns: repeat(3, 1fr); }

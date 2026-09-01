@@ -185,90 +185,121 @@
     </div>
   </div>
 
-  <div class="two-col">
-    <div class="card">
-      <h3>Favorite Directors</h3>
-      <div class="toggle-group" data-toggle-group>
-        <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
-        <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
-        <button type="button" class="toggle-btn" data-view="true_score">True score</button>
-      </div>
-      <p class="muted caption"><i>Note: Directors need at least 3 rated films to appear under Highest rated or True score.</i></p>
-      <table data-view-panel="watched">
-        <thead><tr><th>Director</th><th>Avg rating</th><th>Films</th></tr></thead>
-        <tbody>
-          {% for row in top_directors %}
-            <tr><td class="name-cell">
-              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.directors__name }}</button>
-            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
-      <table data-view-panel="rated" hidden>
-        <thead><tr><th>Director</th><th>Avg rating</th><th>Films</th></tr></thead>
-        <tbody>
-          {% for row in favorite_people.favorite_directors %}
-            <tr><td class="name-cell">
-              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
-            </td><td>{{ row.avg|floatformat:1 }} ★</td><td>{{ row.count }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
-      <table data-view-panel="true_score" hidden>
-        <thead><tr><th>Director</th><th><span class="th-with-tip">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></span></th><th>Films</th></tr></thead>
-        <tbody>
-          {% for row in favorite_people.favorite_directors_by_true_score %}
-            <tr><td class="name-cell">
-              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
-            </td><td>{{ row.true_score|floatformat:2 }} ★</td><td>{{ row.count }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
+  <div class="card">
+    <h3>Favorite Directors</h3>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+      <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      <button type="button" class="toggle-btn" data-view="true_score">True score</button>
     </div>
-    <div class="card">
-      <h3>Favorite Actors</h3>
-      <div class="toggle-group" data-toggle-group>
-        <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
-        <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
-        <button type="button" class="toggle-btn" data-view="true_score">True score</button>
-      </div>
-      <p class="muted caption"><i>Note: Actors need at least 4 rated films to appear under Highest rated or True score.</i></p>
-      <table data-view-panel="watched">
-        <thead><tr><th><span class="th-with-tip">Actor <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></th><th>Avg rating</th><th>Films</th></tr></thead>
-        <tbody>
+    <p class="muted caption"><i>Note: Directors need at least 3 rated films to appear under Highest rated or True score.</i></p>
+    <div data-view-panel="watched">
+      {% if top_directors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in top_directors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.directors__name }}</button>
+              <p class="muted">{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %} </p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="rated" hidden>
+      {% if favorite_people.favorite_directors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in favorite_people.favorite_directors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
+              <p class="muted">{{ row.avg|floatformat:1 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="true_score" hidden>
+      <p class="th-with-tip muted caption">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></p>
+      {% if favorite_people.favorite_directors_by_true_score %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in favorite_people.favorite_directors_by_true_score %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
+              <p class="muted">{{ row.true_score|floatformat:2 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No data yet</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3><span class="th-with-tip">Favorite Actors <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></h3>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+      <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      <button type="button" class="toggle-btn" data-view="true_score">True score</button>
+    </div>
+    <p class="muted caption"><i>Note: Actors need at least 4 rated films to appear under Highest rated or True score.</i></p>
+    <div data-view-panel="watched">
+      {% if top_actors %}
+        <div class="favs favs--six favs--headshots">
           {% for row in top_actors %}
-            <tr><td class="name-cell">
-              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
-            </td><td>{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</td><td>{{ row.count }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
-      <table data-view-panel="rated" hidden>
-        <thead><tr><th>Actor</th><th>Avg rating</th><th>Films</th></tr></thead>
-        <tbody>
+              <p class="muted">{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="rated" hidden>
+      {% if favorite_people.favorite_actors %}
+        <div class="favs favs--six favs--headshots">
           {% for row in favorite_people.favorite_actors %}
-            <tr><td class="name-cell">
-              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
-            </td><td>{{ row.avg|floatformat:1 }} ★</td><td>{{ row.count }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
-      <table data-view-panel="true_score" hidden>
-        <thead><tr><th>Actor</th><th><span class="th-with-tip">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></span></th><th>Films</th></tr></thead>
-        <tbody>
+              <p class="muted">{{ row.avg|floatformat:1 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="true_score" hidden>
+      <p class="th-with-tip muted caption">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></p>
+      {% if favorite_people.favorite_actors_by_true_score %}
+        <div class="favs favs--six favs--headshots">
           {% for row in favorite_people.favorite_actors_by_true_score %}
-            <tr><td class="name-cell">
-              {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
-            </td><td>{{ row.true_score|floatformat:2 }} ★</td><td>{{ row.count }}</td></tr>
-          {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-        </tbody>
-      </table>
+              <p class="muted">{{ row.true_score|floatformat:2 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No data yet</p>
+      {% endif %}
     </div>
   </div>
 
@@ -355,11 +386,11 @@
   <div class="card">
     <h3>Most rewatched directors</h3>
     {% if rewatch.most_rewatched_directors %}
-      <div class="favs favs--eight favs--eight-headshots">
+      <div class="favs favs--eight favs--headshots">
         {% for row in rewatch.most_rewatched_directors %}
           <div class="fav-card">
             {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-            <p>{{ row.movie__directors__name }}</p>
+            <p class="fav-name">{{ row.movie__directors__name }}</p>
             <p class="muted">{{ row.count }}×</p>
           </div>
         {% endfor %}

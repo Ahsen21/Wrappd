@@ -155,48 +155,57 @@
       <button type="button" class="toggle-btn" data-view="shared">Shared</button>
     </div>
     <div data-view-panel="split">
-      <div class="two-col">
+      <div class="two-col two-col--divided">
         <div>
           <h4>{{ session_a.display_name|default:"Person A" }}</h4>
-          <table>
-            <thead><tr><th>Director</th><th>Avg</th><th>Films</th></tr></thead>
-            <tbody>
+          {% if top_directors_a %}
+            <div class="favs favs--four favs--headshots">
               {% for row in top_directors_a %}
-                <tr><td class="name-cell">
-                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                <div class="fav-card">
+                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
                   <button type="button" class="person-trigger" data-session-id="{{ session_a.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
-                </td><td class="a-color">{{ row.avg|floatformat:1 }} ★</td><td class="a-color">{{ row.count }}</td></tr>
-              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-            </tbody>
-          </table>
+                  <p class="a-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">No data yet</p>
+          {% endif %}
         </div>
         <div>
           <h4>{{ session_b.display_name|default:"Person B" }}</h4>
-          <table>
-            <thead><tr><th>Director</th><th>Avg</th><th>Films</th></tr></thead>
-            <tbody>
+          {% if top_directors_b %}
+            <div class="favs favs--four favs--headshots">
               {% for row in top_directors_b %}
-                <tr><td class="name-cell">
-                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                <div class="fav-card">
+                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
                   <button type="button" class="person-trigger" data-session-id="{{ session_b.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
-                </td><td class="b-color">{{ row.avg|floatformat:1 }} ★</td><td class="b-color">{{ row.count }}</td></tr>
-              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-            </tbody>
-          </table>
+                  <p class="b-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">No data yet</p>
+          {% endif %}
         </div>
       </div>
     </div>
-    <table data-view-panel="shared" hidden>
-      <thead><tr><th>Director</th><th>{{ session_a.display_name|default:"A" }}</th><th>Films</th><th>{{ session_b.display_name|default:"B" }}</th><th>Films</th></tr></thead>
-      <tbody>
-        {% for row in shared_directors %}
-          <tr><td class="name-cell">
-            {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-            {{ row.name }}
-          </td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="a-color">{{ row.count_a }}</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td><td class="b-color">{{ row.count_b }}</td></tr>
-        {% empty %}<tr><td colspan="5" class="muted">No shared favorites yet</td></tr>{% endfor %}
-      </tbody>
-    </table>
+    <div data-view-panel="shared" hidden>
+      {% if shared_directors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in shared_directors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <p class="fav-name">{{ row.name }}</p>
+              <p class="a-color">{{ row.avg_a|floatformat:1 }} ★ ({{ row.count_a }} film{{ row.count_a|pluralize }})</p>
+              <p class="b-color">{{ row.avg_b|floatformat:1 }} ★ ({{ row.count_b }} film{{ row.count_b|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No shared favorites yet</p>
+      {% endif %}
+    </div>
   </div>
 
   <div class="card">
@@ -206,48 +215,57 @@
       <button type="button" class="toggle-btn" data-view="shared">Shared</button>
     </div>
     <div data-view-panel="split">
-      <div class="two-col">
+      <div class="two-col two-col--divided">
         <div>
           <h4>{{ session_a.display_name|default:"Person A" }}</h4>
-          <table>
-            <thead><tr><th>Actor</th><th>Avg</th><th>Films</th></tr></thead>
-            <tbody>
+          {% if top_actors_a %}
+            <div class="favs favs--four favs--headshots">
               {% for row in top_actors_a %}
-                <tr><td class="name-cell">
-                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                <div class="fav-card">
+                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
                   <button type="button" class="person-trigger" data-session-id="{{ session_a.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
-                </td><td class="a-color">{{ row.avg|floatformat:1 }} ★</td><td class="a-color">{{ row.count }}</td></tr>
-              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-            </tbody>
-          </table>
+                  <p class="a-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">No data yet</p>
+          {% endif %}
         </div>
         <div>
           <h4>{{ session_b.display_name|default:"Person B" }}</h4>
-          <table>
-            <thead><tr><th>Actor</th><th>Avg</th><th>Films</th></tr></thead>
-            <tbody>
+          {% if top_actors_b %}
+            <div class="favs favs--four favs--headshots">
               {% for row in top_actors_b %}
-                <tr><td class="name-cell">
-                  {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
+                <div class="fav-card">
+                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
                   <button type="button" class="person-trigger" data-session-id="{{ session_b.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
-                </td><td class="b-color">{{ row.avg|floatformat:1 }} ★</td><td class="b-color">{{ row.count }}</td></tr>
-              {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
-            </tbody>
-          </table>
+                  <p class="b-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">No data yet</p>
+          {% endif %}
         </div>
       </div>
     </div>
-    <table data-view-panel="shared" hidden>
-      <thead><tr><th>Actor</th><th>{{ session_a.display_name|default:"A" }}</th><th>Films</th><th>{{ session_b.display_name|default:"B" }}</th><th>Films</th></tr></thead>
-      <tbody>
-        {% for row in shared_actors %}
-          <tr><td class="name-cell">
-            {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-            {{ row.name }}
-          </td><td class="a-color">{{ row.avg_a|floatformat:1 }} ★</td><td class="a-color">{{ row.count_a }}</td><td class="b-color">{{ row.avg_b|floatformat:1 }} ★</td><td class="b-color">{{ row.count_b }}</td></tr>
-        {% empty %}<tr><td colspan="5" class="muted">No shared favorites yet</td></tr>{% endfor %}
-      </tbody>
-    </table>
+    <div data-view-panel="shared" hidden>
+      {% if shared_actors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in shared_actors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <p class="fav-name">{{ row.name }}</p>
+              <p class="a-color">{{ row.avg_a|floatformat:1 }} ★ ({{ row.count_a }} film{{ row.count_a|pluralize }})</p>
+              <p class="b-color">{{ row.avg_b|floatformat:1 }} ★ ({{ row.count_b }} film{{ row.count_b|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No shared favorites yet</p>
+      {% endif %}
+    </div>
   </div>
 
   <div class="card">
