@@ -19,10 +19,10 @@ TOP_N = 10
 # rather than TOP_N's 10, since 10 left an awkward sparse second row of 2.
 GRID_DISPLAY_CAP = 16
 # Top unseen (formerly "five-star exclusives") renders the same kind of poster grid,
-# but inside a .two-col half-width card rather than a full-width one -- 2 rows of 5
-# (10) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 8 fits a
+# but inside a .two-col half-width card rather than a full-width one -- 3 rows of 4
+# (12) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 8 fits a
 # full-width one.
-GRID_DISPLAY_CAP_NARROW = 10
+GRID_DISPLAY_CAP_NARROW = 12
 # Qualifying bar for _top_unseen_by_other -- "X loved it, Y hasn't seen it" needs to
 # stay a genuine "loved it" claim, not just whatever happens to be the highest-rated
 # film left after excluding what the other person's seen.
@@ -207,18 +207,26 @@ def _tmdb_image_url(path: str, size: str) -> str:
 
 
 def _director_averages(import_session, min_count):
-    """{name: (avg, count, profile_url)} for directors this session has rated at
-    least min_count films from. min_count is MIN_COUNT_FOR_FAVORITE_DIRECTOR, not
-    MIN_COUNT_FOR_AVERAGE -- 'favorite' has a higher bar than a merely-averageable
-    sample size."""
+    """{name: (avg, count, profile_url, tmdb_id)} for directors this session has
+    rated at least min_count films from. min_count is MIN_COUNT_FOR_FAVORITE_DIRECTOR,
+    not MIN_COUNT_FOR_AVERAGE -- 'favorite' has a higher bar than a merely-averageable
+    sample size. tmdb_id is threaded through for the person-filmography modal (same
+    dashboard.py feature, reused as-is here since it's keyed by session_id alone --
+    session_a and session_b are each just an ImportSession id, so the existing
+    endpoint needs no Double-Feature-specific changes)."""
     rows = (
         exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
         .filter(movie__directors__isnull=False)
         .values('movie__directors__name')
-        .annotate(avg=Avg('rating'), count=Count('id'), profile_path=Min('movie__directors__profile_path'))
+        .annotate(
+            avg=Avg('rating'), count=Count('id'), profile_path=Min('movie__directors__profile_path'),
+            tmdb_id=Min('movie__directors__tmdb_id'),
+        )
     )
     return {
-        row['movie__directors__name']: (float(row['avg']), row['count'], _tmdb_image_url(row['profile_path'], 'w185'))
+        row['movie__directors__name']: (
+            float(row['avg']), row['count'], _tmdb_image_url(row['profile_path'], 'w185'), row['tmdb_id'],
+        )
         for row in rows
         if row['count'] >= min_count
     }
@@ -244,29 +252,36 @@ def _cameo_credit_ids(movie_ids) -> set:
 
 
 def _actor_averages(import_session, min_count):
-    """{name: (avg, count, profile_url)} for actors this session has rated at least
-    min_count *non-cameo* films from -- same cameo exclusion as dashboard.py's
-    favorite_actors/top_actors (a big-cast film's one-scene bit part shouldn't count
-    as 'you rated a film with this actor'). Can't reuse _director_averages' plain M2M
-    query shape here: excluding specific Credit rows by id needs an explicit query
-    through Credit, not the cast_members M2M field, so this is its own function
-    rather than a shared 'filter_field' parameter."""
+    """{name: (avg, count, profile_url, tmdb_id)} for actors this session has rated
+    at least min_count *non-cameo* films from -- same cameo exclusion as
+    dashboard.py's favorite_actors/top_actors (a big-cast film's one-scene bit part
+    shouldn't count as 'you rated a film with this actor'). Can't reuse
+    _director_averages' plain M2M query shape here: excluding specific Credit rows by
+    id needs an explicit query through Credit, not the cast_members M2M field, so this
+    is its own function rather than a shared 'filter_field' parameter. tmdb_id is
+    threaded through for the person-filmography modal, same reasoning as
+    _director_averages above."""
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session)).exclude(movie__isnull=True)
     rated_ratings_by_movie = dict(rated.values_list('movie_id', 'rating'))
     cameo_ids = _cameo_credit_ids(rated_ratings_by_movie.keys())
 
     actor_ratings = defaultdict(list)
     actor_profile_paths = {}
-    for person_name, movie_id, profile_path in (
+    actor_tmdb_ids = {}
+    for person_name, movie_id, profile_path, tmdb_id in (
         Credit.objects.filter(movie_id__in=rated_ratings_by_movie)
         .exclude(id__in=cameo_ids)
-        .values_list('person__name', 'movie_id', 'person__profile_path')
+        .values_list('person__name', 'movie_id', 'person__profile_path', 'person__tmdb_id')
     ):
         actor_ratings[person_name].append(rated_ratings_by_movie[movie_id])
         actor_profile_paths[person_name] = profile_path
+        actor_tmdb_ids[person_name] = tmdb_id
 
     return {
-        name: (float(sum(ratings) / len(ratings)), len(ratings), _tmdb_image_url(actor_profile_paths[name], 'w185'))
+        name: (
+            float(sum(ratings) / len(ratings)), len(ratings),
+            _tmdb_image_url(actor_profile_paths[name], 'w185'), actor_tmdb_ids[name],
+        )
         for name, ratings in actor_ratings.items()
         if len(ratings) >= min_count
     }
@@ -285,8 +300,8 @@ def _top_people(stats):
     can't even see, silently skipping the film-count tiebreak they're expecting.
     Mirrors dashboard.py's own favorite_directors/_actors sort exactly."""
     results = [
-        {'name': name, 'avg': avg, 'count': count, 'profile_url': profile_url}
-        for name, (avg, count, profile_url) in stats.items()
+        {'name': name, 'avg': avg, 'count': count, 'profile_url': profile_url, 'tmdb_id': tmdb_id}
+        for name, (avg, count, profile_url, tmdb_id) in stats.items()
     ]
     results.sort(key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
     return results[:TOP_N]

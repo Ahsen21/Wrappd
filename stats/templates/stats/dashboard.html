@@ -324,7 +324,7 @@
 
   <div class="card">
     <h3>Viewing calendar</h3>
-    <div class="grid">
+    <div class="grid grid--calendar-stats">
       <div class="stat">
         <div class="value">{% if calendar.busiest_month %}{{ calendar.busiest_month.count }}{% else %}—{% endif %}</div>
         <div class="label">Busiest month{% if calendar.busiest_month %} ({{ calendar.busiest_month.month|date:"F Y" }}){% endif %}</div>
@@ -521,6 +521,10 @@
     })();
 
     const chartData = JSON.parse(document.getElementById('chart-data').textContent);
+    // Checked once at load, not re-checked on resize -- only used to give a couple
+    // of charts a taller aspect ratio on a phone-width screen, not something that
+    // needs to track live window resizing.
+    const isMobile = window.matchMedia('(max-width: 700px)').matches;
     const gridColor = 'rgba(138, 153, 168, 0.15)';
     const textColor = '#e5e9ec';
     Chart.defaults.color = textColor;
@@ -580,18 +584,36 @@
       type: 'bar',
       data: { labels: chartData.release_year_distribution.labels, datasets: [{ label: 'Films', data: chartData.release_year_distribution.data, backgroundColor: '#00e054', hoverBackgroundColor: lighten('#00e054', 40), borderRadius: 4 }] },
       options: {
+        // Chart.js's default aspectRatio (2, width:height) on a full-width desktop
+        // card is already tall enough for this many year-bars to read clearly, but
+        // on a narrow phone card that same 2:1 ratio squashes it short -- not enough
+        // vertical room for the bars or every-5th-year labels to stay legible.
+        // Shorter ratio only on mobile; omitted (not overridden) on desktop so
+        // Chart.js's own default still applies there, unchanged.
+        aspectRatio: isMobile ? 1.3 : undefined,
         scales: {
           x: {
             grid: { color: gridColor },
             ticks: {
               // autoSkip:false forces Chart.js to generate a tick for every year
               // (otherwise it thins ticks itself based on pixel width, landing on
-              // whatever interval fits rather than a clean multiple of 5). The
-              // callback is then the only thing deciding which ticks get label text.
+              // whatever interval fits rather than a clean multiple of 5/15 --
+              // autoSkip's own choice of interval isn't guaranteed to land on a
+              // round number, e.g. it picked 14 once). The callback is then the
+              // only thing deciding which ticks get label text: every 5th year on
+              // desktop, every 15th on the narrower mobile card.
+              // maxRotation:0 is what actually keeps those labels upright on
+              // mobile, not autoSkip -- Chart.js sizes each tick's rotation against
+              // its true per-category slot width (~3px each, with a century-
+              // spanning range like this one) regardless of how few of those slots
+              // the callback lets render text, so without capping rotation at 0 it
+              // still rotates steeply even though the visible labels have plenty of
+              // real space around them.
               autoSkip: false,
+              maxRotation: isMobile ? 0 : undefined,
               callback: function (value) {
                 const year = parseInt(this.getLabelForValue(value), 10);
-                return year % 5 === 0 ? year : '';
+                return year % (isMobile ? 20 : 5) === 0 ? year : '';
               },
             },
           },
