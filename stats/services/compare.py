@@ -23,6 +23,11 @@ GRID_DISPLAY_CAP = 16
 # (12) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 8 fits a
 # full-width one.
 GRID_DISPLAY_CAP_NARROW = 12
+# Favorite directors' "Shared" grid (see .favs--six in base.css) -- its own cap, not
+# GRID_DISPLAY_CAP or GRID_DISPLAY_CAP_NARROW, since it's neither of those grids'
+# shape: 2 rows of 6 on desktop (4 rows of 3 on mobile), full-width like
+# GRID_DISPLAY_CAP's grids but a different column count/cap than any of them.
+SHARED_PEOPLE_GRID_CAP = 12
 # Qualifying bar for _top_unseen_by_other -- "X loved it, Y hasn't seen it" needs to
 # stay a genuine "loved it" claim, not just whatever happens to be the highest-rated
 # film left after excluding what the other person's seen.
@@ -287,12 +292,18 @@ def _actor_averages(import_session, min_count):
     }
 
 
-def _top_people(stats):
-    """This session's own top TOP_N directors/actors by avg rating, from an
-    already-built {name: (avg, count, profile_url)} map (_director_averages or
-    _actor_averages) -- independent of the other session, unlike _shared_people.
-    Sorted by avg descending, count as the tiebreak (same ordering shape as
-    _shared_people, just single-session).
+def _top_people(stats, cap=TOP_N):
+    """This session's own top directors/actors by avg rating, from an already-built
+    {name: (avg, count, profile_url)} map (_director_averages or _actor_averages) --
+    independent of the other session, unlike _shared_people. Sorted by avg
+    descending, count as the tiebreak (same ordering shape as _shared_people, just
+    single-session).
+
+    cap defaults to TOP_N (the table view actors/directors still use) but the grid
+    views pass GRID_DISPLAY_CAP/GRID_DISPLAY_CAP_NARROW instead, same as this file's
+    other list-vs-grid caps (see GRID_DISPLAY_CAP's own comment) -- a grid needs to
+    fill its shape evenly, which isn't the same number as "top N by ranking" just
+    because a table happened to also stop at 10.
 
     The tie check sorts on round(avg, 1), the *displayed* rating, not the raw one --
     two people can both show "4.6 ★" while their true averages are 4.625 vs 4.55, and
@@ -304,17 +315,20 @@ def _top_people(stats):
         for name, (avg, count, profile_url, tmdb_id) in stats.items()
     ]
     results.sort(key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
-    return results[:TOP_N]
+    return results[:cap]
 
 
-def _shared_people(stats_a, stats_b):
+def _shared_people(stats_a, stats_b, cap=TOP_N):
     """Directors or actors both sessions qualify as a favorite for, from two
     already-built averages maps (same source functions as _top_people). Ranked by
     whichever of the two averages is *lower*, not the combined/mean average -- a
     shared favorite has to be genuinely well-regarded by both people, not one person
     loving them enough to drag a blended average up while the other is lukewarm.
     Ties on that (displayed, 1dp -- see _top_people) lower-average value fall back to
-    combined film count."""
+    combined film count.
+
+    cap defaults to TOP_N (the table view) -- see _top_people's own cap docstring for
+    why the grid view passes GRID_DISPLAY_CAP instead."""
     results = [
         {
             'name': name, 'avg_a': stats_a[name][0], 'avg_b': stats_b[name][0],
@@ -332,7 +346,7 @@ def _shared_people(stats_a, stats_b):
     # ties on the numeric keys alone would visibly reorder across server restarts --
     # the exact same bug class fixed in biggest_disagreements_all above.
     results.sort(key=lambda r: (-round(min(r['avg_a'], r['avg_b']), 1), -(r['count_a'] + r['count_b']), r['name']))
-    return results[:TOP_N]
+    return results[:cap]
 
 
 def _spread_by_rating(films_sorted_desc, cap):
@@ -481,12 +495,15 @@ def build_compare_context(session_a, session_b) -> dict:
     actor_stats_a = _actor_averages(session_a, MIN_COUNT_FOR_FAVORITE_ACTOR)
     actor_stats_b = _actor_averages(session_b, MIN_COUNT_FOR_FAVORITE_ACTOR)
 
-    shared_directors = _shared_people(director_stats_a, director_stats_b)
-    shared_actors = _shared_people(actor_stats_a, actor_stats_b)
-    top_directors_a = _top_people(director_stats_a)
-    top_directors_b = _top_people(director_stats_b)
-    top_actors_a = _top_people(actor_stats_a)
-    top_actors_b = _top_people(actor_stats_b)
+    # Directors and actors both render as grids now (SHARED_PEOPLE_GRID_CAP/
+    # GRID_DISPLAY_CAP_NARROW), same as this file's other poster grids -- not TOP_N,
+    # which is the table view's own cap.
+    shared_directors = _shared_people(director_stats_a, director_stats_b, cap=SHARED_PEOPLE_GRID_CAP)
+    shared_actors = _shared_people(actor_stats_a, actor_stats_b, cap=SHARED_PEOPLE_GRID_CAP)
+    top_directors_a = _top_people(director_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
+    top_directors_b = _top_people(director_stats_b, cap=GRID_DISPLAY_CAP_NARROW)
+    top_actors_a = _top_people(actor_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
+    top_actors_b = _top_people(actor_stats_b, cap=GRID_DISPLAY_CAP_NARROW)
 
     # One bulk lookup spanning every film list on the page rather than a query per
     # list. Resolves onto shared_films (and therefore biggest_disagreements/

@@ -33,6 +33,13 @@ REWATCH_GRID_DISPLAY_CAP = 16
 # Biggest over-rates/under-rates render as a fixed poster grid (see .favs--eight in
 # base.css), not a table -- 2 rows of 8 (16) rather than TOP_N's 10.
 TASTE_GRID_DISPLAY_CAP = 16
+# Favorite Directors/Actors render as a fixed poster grid (see .favs--six in
+# base.css -- shared with Double Feature's own Favorite directors/actors grids, not
+# .favs--eight's shape like Most rewatched/Taste vs. crowd above), not a table -- 12
+# rather than TOP_N's 10. Kept as its own constant per this file's established "a
+# grid's cap is about filling its shape evenly, not about 'top N' ranking"
+# convention, even though it's not TOP_N-derived.
+FAVORITE_PEOPLE_GRID_CAP = 12
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
 # rather than asserting a fake average.
@@ -216,7 +223,7 @@ def build_dashboard_context(import_session) -> dict:
         row['avg_rating'] = stats['avg_rating'] if stats and stats['rating_count'] >= MIN_COUNT_FOR_AVERAGE else None
         row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
     top_directors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-    top_directors = top_directors[:TOP_N]
+    top_directors = top_directors[:FAVORITE_PEOPLE_GRID_CAP]
 
     # Cameo exclusion is computed once over every movie either "most watched" or
     # "highest rated" could reference, then reused for both -- see _cameo_credit_ids.
@@ -262,7 +269,7 @@ def build_dashboard_context(import_session) -> dict:
         row['avg_rating'] = sum(ratings) / len(ratings) if len(ratings) >= MIN_COUNT_FOR_AVERAGE else None
         row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
     top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-    top_actors = top_actors[:TOP_N]
+    top_actors = top_actors[:FAVORITE_PEOPLE_GRID_CAP]
 
     # Sourced from rated (RatingEntry, i.e. ratings.csv), not diary -- this sits right
     # above the rating_distribution chart (also ratings.csv-sourced now), so both
@@ -768,9 +775,9 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_
             row['avg'], row['count'], TRUE_SCORE_SHRINKAGE_K, overall_avg_rating, row['five_star_count']
         )
     favorite_directors = sorted(favorite_directors_all, key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
-    favorite_directors = favorite_directors[:TOP_N]
+    favorite_directors = favorite_directors[:FAVORITE_PEOPLE_GRID_CAP]
     favorite_directors_by_true_score = sorted(favorite_directors_all, key=lambda r: r['true_score'], reverse=True)
-    favorite_directors_by_true_score = favorite_directors_by_true_score[:TOP_N]
+    favorite_directors_by_true_score = favorite_directors_by_true_score[:FAVORITE_PEOPLE_GRID_CAP]
 
     favorite_actors_all = [
         {
@@ -789,9 +796,9 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_
             row['avg'], row['count'], TRUE_SCORE_SHRINKAGE_K, overall_avg_rating, row['five_star_count']
         )
     favorite_actors = sorted(favorite_actors_all, key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
-    favorite_actors = favorite_actors[:TOP_N]
+    favorite_actors = favorite_actors[:FAVORITE_PEOPLE_GRID_CAP]
     favorite_actors_by_true_score = sorted(favorite_actors_all, key=lambda r: r['true_score'], reverse=True)
-    favorite_actors_by_true_score = favorite_actors_by_true_score[:TOP_N]
+    favorite_actors_by_true_score = favorite_actors_by_true_score[:FAVORITE_PEOPLE_GRID_CAP]
 
     return {
         'favorite_directors': favorite_directors,
