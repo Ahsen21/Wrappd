@@ -45,7 +45,7 @@
       <p class="muted">You rated {{ same_rating_total|intcomma }} film{{ same_rating_total|pluralize }} exactly the same.</p>
     {% endif %}
     {% if same_rating %}
-      <div class="favs favs--compact">
+      <div class="favs favs--eight">
         {% for film in same_rating %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -68,7 +68,7 @@
       <p class="muted caption">Showing {{ biggest_disagreements|length }} of {{ biggest_disagreements_total|intcomma }}.</p>
     {% endif %}
     {% if biggest_disagreements %}
-      <div class="favs favs--compact">
+      <div class="favs favs--eight">
         {% for film in biggest_disagreements %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -86,7 +86,7 @@
     <div class="card">
       <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
       {% if top_unseen_a %}
-        <div class="favs favs--compact favs--five">
+        <div class="favs favs--five">
           {% for film in top_unseen_a %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -101,7 +101,7 @@
     <div class="card">
       <h3>{{ session_b.display_name|default:"Person B" }} loved it, {{ session_a.display_name|default:"Person A" }} hasn't seen it</h3>
       {% if top_unseen_b %}
-        <div class="favs favs--compact favs--five">
+        <div class="favs favs--five">
           {% for film in top_unseen_b %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -256,7 +256,7 @@
       <p class="muted caption">Showing {{ watchlist_matches|length }} of {{ watchlist_matches_total|intcomma }}.</p>
     {% endif %}
     {% if watchlist_matches %}
-      <div class="favs favs--compact">
+      <div class="favs favs--eight">
         {% for film in watchlist_matches %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -312,7 +312,7 @@
         <p class="muted caption">Showing {{ same_day_exact_matches|length }} of {{ same_day_exact_matches_total|intcomma }}.</p>
       {% endif %}
       {% if same_day_exact_matches %}
-        <div class="favs favs--compact">
+        <div class="favs favs--eight">
           {% for film in same_day_exact_matches %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}

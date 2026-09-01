@@ -12,7 +12,7 @@
       {% csrf_token %}
       {{ form.export_file.label_tag }}
       <div class="file-picker">
-        <label for="{{ form.export_file.id_for_label }}" class="file-picker-btn">Choose File</label>
+        <label for="{{ form.export_file.id_for_label }}" class="btn file-picker-btn">Choose File</label>
         <span class="file-picker-name" id="file-picker-name">No file chosen</span>
       </div>
       {{ form.export_file }}
