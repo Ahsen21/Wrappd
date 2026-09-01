@@ -12,16 +12,16 @@
       <div class="stat"><div class="value">{{ same_rating_total|intcomma }}</div><div class="label">Same rating</div></div>
       <div class="stat"><div class="value">{{ rated_higher_a_count|intcomma }}</div><div class="label">{{ session_a.display_name|default:"Person A" }} rated higher</div></div>
       <div class="stat"><div class="value">{{ rated_higher_b_count|intcomma }}</div><div class="label">{{ session_b.display_name|default:"Person B" }} rated higher</div></div>
-      <div class="stat"><div class="value">{{ avg_delta|floatformat:1|default:"—" }}</div><div class="label"><span class="th-with-tip">Per-film rating gap <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average difference between your ratings on films you've both rated</span></span></span></div></div>
-      <div class="stat"><div class="value">{{ overlap_pct }}%</div><div class="label"><span class="th-with-tip">Watched in common <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of every film either of you has watched that you've both watched.</span></span></span></div></div>
-      <div class="stat"><div class="value">{{ agreement_pct|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Rating agreement <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of films you've both rated where your ratings landed within half a star of each other.</span></span></span></div></div>
-      <div class="stat"><div class="value">{{ compatibility_pct|default:"—" }}{% if compatibility_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Compatibility <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average of Watched in common and Rating agreement, representing how much you watch the same things and how similarly you feel about them.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ avg_delta|floatformat:2|default:"—" }}</div><div class="label"><span class="th-with-tip">Per-film rating gap <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average difference between your ratings on films you've both rated</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ overlap_pct|floatformat:0|default:"—" }}%</div><div class="label"><span class="th-with-tip">Watched in common <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of every film either of you has watched that you've both watched.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ agreement_pct|floatformat:0|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Rating agreement <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of films you've both rated where your ratings landed within half a star of each other.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ compatibility_pct|floatformat:0|default:"—" }}{% if compatibility_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Compatibility <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average of Watched in common and Rating agreement, representing how much you watch the same things and how similarly you feel about them.</span></span></span></div></div>
     </div>
   </div>
 
   <div class="card">
     <h3>Rating distributions</h3>
-    <div class="grid">
+    <div class="grid grid--rating-avg">
       <div class="stat">
         <div class="value a-color">{% if avg_rating_a %}{{ avg_rating_a|floatformat:2 }} ★{% else %}—{% endif %}</div>
         <div class="label">{{ session_a.display_name|default:"Person A" }}'s avg rating</div>
@@ -86,7 +86,7 @@
     <div class="card">
       <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
       {% if top_unseen_a %}
-        <div class="favs favs--five">
+        <div class="favs favs--four">
           {% for film in top_unseen_a %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -101,7 +101,7 @@
     <div class="card">
       <h3>{{ session_b.display_name|default:"Person B" }} loved it, {{ session_a.display_name|default:"Person A" }} hasn't seen it</h3>
       {% if top_unseen_b %}
-        <div class="favs favs--five">
+        <div class="favs favs--four">
           {% for film in top_unseen_b %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -164,7 +164,7 @@
               {% for row in top_directors_a %}
                 <tr><td class="name-cell">
                   {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-                  {{ row.name }}
+                  <button type="button" class="person-trigger" data-session-id="{{ session_a.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
                 </td><td class="a-color">{{ row.avg|floatformat:1 }} ★</td><td class="a-color">{{ row.count }}</td></tr>
               {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
             </tbody>
@@ -178,7 +178,7 @@
               {% for row in top_directors_b %}
                 <tr><td class="name-cell">
                   {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-                  {{ row.name }}
+                  <button type="button" class="person-trigger" data-session-id="{{ session_b.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
                 </td><td class="b-color">{{ row.avg|floatformat:1 }} ★</td><td class="b-color">{{ row.count }}</td></tr>
               {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
             </tbody>
@@ -215,7 +215,7 @@
               {% for row in top_actors_a %}
                 <tr><td class="name-cell">
                   {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-                  {{ row.name }}
+                  <button type="button" class="person-trigger" data-session-id="{{ session_a.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
                 </td><td class="a-color">{{ row.avg|floatformat:1 }} ★</td><td class="a-color">{{ row.count }}</td></tr>
               {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
             </tbody>
@@ -229,7 +229,7 @@
               {% for row in top_actors_b %}
                 <tr><td class="name-cell">
                   {% if row.profile_url %}<img class="person-thumb" src="{{ row.profile_url }}" alt="">{% else %}<div class="person-thumb-placeholder">🎬</div>{% endif %}
-                  {{ row.name }}
+                  <button type="button" class="person-trigger" data-session-id="{{ session_b.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
                 </td><td class="b-color">{{ row.avg|floatformat:1 }} ★</td><td class="b-color">{{ row.count }}</td></tr>
               {% empty %}<tr><td colspan="3" class="muted">No data yet</td></tr>{% endfor %}
             </tbody>
@@ -353,6 +353,16 @@
   </div>
   {% endcomment %}
 
+  <div class="modal-backdrop" id="personModalBackdrop" hidden>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="personModalTitle">
+      <div class="modal-header">
+        <h3 id="personModalTitle"></h3>
+        <button type="button" class="modal-close" id="personModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="personModalBody"></div>
+    </div>
+  </div>
+
   {{ chart_data|json_script:"chart-data" }}
   <script>
     // Generic toggle-group/view-panel wiring, mirrored from dashboard.html -- lets a
@@ -469,6 +479,83 @@
         ratingCurveChart.update();
       });
     });
+
+    // Person filmography modal -- click a director/actor's name (.person-trigger,
+    // wired up in Favorite Directors/Actors' Side-by-side tables) to fetch and show
+    // which of their films that session has watched. Mirrors Director's Cut's own
+    // copy of this feature (dashboard.html) almost exactly -- the one real
+    // difference is the URL needs a session_id too, not just a tmdb_id, since this
+    // page has two sessions and each trigger belongs to a specific one (data-session-id,
+    // set per table in the template) rather than a single page-wide import_session.
+    (function () {
+      const backdrop = document.getElementById('personModalBackdrop');
+      const titleEl = document.getElementById('personModalTitle');
+      const bodyEl = document.getElementById('personModalBody');
+      const closeBtn = document.getElementById('personModalClose');
+      // Sentinel session_id/tmdb_id swapped for the real ones at click time -- keeps
+      // this script decoupled from the URL's literal path shape rather than
+      // hardcoding "/dashboard/.../person/<id>/" directly.
+      const urlTemplate = "{% url 'stats:person_filmography' session_id='00000000-0000-0000-0000-000000000000' tmdb_id=999999999 %}";
+      let lastTrigger = null;
+
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      function openModal() {
+        backdrop.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeModal() {
+        backdrop.hidden = true;
+        document.body.style.overflow = '';
+        if (lastTrigger) lastTrigger.focus();
+      }
+
+      function renderFilms(data) {
+        if (!data.films.length) {
+          bodyEl.innerHTML = '<p class="modal-empty">No watched films from this session yet.</p>';
+          return;
+        }
+        const cards = data.films.map(function (film) {
+          const yearText = film.year ? ' (' + film.year + ')' : '';
+          const tooltip = escapeHtml(film.title + yearText);
+          const poster = film.poster_url
+            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
+            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
+          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
+          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
+        }).join('');
+        bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
+      }
+
+      document.querySelectorAll('.person-trigger').forEach(function (trigger) {
+        trigger.addEventListener('click', function () {
+          lastTrigger = trigger;
+          titleEl.textContent = trigger.textContent;
+          bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
+          openModal();
+          const url = urlTemplate
+            .replace('00000000-0000-0000-0000-000000000000', trigger.dataset.sessionId)
+            .replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
+          fetch(url)
+            .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
+            .then(renderFilms)
+            .catch(function () {
+              bodyEl.innerHTML = '<p class="modal-error">Couldn’t load this person’s films. Try again.</p>';
+            });
+        });
+      });
+
+      closeBtn.addEventListener('click', closeModal);
+      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !backdrop.hidden) closeModal();
+      });
+    })();
   </script>
 </div>
 {% endblock %}

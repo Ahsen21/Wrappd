@@ -1188,6 +1188,7 @@ class TopPeopleTests(TestCase):
         context = build_compare_context(session_a, session_b)
         row = next(row for row in context['top_directors_a'] if row['name'] == 'Qualified Director')
         self.assertEqual(row['count'], 3)
+        self.assertEqual(row['tmdb_id'], Person.objects.get(name='Qualified Director').tmdb_id)
 
     def test_own_top_actors_excludes_cameo_appearances(self):
         # Same cameo semantics as dashboard.py's favorite_actors -- a cameo appearance
@@ -1244,6 +1245,7 @@ class TopPeopleTests(TestCase):
         row = next(row for row in context['top_actors_a'] if row['name'] == 'Steady Actor')
         self.assertEqual(row['count'], 4)
         self.assertEqual(row['avg'], 5.0)
+        self.assertEqual(row['tmdb_id'], 991)
 
     def test_own_top_directors_tie_break_uses_displayed_not_raw_average(self):
         # Same values/reasoning as dashboard.py's own
@@ -1905,19 +1907,19 @@ class TopUnseenByOtherTests(TestCase):
         self.assertEqual(titles, ['High Film', 'Upper Mid Film', 'Mid Film'])
 
     def test_capped_at_grid_display_cap_narrow_but_total_stays_accurate(self):
-        # Renders as a 2-rows-of-5 poster grid (GRID_DISPLAY_CAP_NARROW=10), not the
-        # table-based TOP_N=10 lists elsewhere (same number, different reason -- this
-        # one's a hard cap on a fixed grid shape, not "top N by some ranking").
+        # Renders as a 3-rows-of-4 poster grid (GRID_DISPLAY_CAP_NARROW=12), not the
+        # table-based TOP_N=10 lists elsewhere -- a hard cap on a fixed grid shape,
+        # not "top N by some ranking".
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(11):
+        for i in range(13):
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/five{i}', title=f'Five Star Film {i}',
                 year=2020, rating=Decimal('5.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['top_unseen_a']), 10)
-        self.assertEqual(context['top_unseen_a_total'], 11)
+        self.assertEqual(len(context['top_unseen_a']), 12)
+        self.assertEqual(context['top_unseen_a_total'], 13)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')
