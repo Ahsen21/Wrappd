@@ -82,7 +82,7 @@
     <a href="#watching-stats" class="section-nav-link" data-section="watching-stats">Watching Stats</a>
   </nav>
 
-  <h2 id="movie-stats">Movie Stats</h2>
+  <h2 id="movie-stats"><span class="section-heading-tick">Movie Stats</span></h2>
   <p class="muted">What you watch and how you rate it.</p>
 
   {% comment %}
@@ -236,7 +236,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No data yet</p>
+        <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
     <div data-view-panel="rated" hidden>
@@ -252,7 +252,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No data yet</p>
+        <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
     <div data-view-panel="true_score" hidden>
@@ -269,7 +269,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No data yet</p>
+        <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
   </div>
@@ -295,7 +295,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No data yet</p>
+        <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
     <div data-view-panel="rated" hidden>
@@ -311,7 +311,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No data yet</p>
+        <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
     <div data-view-panel="true_score" hidden>
@@ -328,7 +328,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No data yet</p>
+        <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
   </div>
@@ -358,7 +358,7 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No data yet</p>
+      <p class="empty-state">No data yet</p>
     {% endif %}
     <h4>Biggest under-rates</h4>
     {% if taste.underrates %}
@@ -371,11 +371,11 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No data yet</p>
+      <p class="empty-state">No data yet</p>
     {% endif %}
   </div>
 
-  <h2 id="watching-stats">Watching Stats</h2>
+  <h2 id="watching-stats"><span class="section-heading-tick">Watching Stats</span></h2>
   <p class="muted">How much, how often, and when you watch.</p>
 
   <div class="card">
@@ -409,7 +409,7 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No rewatches yet</p>
+      <p class="empty-state">No rewatches yet</p>
     {% endif %}
   </div>
 
@@ -426,7 +426,7 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No data yet</p>
+      <p class="empty-state">No data yet</p>
     {% endif %}
   </div>
 
@@ -560,8 +560,15 @@
         bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
       }
 
-      document.querySelectorAll('.person-trigger').forEach(function (trigger) {
-        trigger.addEventListener('click', function () {
+      // Delegated to the whole card, not just the .person-trigger button -- matches
+      // the hover affordance on .fav-card:has(.person-trigger) in base.css, and
+      // means a click anywhere on the poster/placeholder/name (or a keyboard
+      // activation of the button itself, which still bubbles here) all run through
+      // this one listener rather than needing separate handlers.
+      document.querySelectorAll('.fav-card').forEach(function (card) {
+        const trigger = card.querySelector('.person-trigger');
+        if (!trigger) return;
+        card.addEventListener('click', function () {
           lastTrigger = trigger;
           titleEl.textContent = trigger.textContent;
           bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';

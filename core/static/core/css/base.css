@@ -352,6 +352,20 @@ h2#watching-stats {
   padding-top: 2rem;
   border-top: 1px solid var(--border);
 }
+/* An accent tick beside each heading's text, kept on an inner <span> rather than
+   the <h2> itself -- a border-left on the heading would run the full height of its
+   line box (font-size 1.5rem at the page's 1.5 line-height is a much taller box
+   than the glyphs' own ink), and on watching-stats specifically it would also
+   swallow that heading's own top padding/divider spacing above. line-height: 1
+   here collapses the span's box back down to just the text's height, so the tick
+   matches the text exactly instead of visibly overshooting it top and bottom. */
+.section-heading-tick {
+  display: inline-block;
+  line-height: 1;
+  border-left: 4px solid var(--accent);
+  border-radius: 0;
+  padding-left: 0.6rem;
+}
 
 .card h3 { font-size: 1.05rem; margin: 0 0 1rem; }
 
@@ -409,6 +423,26 @@ h2#watching-stats {
   font-size: 2.5rem;
 }
 .fav-card p { margin: 0.5rem 0 0; font-size: 0.9rem; }
+
+/* Only cards containing a .person-trigger (Favorite Directors/Actors, Most
+   rewatched directors) are actually clickable -- the whole card opens the
+   filmography modal (see dashboard.html/compare.html's JS), not just the name
+   text. Every other .fav-card (hero favorites, taste-vs-crowd, most rewatched
+   films, the modal's own poster grid, etc.) is purely decorative and deliberately
+   gets no hover cue here -- it would imply a click that does nothing. Matches
+   .choice-card's existing hover idiom (accent-colored border) rather than
+   inventing a new one. */
+.fav-card:has(.person-trigger) { cursor: pointer; }
+.fav-card:has(.person-trigger) img,
+.fav-card:has(.person-trigger) .fav-placeholder {
+  border: 2px solid transparent;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.fav-card:has(.person-trigger):hover img,
+.fav-card:has(.person-trigger):hover .fav-placeholder {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
 
 /* Shared 2-rows-of-8 poster grid (a 16-item cap) -- every list on the site that's
    capped at 16 uses this same class instead of a near-duplicate per section:
@@ -631,6 +665,19 @@ tbody tr { transition: background-color 0.15s ease; }
 tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 
 .muted { color: var(--muted); }
+/* A grid/list section with nothing to show ("No data yet" etc.) -- a dashed
+   placeholder box so it reads as intentionally empty rather than looking like
+   content failed to load. Not used for the filmography modal's own empty state
+   (.modal-empty, shares styling with .modal-loading/.modal-error there) or for the
+   two table-cell "No data yet" spots in compare.html's genre tables, which can't
+   become a bordered box without breaking the table's own layout. */
+.empty-state {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+}
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
 /* A plain vertical rule down the middle, for two-col layouts that need a clearer

@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Wrappd{% endblock %}</title>
+  <link rel="icon" type="image/x-icon" href="{% static 'core/favicon/favicon.ico' %}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'core/favicon/favicon-32x32.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'core/favicon/favicon-16x16.png' %}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'core/favicon/apple-touch-icon.png' %}">
+  <link rel="manifest" href="{% static 'core/favicon/site.webmanifest' %}">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap">
   <link rel="stylesheet" href="{% static 'core/css/base.css' %}">
@@ -55,6 +60,40 @@
         if (event.key === 'Escape') close();
       });
     })();
+
+    // .tip-bubble (the .info-tip "i" badge's hover/focus explanation, see base.css)
+    // is centered under its icon via left:50%; transform:translateX(-50%) -- fine
+    // when the icon sits away from an edge, but an icon near the left/right edge of
+    // a narrow phone screen centers the bubble straight past that edge, which
+    // silently widens the whole page's scrollable area instead of just clipping the
+    // tooltip. CSS alone can't clamp a box's position to the viewport based on
+    // where its anchor happens to be, so this nudges the bubble back on-screen
+    // (the same "shift" behavior a tooltip library would do) right before it
+    // becomes visible.
+    //
+    // Deferred to DOMContentLoaded: this script tag sits before the page's own
+    // content block in the markup (so the nav above still works without waiting on
+    // anything), but every .info-tip lives inside that block -- querySelectorAll
+    // run immediately here would see zero of them, since they wouldn't exist in the
+    // DOM yet. (Written as prose, not the literal Django tag, to avoid Django's
+    // template parser seeing a second real block declaration inside this comment.)
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('.info-tip').forEach(function (tip) {
+        const bubble = tip.querySelector('.tip-bubble');
+        if (!bubble) return;
+        function reposition() {
+          bubble.style.transform = 'translateX(-50%)';
+          const margin = 8;
+          const rect = bubble.getBoundingClientRect();
+          let shift = 0;
+          if (rect.left < margin) shift = margin - rect.left;
+          else if (rect.right > window.innerWidth - margin) shift = (window.innerWidth - margin) - rect.right;
+          if (shift) bubble.style.transform = 'translateX(calc(-50% + ' + shift + 'px))';
+        }
+        tip.addEventListener('mouseenter', reposition);
+        tip.addEventListener('focus', reposition);
+      });
+    });
   </script>
   <div class="container">
     {% if messages %}
