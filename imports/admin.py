@@ -11,8 +11,9 @@ class DiaryEntryInline(admin.TabularInline):
 
 @admin.register(ImportSession)
 class ImportSessionAdmin(admin.ModelAdmin):
-    list_display = ('display_name', 'id', 'status', 'source_filename', 'uploaded_at')
+    list_display = ('display_name', 'id', 'owner', 'status', 'source_filename', 'uploaded_at')
     list_filter = ('status',)
+    autocomplete_fields = ('owner',)
     readonly_fields = ('id', 'uploaded_at')
     inlines = [DiaryEntryInline]
 

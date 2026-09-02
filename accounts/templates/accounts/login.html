@@ -1,0 +1,42 @@
+{% extends "core/base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+  <h1>Wrappd</h1>
+  <p class="muted">
+    See a breakdown of your <a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">Letterboxd</a> watching habits, and compare with a friend.
+  </p>
+
+  <div class="card">
+    {% if form.non_field_errors %}
+      <ul class="errorlist">
+        {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% for field in form %}
+        <p>
+          {{ field.label_tag }}
+          {{ field }}
+          {% if field.errors %}
+            <ul class="errorlist">
+              {% for error in field.errors %}<li>{{ error }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+        </p>
+      {% endfor %}
+      <button type="submit">Log in</button>
+    </form>
+  </div>
+
+  <p class="muted">
+    New user?
+    <a class="btn" href="{% url 'accounts:signup' %}{% if next %}?next={{ next }}{% endif %}">Sign up</a>
+  </p>
+
+  <p class="muted">
+    or <a href="{% url 'imports:upload' %}">continue as a guest</a> --
+    you won't be able to compare with a friend without an account.
+  </p>
+{% endblock %}

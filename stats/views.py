@@ -12,6 +12,10 @@ from .services.person_filmography import build_person_filmography
 def dashboard(request, session_id):
     import_session = get_object_or_404(ImportSession, id=session_id)
     context = build_dashboard_context(import_session)
+    # This page's own URL doubles as its share link (see the dashboard's "Share your
+    # dashboard" box) -- the view has no ownership check tying it to this browser's
+    # session, so anyone holding the link can already open it as-is.
+    context['share_url'] = request.build_absolute_uri()
     return render(request, 'stats/dashboard.html', context)
 
 

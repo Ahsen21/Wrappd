@@ -13,7 +13,18 @@
   <nav class="nav">
     <a class="brand" href="{% url 'core:landing' %}">Wrappd</a>
     <a href="{% url 'imports:upload' %}">Director's Cut</a>
-    <a href="{% url 'imports:upload_compare' %}">Double Feature</a>
+    <a href="{% url 'imports:compare_join' %}">Double Feature</a>
+    <span class="nav-spacer"></span>
+    {% if user.is_authenticated %}
+      <span class="muted nav-user">{{ user.username }}</span>
+      <form method="post" action="{% url 'accounts:logout' %}" class="nav-logout-form">
+        {% csrf_token %}
+        <button type="submit" class="nav-logout-btn">Log out</button>
+      </form>
+    {% else %}
+      <a href="{% url 'accounts:login' %}">Log in</a>
+      <a href="{% url 'accounts:signup' %}">Sign up</a>
+    {% endif %}
   </nav>
   <div class="container">
     {% if messages %}
