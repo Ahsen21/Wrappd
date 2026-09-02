@@ -54,7 +54,7 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No exact matches yet</p>
+      <p class="empty-state">No exact matches yet</p>
     {% endif %}
   </div>
 
@@ -78,7 +78,7 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No rated films in common yet</p>
+      <p class="empty-state">No rated films in common yet</p>
     {% endif %}
   </div>
 
@@ -95,7 +95,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">None yet</p>
+        <p class="empty-state">None yet</p>
       {% endif %}
     </div>
     <div class="card">
@@ -110,7 +110,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">None yet</p>
+        <p class="empty-state">None yet</p>
       {% endif %}
     </div>
   </div>
@@ -169,7 +169,7 @@
               {% endfor %}
             </div>
           {% else %}
-            <p class="muted">No data yet</p>
+            <p class="empty-state">No data yet</p>
           {% endif %}
         </div>
         <div>
@@ -185,7 +185,7 @@
               {% endfor %}
             </div>
           {% else %}
-            <p class="muted">No data yet</p>
+            <p class="empty-state">No data yet</p>
           {% endif %}
         </div>
       </div>
@@ -203,7 +203,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No shared favorites yet</p>
+        <p class="empty-state">No shared favorites yet</p>
       {% endif %}
     </div>
   </div>
@@ -229,7 +229,7 @@
               {% endfor %}
             </div>
           {% else %}
-            <p class="muted">No data yet</p>
+            <p class="empty-state">No data yet</p>
           {% endif %}
         </div>
         <div>
@@ -245,7 +245,7 @@
               {% endfor %}
             </div>
           {% else %}
-            <p class="muted">No data yet</p>
+            <p class="empty-state">No data yet</p>
           {% endif %}
         </div>
       </div>
@@ -263,7 +263,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No shared favorites yet</p>
+        <p class="empty-state">No shared favorites yet</p>
       {% endif %}
     </div>
   </div>
@@ -282,7 +282,7 @@
         {% endfor %}
       </div>
     {% else %}
-      <p class="muted">No shared watchlist films yet</p>
+      <p class="empty-state">No shared watchlist films yet</p>
     {% endif %}
   </div>
 
@@ -322,7 +322,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No shared logging days yet</p>
+        <p class="empty-state">No shared logging days yet</p>
       {% endif %}
     </div>
     <div data-view-panel="exact" hidden>
@@ -339,7 +339,7 @@
           {% endfor %}
         </div>
       {% else %}
-        <p class="muted">No exact matches yet</p>
+        <p class="empty-state">No exact matches yet</p>
       {% endif %}
     </div>
   </div>
@@ -550,8 +550,15 @@
         bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
       }
 
-      document.querySelectorAll('.person-trigger').forEach(function (trigger) {
-        trigger.addEventListener('click', function () {
+      // Delegated to the whole card, not just the .person-trigger button -- matches
+      // the hover affordance on .fav-card:has(.person-trigger) in base.css, and
+      // means a click anywhere on the poster/placeholder/name (or a keyboard
+      // activation of the button itself, which still bubbles here) all run through
+      // this one listener rather than needing separate handlers.
+      document.querySelectorAll('.fav-card').forEach(function (card) {
+        const trigger = card.querySelector('.person-trigger');
+        if (!trigger) return;
+        card.addEventListener('click', function () {
           lastTrigger = trigger;
           titleEl.textContent = trigger.textContent;
           bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
