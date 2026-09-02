@@ -12,20 +12,50 @@
 <body>
   <nav class="nav">
     <a class="brand" href="{% url 'core:landing' %}">Wrappd</a>
-    <a href="{% url 'imports:upload' %}">Director's Cut</a>
-    <a href="{% url 'imports:compare_join' %}">Double Feature</a>
+    <a class="nav-primary-link" href="{% url 'imports:upload' %}">Director's Cut</a>
+    <a class="nav-primary-link" href="{% url 'imports:compare_join' %}">Double Feature</a>
     <span class="nav-spacer"></span>
     {% if user.is_authenticated %}
-      <span class="muted nav-user">{{ user.username }}</span>
-      <form method="post" action="{% url 'accounts:logout' %}" class="nav-logout-form">
-        {% csrf_token %}
-        <button type="submit" class="nav-logout-btn">Log out</button>
-      </form>
+      <div class="nav-profile">
+        <button type="button" class="nav-profile-btn" id="nav-profile-btn" aria-haspopup="true" aria-expanded="false">
+          {{ user.username }} <span class="nav-caret" aria-hidden="true">&#9662;</span>
+        </button>
+        <div class="nav-profile-menu" id="nav-profile-menu" hidden>
+          <a href="{% url 'imports:upload' %}?new=1">Upload a new export</a>
+          <a href="{% url 'imports:my_uploads' %}">Previous uploads</a>
+          <form method="post" action="{% url 'accounts:logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="nav-profile-menu-btn">Log out</button>
+          </form>
+        </div>
+      </div>
     {% else %}
       <a href="{% url 'accounts:login' %}">Log in</a>
       <a href="{% url 'accounts:signup' %}">Sign up</a>
     {% endif %}
   </nav>
+  <script>
+    (function () {
+      const btn = document.getElementById('nav-profile-btn');
+      const menu = document.getElementById('nav-profile-menu');
+      if (!btn || !menu) return;
+      function close() {
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+      }
+      btn.addEventListener('click', function (event) {
+        event.stopPropagation();
+        const isOpen = !menu.hidden;
+        if (isOpen) { close(); } else { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+      });
+      document.addEventListener('click', function (event) {
+        if (!menu.hidden && !menu.contains(event.target) && event.target !== btn) close();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') close();
+      });
+    })();
+  </script>
   <div class="container">
     {% if messages %}
       {% for message in messages %}

@@ -24,6 +24,19 @@ html { scroll-behavior: smooth; }
    match how a phone screen reads text and whitespace differently than a desktop. */
 @media (max-width: 700px) {
   html { font-size: 13px; }
+  /* Mobile nav is just brand (left) + profile/auth (right) -- Director's Cut and
+     Double Feature are reachable from the home screen and the profile menu, so
+     they're redundant here and were the main cause of the nav needing to wrap at
+     all. */
+  .nav-primary-link { display: none; }
+  /* Still kept as a safety net even though hiding the two links above means the
+     nav fits on one row in the overwhelming majority of cases now -- an unusually
+     long, unbreakable username (no spaces to wrap at, unlike "Director's
+     Cut"/"Double Feature" used to have) could still overflow otherwise. Since
+     .nav-profile-menu is now anchored to .nav itself rather than to wherever the
+     button ends up (see its own comment), the menu stays correctly positioned
+     either way -- no matching override needed here anymore. */
+  .nav { flex-wrap: wrap; row-gap: 0.5rem; }
 }
 
 body {
@@ -37,6 +50,7 @@ body {
 a { color: var(--accent-2); }
 
 .nav {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 1.5rem;
@@ -47,11 +61,14 @@ a { color: var(--accent-2); }
 .nav a { text-decoration: none; color: var(--text); font-weight: 600; }
 .nav .brand { color: var(--accent); font-weight: 700; font-size: 1.1rem; }
 .nav-spacer { flex: 1; }
-.nav-user { font-weight: 600; }
-/* A <button> styled to sit flush among the nav's plain links -- LogoutView requires
-   POST (not a plain <a href>), so this is a form, but it shouldn't look like one. */
-.nav-logout-form { margin: 0; }
-.nav-logout-btn {
+
+/* The logged-in profile menu: a plain button (username + caret) toggling a small
+   dropdown. The menu is positioned relative to .nav itself (not this button) and
+   anchored to .nav's own right padding edge -- deliberately decoupled from wherever
+   the button happens to render (its position shifts with username length, and with
+   whether the nav has wrapped onto two rows on mobile), so the menu can never end up
+   anchored to a button that's sitting near the left edge and overflow off-screen. */
+.nav-profile-btn {
   background: none;
   border: none;
   padding: 0;
@@ -60,8 +77,50 @@ a { color: var(--accent-2); }
   font-size: 1rem;
   font-family: inherit;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
 }
-.nav-logout-btn:hover { color: var(--accent); }
+.nav-profile-btn:hover { color: var(--accent); }
+.nav-caret { font-size: 0.7em; }
+
+.nav-profile-menu {
+  position: absolute;
+  top: 100%;
+  margin-top: 0.5rem;
+  right: 1.5rem; /* matches .nav's own right padding, not the button's position */
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.4rem;
+  flex-direction: column;
+  gap: 0.1rem;
+  z-index: 10;
+}
+/* display only applies while NOT [hidden] -- an unconditional `display: flex` on
+   .nav-profile-menu itself would win the cascade over the browser's own
+   `[hidden] { display: none }`, silently defeating the JS toggle (the menu would
+   stay visually open no matter what `hidden` was set to). */
+.nav-profile-menu:not([hidden]) { display: flex; }
+.nav-profile-menu a,
+.nav-profile-menu-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-radius: calc(var(--radius) - 2px);
+  font-weight: 600;
+  font-size: 0.95rem;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+}
+.nav-profile-menu a:hover,
+.nav-profile-menu-btn:hover { background: var(--bg); color: var(--accent); }
+.nav-profile-menu form { margin: 0; }
 
 .container {
   max-width: 1000px;
@@ -529,6 +588,26 @@ button, .btn {
   list-style: none;
   padding: 0;
   margin: 0.25rem 0;
+}
+
+.upload-list { list-style: none; padding: 0; margin: 0; }
+.upload-list li + li { border-top: 1px solid var(--border); }
+.upload-list a {
+  display: block;
+  padding: 0.75rem 0.25rem;
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 600;
+}
+.upload-list a:hover { color: var(--accent); }
+.upload-current-tag {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
 }
 
 table { width: 100%; border-collapse: collapse; }

@@ -3,7 +3,7 @@
 {% block content %}
   <h1>Sign up</h1>
   <div class="card">
-    <p class="muted">An account is only needed for Double Feature, so we can tell your uploads apart from a friend's. Director's Cut still works without one.</p>
+    <!-- <p class="muted">An account is only needed for Double Feature, so we can tell your uploads apart from a friend's. Director's Cut still works without one.</p> -->
     {% if form.non_field_errors %}
       <ul class="errorlist">
         {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
