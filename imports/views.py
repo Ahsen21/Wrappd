@@ -53,13 +53,18 @@ class UploadView(View):
     """Director's Cut. Stays fully anonymous (no login required) -- but if this
     visitor already has a completed upload (e.g. the nav's "Director's Cut" link,
     clicked from anywhere else in the app), skip straight to their existing
-    dashboard instead of showing an empty upload form again."""
+    dashboard instead of showing an empty upload form again.
+
+    ?new=1 bypasses that -- it's how the profile menu's "Upload a new export" reaches
+    the actual form despite already having a session; every other link to this page
+    wants the smart redirect, so this is the one deliberate exception rather than a
+    behavior change to the view as a whole."""
 
     template_name = 'imports/upload.html'
 
     def get(self, request):
         my_session = ImportSession.ready_for(request)
-        if my_session:
+        if my_session and not request.GET.get('new'):
             return redirect('stats:dashboard', session_id=my_session.id)
         return render(request, self.template_name, {'form': UploadForm()})
 
@@ -160,3 +165,26 @@ class CompareJoinView(LoginRequiredMixin, View):
 
         friend_session = join_form.cleaned_friend_session
         return redirect(reverse('stats:compare', kwargs={'session_a': my_session.id, 'session_b': friend_session.id}))
+
+
+class MyUploadsView(LoginRequiredMixin, View):
+    """The profile menu's "Previous uploads" -- every READY upload this account
+    owns, most recent first, each linking straight to its dashboard. Purely a
+    browsing list: opening an older one doesn't change what ImportSession.ready_for
+    considers "current" elsewhere (nav, home screen, share link) -- those keep
+    tracking whichever upload is genuinely most recent, so this never surprises the
+    rest of the app by silently switching your active session out from under it.
+
+    Login-gated because it's reached from the profile menu, which only exists for
+    logged-in accounts -- a guest's uploads (session_key-scoped) aren't listed here."""
+
+    template_name = 'imports/my_uploads.html'
+
+    def get(self, request):
+        sessions = list(ImportSession.objects.filter(
+            owner=request.user, status=ImportSession.Status.READY
+        ).order_by('-uploaded_at'))
+        # The most recent is always what ImportSession.ready_for would return for a
+        # logged-in owner (same filter/order) -- reuse it instead of a second query.
+        current = sessions[0] if sessions else None
+        return render(request, self.template_name, {'sessions': sessions, 'current': current})

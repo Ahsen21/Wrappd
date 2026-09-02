@@ -71,3 +71,34 @@ class LandingRouterTests(TestCase):
         response = self.client.get(reverse('core:landing'))
 
         self.assertRedirects(response, reverse('accounts:login'))
+
+
+class NavProfileMenuTests(TestCase):
+    """The nav's logged-in profile menu (core/templates/core/base.html), rendered on
+    any page -- checked here via accounts:login since that's reachable both logged
+    out and logged in."""
+
+    def test_logged_out_shows_login_and_signup_not_a_profile_button(self):
+        response = self.client.get(reverse('accounts:login'))
+
+        self.assertContains(response, reverse('accounts:login'))
+        self.assertContains(response, reverse('accounts:signup'))
+        # The nav's toggle <script> always renders and references this id by name --
+        # check for the actual markup, not just the substring, so the JS doesn't
+        # make this assertion a false negative.
+        self.assertNotContains(response, '<div class="nav-profile">')
+
+    def test_logged_in_shows_profile_button_with_username_and_menu_items(self):
+        user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+        self.client.force_login(user)
+
+        # core:landing redirects a fresh account (no upload yet) to imports:upload --
+        # follow it to reach an actual rendered page (base.html's nav) to check.
+        response = self.client.get(reverse('core:landing'), follow=True)
+
+        self.assertContains(response, 'alex')
+        self.assertContains(response, 'nav-profile-btn')
+        self.assertContains(response, reverse('imports:upload') + '?new=1')
+        self.assertContains(response, reverse('imports:my_uploads'))
+        self.assertContains(response, reverse('accounts:logout'))
+        self.assertNotContains(response, reverse('accounts:login'))

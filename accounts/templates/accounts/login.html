@@ -1,9 +1,9 @@
 {% extends "core/base.html" %}
 {% block title %}Log in{% endblock %}
 {% block content %}
-  <h1>Wrappd</h1>
+  <h1>Welcome to Wrappd</h1>
   <p class="muted">
-    See a breakdown of your <a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">Letterboxd</a> watching habits, and compare with a friend.
+    See a breakdown of your Letterboxd watching habits, and compare with a friend.
   </p>
 
   <div class="card">
@@ -31,12 +31,12 @@
   </div>
 
   <p class="muted">
-    New user?
-    <a class="btn" href="{% url 'accounts:signup' %}{% if next %}?next={{ next }}{% endif %}">Sign up</a>
+    Don't have an account?
+    <a href="{% url 'accounts:signup' %}{% if next %}?next={{ next }}{% endif %}">Sign up</a>
+    or <a href="{% url 'imports:upload' %}">continue as a guest</a>.
   </p>
 
   <p class="muted">
-    or <a href="{% url 'imports:upload' %}">continue as a guest</a> --
-    you won't be able to compare with a friend without an account.
+    <i>Note: you won't be able to compare with a friend without an account.</i>
   </p>
 {% endblock %}

@@ -60,6 +60,18 @@ class UploadViewTests(TestCase):
 
         self.assertRedirects(response, reverse('stats:dashboard', kwargs={'session_id': session.id}))
 
+    def test_get_with_new_param_shows_form_even_with_an_existing_session(self):
+        # The profile menu's "Upload a new export" needs this exception -- otherwise
+        # it would just bounce back to the existing dashboard like the plain nav link.
+        session = ImportSession.objects.create(status=ImportSession.Status.READY)
+        session_key = _give_client_a_session(self.client)
+        ImportSession.objects.filter(pk=session.pk).update(session_key=session_key)
+
+        response = self.client.get(reverse('imports:upload'), {'new': '1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Choose File')
+
     def test_upload_rejects_invalid_file_and_rerenders_form_with_no_session_created(self):
         upload = SimpleUploadedFile('export.txt', b'nope', content_type='text/plain')
 
@@ -247,3 +259,57 @@ class CompareJoinViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "isn&#x27;t ready yet")
+
+
+class MyUploadsViewTests(TestCase):
+    """The profile menu's "Previous uploads" -- login-gated, lists only this
+    account's own READY sessions, most recent first, without changing which one
+    ImportSession.ready_for considers current."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+
+    def test_anonymous_get_redirects_to_login(self):
+        response = self.client.get(reverse('imports:my_uploads'))
+        self.assertRedirects(
+            response, f"{reverse('accounts:login')}?next={reverse('imports:my_uploads')}"
+        )
+
+    def test_lists_only_this_users_ready_sessions_most_recent_first(self):
+        self.client.force_login(self.user)
+        older = ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.READY, source_filename='old.zip'
+        )
+        newer = ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.READY, source_filename='new.zip'
+        )
+        ImportSession.objects.filter(pk=older.pk).update(uploaded_at=older.uploaded_at - timedelta(days=1))
+        someone_elses = ImportSession.objects.create(status=ImportSession.Status.READY, source_filename='other.zip')
+        not_ready = ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.PENDING, source_filename='pending.zip'
+        )
+
+        response = self.client.get(reverse('imports:my_uploads'))
+
+        self.assertEqual(list(response.context['sessions']), [newer, older])
+        self.assertEqual(response.context['current'], newer)
+        self.assertContains(response, 'new.zip')
+        self.assertContains(response, 'old.zip')
+        self.assertNotContains(response, 'other.zip')
+        self.assertNotContains(response, 'pending.zip')
+
+    def test_current_session_is_tagged(self):
+        self.client.force_login(self.user)
+        session = ImportSession.objects.create(owner=self.user, status=ImportSession.Status.READY)
+
+        response = self.client.get(reverse('imports:my_uploads'))
+
+        self.assertContains(response, 'current')
+        self.assertContains(response, reverse('stats:dashboard', kwargs={'session_id': session.id}))
+
+    def test_no_uploads_shows_empty_state(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('imports:my_uploads'))
+
+        self.assertContains(response, 'No uploads yet')
