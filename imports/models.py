@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 from tmdb.models import Movie
@@ -7,16 +8,23 @@ from tmdb.models import Movie
 
 class ImportSession(models.Model):
     """
-    One uploaded Letterboxd export. Anonymous for now: ownership is tracked via the
-    browser's Django session key, not a user account.
+    One uploaded Letterboxd export. Ownership has two, independent layers:
 
-    TODO(auth): when real accounts are added, add:
-        owner = models.ForeignKey(
-            settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE
-        )
-    This is additive only -- existing rows stay owner=NULL and keep resolving via
-    session_key. Every other model in this app FKs to ImportSession, never directly
-    to a user, so nothing downstream needs to change.
+    - session_key: the browser's Django session, set on every upload regardless of
+      login state. Director's Cut (upload + dashboard) stays fully anonymous and
+      never needs more than this.
+    - owner: the logged-in user, if any, set only when the uploader was
+      authenticated. Only Double Feature's entry points (imports.CompareUploadView,
+      CompareJoinView) require login, and only they rely on `owner` -- specifically
+      CompareJoinView, which needs an unambiguous "which of my uploads is mine"
+      answer that a shared browser cookie can't give when someone has uploaded
+      several different people's exports from the same browser (session_key alone
+      can't tell those apart).
+
+    owner is nullable so every pre-existing anonymous row keeps owner=NULL and keeps
+    resolving via session_key exactly as before -- adding it changed no existing
+    behavior. Every other model in this app FKs to ImportSession, never directly to
+    a user, so nothing downstream needed to change either.
     """
 
     class Status(models.TextChoices):
@@ -28,6 +36,9 @@ class ImportSession(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session_key = models.CharField(max_length=40, db_index=True, blank=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name='import_sessions',
+    )
     display_name = models.CharField(max_length=150, blank=True)
     source_filename = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
@@ -43,6 +54,22 @@ class ImportSession(models.Model):
 
     def __str__(self):
         return self.display_name or f'Import {self.id}'
+
+    @classmethod
+    def ready_for(cls, request):
+        """The requester's own completed upload, if any -- by account when logged
+        in, by browser session otherwise. The one canonical place "which import is
+        mine" gets answered: the nav's Director's Cut link, the "/" entry-flow
+        router, and CompareJoinView's own session lookup all need this same
+        resolution (a shared browser cookie can hold several different anonymous
+        people's uploads -- only a real owner FK can tell them apart once someone's
+        logged in), so it lives here once instead of being reimplemented per view."""
+        if request.user.is_authenticated:
+            return cls.objects.filter(owner=request.user, status=cls.Status.READY).order_by('-uploaded_at').first()
+        session_key = request.session.session_key
+        if not session_key:
+            return None
+        return cls.objects.filter(session_key=session_key, status=cls.Status.READY).order_by('-uploaded_at').first()
 
 
 class DiaryEntry(models.Model):

@@ -1,7 +1,12 @@
 {% extends "core/base.html" %}
-{% block title %}Director's Cut{% endblock %}
+{% block title %}Upload your export{% endblock %}
 {% block content %}
-  <h1>Director's Cut</h1>
+  <h1>Upload your export</h1>
+  <p class="muted">
+    Upload the data export you can download from
+    <a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">your Letterboxd settings</a>
+    (Settings &rarr; Data &rarr; Export Your Data) to see a breakdown of your watching habits.
+  </p>
   <div class="card">
     {% if form.non_field_errors %}
       <ul class="errorlist">

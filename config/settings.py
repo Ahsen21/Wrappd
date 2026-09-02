@@ -30,6 +30,15 @@ CSRF_TRUSTED_ORIGINS = config(
 
 TMDB_API_KEY = config('TMDB_API_KEY', default='')
 
+# Both ngrok (current temp-testing tunnel) and Render (the planned real deployment)
+# terminate HTTPS themselves and forward plain HTTP to this app, setting
+# X-Forwarded-Proto to say so. Without this, request.is_secure() (and anything built
+# from it, like build_absolute_uri() on the dashboard's share link) reports http://
+# even though the visitor is genuinely on https://. Safe to trust unconditionally
+# here since this app is never reached directly -- only through one of those two
+# proxies, which are the only things that can set this header in practice.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 
 # Application definition
 
@@ -42,6 +51,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.humanize',
     'core',
+    'accounts',
     'imports',
     'tmdb',
     'stats',
@@ -130,6 +140,13 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Director's Cut stays fully anonymous; only Double Feature's entry points
+# (imports.CompareUploadView / CompareJoinView) require login -- see LoginRequiredMixin
+# on those views. LOGIN_URL is where that mixin sends an anonymous visitor.
+LOGIN_URL = 'accounts:login'
+LOGIN_REDIRECT_URL = 'core:landing'
+LOGOUT_REDIRECT_URL = 'core:landing'
 
 
 # --- App-specific settings ---

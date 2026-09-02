@@ -1,0 +1,78 @@
+{% extends "core/base.html" %}
+{% block title %}Double Feature{% endblock %}
+{% block content %}
+  <h1>Double Feature</h1>
+
+  {% if not my_session %}
+    <div class="card">
+      <p class="muted">First, upload your own export &mdash; you'll compare against a friend's link next.</p>
+      {% if upload_form.non_field_errors %}
+        <ul class="errorlist">
+          {% for error in upload_form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <form method="post" enctype="multipart/form-data" id="upload-form">
+        {% csrf_token %}
+        {{ upload_form.export_file.label_tag }}
+        <div class="file-picker">
+          <label for="{{ upload_form.export_file.id_for_label }}" class="btn file-picker-btn">Choose File</label>
+          <span class="file-picker-name" id="file-picker-name">No file chosen</span>
+        </div>
+        {{ upload_form.export_file }}
+        {% if upload_form.export_file.errors %}
+          <ul class="errorlist">
+            {% for error in upload_form.export_file.errors %}<li>{{ error }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+        <p class="muted">This can take a little while the first time, since new films need to be processed first.</p>
+        <button type="submit" id="upload-submit">Upload &amp; continue</button>
+        <div class="processing" id="upload-processing" hidden>
+          <span class="spinner"></span>
+          Processing your export — this can take a few minutes. Don't close this tab.
+        </div>
+      </form>
+    </div>
+
+    <script>
+      const joinUploadFileInput = document.getElementById('{{ upload_form.export_file.id_for_label }}');
+      joinUploadFileInput.addEventListener('change', function () {
+        document.getElementById('file-picker-name').textContent =
+          joinUploadFileInput.files.length ? joinUploadFileInput.files[0].name : 'No file chosen';
+      });
+      document.getElementById('upload-form').addEventListener('submit', function () {
+        if (!joinUploadFileInput.files.length) return; // let native "required" validation show instead
+        document.getElementById('upload-submit').disabled = true;
+        document.getElementById('upload-submit').textContent = 'Processing…';
+        document.getElementById('upload-processing').hidden = false;
+      });
+    </script>
+  {% else %}
+    <div class="card">
+      <p class="muted">
+        Comparing as <strong>{{ my_session.display_name|default:"you" }}</strong>,
+        uploaded {{ my_session.uploaded_at|date:"M j" }}.
+      </p>
+      {% if join_form.non_field_errors %}
+        <ul class="errorlist">
+          {% for error in join_form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <form method="post">
+        {% csrf_token %}
+        {{ join_form.friend_link.label_tag }}
+        {{ join_form.friend_link }}
+        {% if join_form.friend_link.errors %}
+          <ul class="errorlist">
+            {% for error in join_form.friend_link.errors %}<li>{{ error }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+        <button type="submit">Compare</button>
+      </form>
+    </div>
+  {% endif %}
+
+  <p class="muted">
+    Have both exports on hand right now instead?
+    <a href="{% url 'imports:upload_compare' %}">Upload both at once</a>.
+  </p>
+{% endblock %}

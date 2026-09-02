@@ -13,6 +13,36 @@
     </div>
   {% endif %}
 
+  <div class="card share-box">
+    <input type="text" class="text-input" id="share-link-input" value="{{ share_url }}" readonly>
+    <button type="button" class="btn" id="share-copy-btn">Copy link</button>
+  </div>
+  <p class="muted share-hint">Share this link to compare with a friend on Double Feature. Anyone with this link can view your stats.</p>
+  <script>
+    (function () {
+      const btn = document.getElementById('share-copy-btn');
+      const input = document.getElementById('share-link-input');
+      if (!btn || !input) return;
+      btn.addEventListener('click', function () {
+        input.select();
+        const restore = function () {
+          const original = 'Copy link';
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = original; }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(input.value).then(restore).catch(function () {
+            document.execCommand('copy');
+            restore();
+          });
+        } else {
+          document.execCommand('copy');
+          restore();
+        }
+      });
+    })();
+  </script>
+
   <div class="hero" {% if hero_poster_url %}style="--hero-image: url('{{ hero_poster_url }}');"{% endif %}>
     <p class="hero-eyebrow">Director's Cut</p>
     <h1>{{ import_session.display_name|default:"Your" }} stats</h1>
