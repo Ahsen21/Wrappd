@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.urls import reverse
 
 from tmdb.models import Movie
 
@@ -55,6 +56,22 @@ class ImportSession(models.Model):
     def __str__(self):
         return self.display_name or f'Import {self.id}'
 
+    def canonical_dashboard_path(self):
+        """The nicest reachable URL path for this session's own dashboard -- the
+        account's permanent /dashboard/<username>/ link when it has an owner (the
+        one worth actually navigating to and sharing, since it stays valid across
+        future re-uploads too, unlike this specific session's own UUID), or the
+        plain UUID link otherwise (a guest upload has no username to build one
+        from). Every internal link to "my own dashboard" -- the home screen's
+        Director's Cut card, the nav's smart redirect, the dashboard's own share box
+        -- should go through this rather than hardcoding stats:dashboard, so they
+        can't drift out of sync with each other the way they did before this
+        method existed (the share box already knew to prefer the username link;
+        nothing else did)."""
+        if self.owner_id:
+            return reverse('stats:dashboard_by_username', kwargs={'username': self.owner.username})
+        return reverse('stats:dashboard', kwargs={'session_id': self.id})
+
     @classmethod
     def ready_for(cls, request):
         """The requester's own completed upload, if any -- by account when logged
@@ -70,6 +87,63 @@ class ImportSession(models.Model):
         if not session_key:
             return None
         return cls.objects.filter(session_key=session_key, status=cls.Status.READY).order_by('-uploaded_at').first()
+
+    @classmethod
+    def latest_for_owner_username(cls, username):
+        """The account with this Wrappd username's own most recent completed
+        upload, if any -- used to resolve stats:dashboard_by_username. Same
+        "most recent READY wins" tiebreak as ready_for/MyUploadsView, for the same
+        reason: an account can have uploaded more than once."""
+        return (
+            cls.objects
+            .select_related('owner')
+            .filter(owner__username=username, status=cls.Status.READY)
+            .order_by('-uploaded_at')
+            .first()
+        )
+
+    @classmethod
+    def latest_for_letterboxd_username(cls, letterboxd_username):
+        """Exact-match lookup for Double Feature's "search for a friend" flow
+        (imports.forms.SearchFriendForm). Only account-owned sessions are
+        searchable -- a guest upload has no account and therefore no privacy
+        preference to honor, so excluding it is the safe default rather than
+        surfacing data nobody with an account ever opted into being found by --
+        and only when that account's Profile is marked searchable (accounts.Profile,
+        defaults True, set at signup). Most recent READY session wins when an
+        account has uploaded more than once, same tiebreak as ready_for above."""
+        return (
+            cls.objects
+            .select_related('owner')
+            .filter(
+                display_name__iexact=letterboxd_username,
+                status=cls.Status.READY,
+                owner__isnull=False,
+                owner__profile__is_searchable=True,
+            )
+            .order_by('-uploaded_at')
+            .first()
+        )
+
+
+def canonical_compare_path(session_a, session_b):
+    """The nicest reachable URL path for comparing these two sessions -- the
+    permanent /compare/<username_a>-vs-<username_b>/ link when BOTH have an owner
+    (mirrors ImportSession.canonical_dashboard_path's own reasoning: it's the one
+    worth actually navigating to and sharing, since it stays valid across future
+    re-uploads on either side), or the plain UUID-pair link otherwise. That "either"
+    matters here in a way it didn't for a single dashboard: a guest session, or a
+    friend found through JoinCompareForm's pasted-link fallback rather than
+    SearchFriendForm, has no username to build one from, so the whole pair falls
+    back to UUIDs even if the other side does have an account. A plain function,
+    not a method, since it's about a *pair* of sessions rather than one session's
+    own identity -- order matches how the compare page already colors "A" vs "B"
+    (blue/orange), session_a first."""
+    if session_a.owner_id and session_b.owner_id:
+        return reverse('stats:compare_by_usernames', kwargs={
+            'username_a': session_a.owner.username, 'username_b': session_b.owner.username,
+        })
+    return reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id})
 
 
 class DiaryEntry(models.Model):

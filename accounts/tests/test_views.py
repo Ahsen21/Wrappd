@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
+from accounts.models import Profile
+
 User = get_user_model()
 
 
@@ -48,6 +50,42 @@ class SignUpViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(User.objects.filter(username='taken').count(), 1)
+
+    def test_signup_creates_a_searchable_profile_when_checkbox_is_checked(self):
+        # A real rendered form starts this checkbox pre-checked (BooleanField's own
+        # initial=True) -- 'on' is what a browser actually sends for a checked box.
+        self.client.post(reverse('accounts:signup'), {
+            'username': 'newuser', 'password1': 'a-very-unguessable-pw1', 'password2': 'a-very-unguessable-pw1',
+            'is_searchable': 'on',
+        })
+
+        profile = Profile.objects.get(user__username='newuser')
+        self.assertTrue(profile.is_searchable)
+
+    def test_signup_creates_a_private_profile_when_checkbox_is_unchecked(self):
+        # An unchecked checkbox is simply absent from POST data -- no 'is_searchable' key.
+        self.client.post(reverse('accounts:signup'), {
+            'username': 'newuser', 'password1': 'a-very-unguessable-pw1', 'password2': 'a-very-unguessable-pw1',
+        })
+
+        profile = Profile.objects.get(user__username='newuser')
+        self.assertFalse(profile.is_searchable)
+
+
+class ProfileSignalTests(TestCase):
+    """accounts.signals.create_profile_for_new_user -- covers every account-creation
+    path, not just SignUpView (createsuperuser, the admin, etc. all go through
+    User's own .save(), which is what the signal actually listens to)."""
+
+    def test_creating_a_user_directly_still_gets_a_profile(self):
+        user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+
+        self.assertTrue(Profile.objects.filter(user=user).exists())
+
+    def test_profile_defaults_to_searchable(self):
+        user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+
+        self.assertTrue(user.profile.is_searchable)
 
 
 class LoginLogoutViewTests(TestCase):

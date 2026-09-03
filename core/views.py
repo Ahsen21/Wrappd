@@ -19,7 +19,8 @@ def landing(request):
     bypass would just dead-end back at this same upload step anyway."""
     my_session = ImportSession.ready_for(request)
     if my_session:
-        return render(request, 'core/landing.html', {'my_session': my_session})
+        context = {'my_session': my_session, 'my_session_url': my_session.canonical_dashboard_path()}
+        return render(request, 'core/landing.html', context)
     if request.user.is_authenticated:
         return redirect('imports:upload')
     return redirect('accounts:login')

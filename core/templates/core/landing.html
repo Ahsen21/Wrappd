@@ -6,7 +6,7 @@
     Pick where to go next.
   </p>
   <div class="choices">
-    <a class="choice-card" href="{% if my_session %}{% url 'stats:dashboard' session_id=my_session.id %}{% else %}{% url 'imports:upload' %}{% endif %}">
+    <a class="choice-card" href="{{ my_session_url }}">
       <h3>Director's Cut</h3>
       <p>Take a deep dive into your movie watching history, with detailed insights and analytics.</p>
     </a>

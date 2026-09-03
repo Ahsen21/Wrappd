@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 
-from imports.models import ImportSession
+from imports.models import ImportSession, canonical_compare_path
 
 from .helpers import build_export_zip
 
@@ -59,6 +59,17 @@ class UploadViewTests(TestCase):
         response = self.client.get(reverse('imports:upload'))
 
         self.assertRedirects(response, reverse('stats:dashboard', kwargs={'session_id': session.id}))
+
+    def test_get_with_existing_owned_session_redirects_to_username_dashboard(self):
+        # Same smart redirect as above, but for a logged-in account -- lands on the
+        # permanent /dashboard/<username>/ link, not the raw per-upload UUID.
+        user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+        self.client.force_login(user)
+        ImportSession.objects.create(owner=user, status=ImportSession.Status.READY)
+
+        response = self.client.get(reverse('imports:upload'))
+
+        self.assertRedirects(response, reverse('stats:dashboard_by_username', kwargs={'username': 'alex'}))
 
     def test_get_with_new_param_shows_form_even_with_an_existing_session(self):
         # The profile menu's "Upload a new export" needs this exception -- otherwise
@@ -313,3 +324,140 @@ class MyUploadsViewTests(TestCase):
         response = self.client.get(reverse('imports:my_uploads'))
 
         self.assertContains(response, 'No uploads yet')
+
+
+class ImportSessionUsernameLookupTests(TestCase):
+    """ImportSession.latest_for_owner_username (stats:dashboard_by_username) and
+    .latest_for_letterboxd_username (Double Feature's search-by-username flow)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+
+    def test_latest_for_owner_username_finds_the_most_recent_ready_session(self):
+        older = ImportSession.objects.create(owner=self.user, status=ImportSession.Status.READY)
+        newer = ImportSession.objects.create(owner=self.user, status=ImportSession.Status.READY)
+        ImportSession.objects.filter(pk=older.pk).update(uploaded_at=older.uploaded_at - timedelta(days=1))
+
+        self.assertEqual(ImportSession.latest_for_owner_username('alex'), newer)
+
+    def test_latest_for_owner_username_ignores_non_ready_and_unknown_usernames(self):
+        ImportSession.objects.create(owner=self.user, status=ImportSession.Status.PENDING)
+
+        self.assertIsNone(ImportSession.latest_for_owner_username('alex'))
+        self.assertIsNone(ImportSession.latest_for_owner_username('nobody'))
+
+    def test_latest_for_letterboxd_username_finds_a_searchable_owned_session(self):
+        session = ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.READY, display_name='moviefan42',
+        )
+
+        self.assertEqual(ImportSession.latest_for_letterboxd_username('moviefan42'), session)
+        # Exact match, but case-insensitive.
+        self.assertEqual(ImportSession.latest_for_letterboxd_username('MovieFan42'), session)
+
+    def test_latest_for_letterboxd_username_excludes_guest_uploads(self):
+        ImportSession.objects.create(status=ImportSession.Status.READY, display_name='moviefan42')
+
+        self.assertIsNone(ImportSession.latest_for_letterboxd_username('moviefan42'))
+
+    def test_latest_for_letterboxd_username_excludes_non_searchable_accounts(self):
+        ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.READY, display_name='moviefan42',
+        )
+        self.user.profile.is_searchable = False
+        self.user.profile.save(update_fields=['is_searchable'])
+
+        self.assertIsNone(ImportSession.latest_for_letterboxd_username('moviefan42'))
+
+
+class CanonicalComparePathTests(TestCase):
+    """canonical_compare_path -- the /compare/<uuid_a>/<uuid_b>/ vs.
+    /compare/<username_a>-vs-<username_b>/ decision, used by every place that
+    redirects into stats:compare (CompareUploadView, CompareJoinView)."""
+
+    def setUp(self):
+        self.user_a = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+        self.user_b = User.objects.create_user(username='sam', password='a-very-unguessable-pw2')
+
+    def test_both_owned_uses_the_username_pair_path(self):
+        session_a = ImportSession.objects.create(owner=self.user_a, status=ImportSession.Status.READY)
+        session_b = ImportSession.objects.create(owner=self.user_b, status=ImportSession.Status.READY)
+
+        self.assertEqual(
+            canonical_compare_path(session_a, session_b),
+            reverse('stats:compare_by_usernames', kwargs={'username_a': 'alex', 'username_b': 'sam'}),
+        )
+
+    def test_one_side_a_guest_falls_back_to_the_uuid_pair_path(self):
+        session_a = ImportSession.objects.create(owner=self.user_a, status=ImportSession.Status.READY)
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY)  # no owner
+
+        self.assertEqual(
+            canonical_compare_path(session_a, session_b),
+            reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id}),
+        )
+
+    def test_both_guests_uses_the_uuid_pair_path(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY)
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY)
+
+        self.assertEqual(
+            canonical_compare_path(session_a, session_b),
+            reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id}),
+        )
+
+
+class CompareJoinSearchTests(TestCase):
+    """The search-by-Letterboxd-username alternative to pasting a friend link,
+    added alongside JoinCompareForm on the same CompareJoinView."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+        self.client.force_login(self.user)
+        self.my_session = ImportSession.objects.create(owner=self.user, status=ImportSession.Status.READY)
+
+    def test_get_shows_search_form_alongside_link_form(self):
+        response = self.client.get(reverse('imports:compare_join'))
+
+        self.assertContains(response, "Friend&#x27;s Letterboxd username")
+        self.assertContains(response, "Friend&#x27;s Wrappd link")
+
+    def test_search_by_letterboxd_username_redirects_to_compare(self):
+        friend = User.objects.create_user(username='friend_account', password='a-very-unguessable-pw2')
+        friend_session = ImportSession.objects.create(
+            owner=friend, status=ImportSession.Status.READY, display_name='moviefan42',
+        )
+
+        response = self.client.post(reverse('imports:compare_join'), {'letterboxd_username': 'moviefan42'})
+
+        # Both sides are account-owned here, so this lands on the pretty
+        # username-pair URL, not the raw UUID one.
+        self.assertRedirects(
+            response,
+            reverse('stats:compare_by_usernames', kwargs={'username_a': 'alex', 'username_b': 'friend_account'}),
+        )
+
+    def test_search_for_unknown_username_shows_form_error(self):
+        response = self.client.post(reverse('imports:compare_join'), {'letterboxd_username': 'nobody'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No searchable Wrappd account found')
+
+    def test_search_for_private_accounts_username_shows_same_not_found_error(self):
+        friend = User.objects.create_user(username='friend_account', password='a-very-unguessable-pw2')
+        friend.profile.is_searchable = False
+        friend.profile.save(update_fields=['is_searchable'])
+        ImportSession.objects.create(owner=friend, status=ImportSession.Status.READY, display_name='moviefan42')
+
+        response = self.client.post(reverse('imports:compare_join'), {'letterboxd_username': 'moviefan42'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No searchable Wrappd account found')
+
+    def test_search_ignores_guest_uploads_with_matching_display_name(self):
+        ImportSession.objects.create(status=ImportSession.Status.READY, display_name='moviefan42')
+
+        response = self.client.post(reverse('imports:compare_join'), {'letterboxd_username': 'moviefan42'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No searchable Wrappd account found')

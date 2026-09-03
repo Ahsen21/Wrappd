@@ -49,23 +49,28 @@ class LandingRouterTests(TestCase):
 
     def test_authenticated_with_ready_session_sees_home_screen_linking_to_dashboard(self):
         user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
-        session = ImportSession.objects.create(owner=user, status=ImportSession.Status.READY)
+        ImportSession.objects.create(owner=user, status=ImportSession.Status.READY)
         self.client.force_login(user)
 
         response = self.client.get(reverse('core:landing'))
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'core/landing.html')
-        self.assertContains(response, reverse('stats:dashboard', kwargs={'session_id': session.id}))
+        # An account-owned session links to its permanent username-based dashboard
+        # here, not the raw per-upload UUID -- see ImportSession.canonical_dashboard_path.
+        self.assertContains(response, reverse('stats:dashboard_by_username', kwargs={'username': 'alex'}))
 
     def test_guest_with_ready_session_tied_to_browser_sees_home_screen(self):
         session_key = _give_client_a_session(self.client)
-        ImportSession.objects.create(session_key=session_key, status=ImportSession.Status.READY)
+        session = ImportSession.objects.create(session_key=session_key, status=ImportSession.Status.READY)
 
         response = self.client.get(reverse('core:landing'))
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'core/landing.html')
+        # No account, so no username to build a pretty link from -- stays on the
+        # plain UUID route, unlike the owned-session case above.
+        self.assertContains(response, reverse('stats:dashboard', kwargs={'session_id': session.id}))
 
     def test_guest_with_no_ready_session_sees_gate_not_a_redirect_loop(self):
         response = self.client.get(reverse('core:landing'))
