@@ -18,6 +18,12 @@ class SignUpView(CreateView):
 
     def form_valid(self, form):
         response = super().form_valid(form)
+        # self.object (the new User) triggers the post_save signal during
+        # super().form_valid()'s form.save() call, which auto-creates its Profile
+        # with the default is_searchable=True -- overwrite it with what they
+        # actually chose on the signup form.
+        self.object.profile.is_searchable = form.cleaned_data['is_searchable']
+        self.object.profile.save(update_fields=['is_searchable'])
         login(self.request, self.object)
         return response
 

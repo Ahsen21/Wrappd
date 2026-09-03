@@ -7,8 +7,8 @@ from django.views import View
 
 from tmdb.services.enrichment import enrich_import_session_fully
 
-from .forms import CompareUploadForm, JoinCompareForm, UploadForm
-from .models import ImportSession
+from .forms import CompareUploadForm, JoinCompareForm, SearchFriendForm, UploadForm
+from .models import ImportSession, canonical_compare_path
 from .services.parser import ExportParseError, parse_export, persist_parsed_export
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class UploadView(View):
     def get(self, request):
         my_session = ImportSession.ready_for(request)
         if my_session and not request.GET.get('new'):
-            return redirect('stats:dashboard', session_id=my_session.id)
+            return redirect(my_session.canonical_dashboard_path())
         return render(request, self.template_name, {'form': UploadForm()})
 
     def post(self, request):
@@ -111,16 +111,19 @@ class CompareUploadView(LoginRequiredMixin, View):
             form.add_error(None, '; '.join(s.error_message for s in failed))
             return render(request, self.template_name, {'form': form})
 
-        return redirect(reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id}))
+        return redirect(canonical_compare_path(session_a, session_b))
 
 
 class CompareJoinView(LoginRequiredMixin, View):
-    """The link-based alternative to CompareUploadView above: instead of both people
-    uploading their exports together in one request, each uploads independently
-    (possibly on a separate visit) and one of them pastes in the other's dashboard
-    link. stats:compare already accepts any two session ids with no ownership check
-    (compare links stay openly shareable), so this view's only job is resolving "my"
-    session and the pasted friend link, then handing both to it.
+    """Two alternatives to CompareUploadView above, both letting each person upload
+    independently (possibly on a separate visit) instead of both files landing in
+    one request: search for a friend's Letterboxd username (SearchFriendForm,
+    primary), or paste their dashboard link directly (JoinCompareForm, still useful
+    for a private account -- search won't find it, but a direct link still works,
+    same bearer-link model dashboards have always had). stats:compare already
+    accepts any two session ids with no ownership check (compare links stay openly
+    shareable), so this view's only job is resolving "my" session and the other one
+    (by either path), then handing both to it.
 
     Login-gated (unlike CompareUploadView, this is the only place "my session" needs
     to be looked up implicitly rather than being handed both ids explicitly) because
@@ -137,6 +140,7 @@ class CompareJoinView(LoginRequiredMixin, View):
             'my_session': my_session,
             'upload_form': None if my_session else UploadForm(),
             'join_form': JoinCompareForm() if my_session else None,
+            'search_form': SearchFriendForm() if my_session else None,
         }
         return render(request, self.template_name, context)
 
@@ -146,25 +150,48 @@ class CompareJoinView(LoginRequiredMixin, View):
         if not my_session:
             upload_form = UploadForm(request.POST, request.FILES)
             if not upload_form.is_valid():
-                return render(request, self.template_name, {'my_session': None, 'upload_form': upload_form, 'join_form': None})
+                return render(request, self.template_name, {
+                    'my_session': None, 'upload_form': upload_form, 'join_form': None, 'search_form': None,
+                })
 
             my_session = _process_upload(
                 request, request.FILES['export_file'], upload_form.cleaned_zip, owner=request.user
             )
             if my_session.status == ImportSession.Status.FAILED:
                 upload_form.add_error(None, my_session.error_message)
-                return render(request, self.template_name, {'my_session': None, 'upload_form': upload_form, 'join_form': None})
+                return render(request, self.template_name, {
+                    'my_session': None, 'upload_form': upload_form, 'join_form': None, 'search_form': None,
+                })
 
-            # Uploaded successfully -- show the friend-link step next rather than
-            # requiring it in the same request, since they haven't pasted one yet.
-            return render(request, self.template_name, {'my_session': my_session, 'upload_form': None, 'join_form': JoinCompareForm()})
+            # Uploaded successfully -- show the search/friend-link step next rather
+            # than requiring one in the same request, since they haven't given one yet.
+            return render(request, self.template_name, {
+                'my_session': my_session, 'upload_form': None,
+                'join_form': JoinCompareForm(), 'search_form': SearchFriendForm(),
+            })
+
+        # Two separate <form>s on the page (search vs. paste-a-link) post here --
+        # which one was actually submitted is told apart by which field shows up in
+        # POST, same as the upload-vs-join branch above is told apart by my_session.
+        if 'letterboxd_username' in request.POST:
+            search_form = SearchFriendForm(request.POST)
+            if not search_form.is_valid():
+                return render(request, self.template_name, {
+                    'my_session': my_session, 'upload_form': None,
+                    'join_form': JoinCompareForm(), 'search_form': search_form,
+                })
+            friend_session = search_form.cleaned_friend_session
+            return redirect(canonical_compare_path(my_session, friend_session))
 
         join_form = JoinCompareForm(request.POST)
         if not join_form.is_valid():
-            return render(request, self.template_name, {'my_session': my_session, 'upload_form': None, 'join_form': join_form})
+            return render(request, self.template_name, {
+                'my_session': my_session, 'upload_form': None,
+                'join_form': join_form, 'search_form': SearchFriendForm(),
+            })
 
         friend_session = join_form.cleaned_friend_session
-        return redirect(reverse('stats:compare', kwargs={'session_a': my_session.id, 'session_b': friend_session.id}))
+        return redirect(canonical_compare_path(my_session, friend_session))
 
 
 class MyUploadsView(LoginRequiredMixin, View):

@@ -72,3 +72,32 @@ class JoinCompareForm(forms.Form):
             )
         self.cleaned_friend_session = friend_session
         return raw
+
+
+class SearchFriendForm(forms.Form):
+    """The alternative to JoinCompareForm above: exact-match search by a friend's
+    Letterboxd username (not their Wrappd account username -- see
+    ImportSession.latest_for_letterboxd_username) instead of pasting their link.
+    Only surfaces account-owned, searchable-profile sessions; a private account or a
+    guest upload won't turn up here, same as a non-existent username -- the error
+    message is deliberately the same for both, so a search can't be used to
+    fingerprint which usernames exist versus which are just private."""
+
+    letterboxd_username = forms.CharField(
+        label="Friend's Letterboxd username",
+        max_length=150,
+        widget=forms.TextInput(attrs={
+            'class': 'text-input',
+            'placeholder': 'e.g. moviefan42',
+        }),
+    )
+
+    def clean_letterboxd_username(self):
+        username = self.cleaned_data['letterboxd_username'].strip()
+        friend_session = ImportSession.latest_for_letterboxd_username(username)
+        if friend_session is None:
+            raise forms.ValidationError(
+                "No searchable Wrappd account found with that Letterboxd username."
+            )
+        self.cleaned_friend_session = friend_session
+        return username

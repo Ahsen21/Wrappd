@@ -204,6 +204,29 @@ a { color: var(--accent-2); }
   margin: 0 0 0.5rem;
 }
 .hero h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0; }
+/* The "copy link" share button sits right after the h1 rather than as its own
+   card/row above the hero -- see the dashboard's inline script for the click
+   handler. Icon-only (an SVG, not an icon font -- this codebase doesn't load one
+   anywhere else) with a title/aria-label carrying the explanation that used to be
+   permanent caption text underneath. */
+.hero-heading { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.hero-share-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.hero-share-btn:hover { color: var(--text); border-color: var(--muted); }
+.hero-share-btn--copied, .hero-share-btn--copied:hover { color: var(--accent); border-color: var(--accent); }
 .hero-grid { margin-top: 1.75rem; }
 /* Forces exactly 4 columns (2 rows of 4, in DOM order) regardless of viewport width
    -- .grid.hero-grid, not .hero-grid alone, so this beats .grid's own auto-fit
@@ -585,9 +608,6 @@ form p { margin: 1rem 0; }
 /* Dashboard's "share your link" box (imports/compare_join.html is the flow that
    consumes this link) -- input stays readonly and reuses .text-input's look, just
    without its bottom margin since it sits inline with the copy button here. */
-.share-box { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
-.share-box .text-input { flex: 1 1 260px; margin: 0; cursor: text; }
-.share-hint { margin-top: 0; margin-bottom: 1.5rem; font-size: 0.85rem; }
 
 button, .btn {
   background: var(--accent);

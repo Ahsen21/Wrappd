@@ -52,6 +52,28 @@
         Comparing as <strong>{{ my_session.display_name|default:"you" }}</strong>,
         uploaded {{ my_session.uploaded_at|date:"M j" }}.
       </p>
+      {% if search_form.non_field_errors %}
+        <ul class="errorlist">
+          {% for error in search_form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <form method="post">
+        {% csrf_token %}
+        {{ search_form.letterboxd_username.label_tag }}
+        {{ search_form.letterboxd_username }}
+        {% if search_form.letterboxd_username.errors %}
+          <ul class="errorlist">
+            {% for error in search_form.letterboxd_username.errors %}<li>{{ error }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+        <button type="submit">Compare</button>
+      </form>
+    </div>
+
+    <p class="muted">
+      Or, if their account isn't searchable, paste the link they sent you instead:
+    </p>
+    <div class="card">
       {% if join_form.non_field_errors %}
         <ul class="errorlist">
           {% for error in join_form.non_field_errors %}<li>{{ error }}</li>{% endfor %}

@@ -13,39 +13,61 @@
     </div>
   {% endif %}
 
-  <div class="card share-box">
-    <input type="text" class="text-input" id="share-link-input" value="{{ share_url }}" readonly>
-    <button type="button" class="btn" id="share-copy-btn">Copy link</button>
-  </div>
-  <p class="muted share-hint">Share this link to compare with a friend on Double Feature. Anyone with this link can view your stats.</p>
-  <script>
-    (function () {
-      const btn = document.getElementById('share-copy-btn');
-      const input = document.getElementById('share-link-input');
-      if (!btn || !input) return;
-      btn.addEventListener('click', function () {
-        input.select();
-        const restore = function () {
-          const original = 'Copy link';
-          btn.textContent = 'Copied!';
-          setTimeout(function () { btn.textContent = original; }, 1500);
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(input.value).then(restore).catch(function () {
-            document.execCommand('copy');
-            restore();
-          });
-        } else {
-          document.execCommand('copy');
-          restore();
-        }
-      });
-    })();
-  </script>
-
   <div class="hero" {% if hero_poster_url %}style="--hero-image: url('{{ hero_poster_url }}');"{% endif %}>
     <p class="hero-eyebrow">Director's Cut</p>
-    <h1>{{ import_session.display_name|default:"Your" }} stats</h1>
+    <div class="hero-heading">
+      <h1>{{ import_session.display_name|default:"Your" }} stats</h1>
+      <button
+        type="button" class="hero-share-btn" id="share-copy-btn"
+        title="Copy link -- anyone with it can view your stats" aria-label="Copy link to this dashboard"
+        data-share-url="{{ share_url }}"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+      </button>
+    </div>
+    <script>
+      (function () {
+        const btn = document.getElementById('share-copy-btn');
+        if (!btn) return;
+        const linkIcon = btn.innerHTML;
+        const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+          + 'stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">'
+          + '<polyline points="20 6 9 17 4 12"></polyline></svg>';
+        btn.addEventListener('click', function () {
+          const url = btn.dataset.shareUrl;
+          const showCopied = function () {
+            btn.innerHTML = checkIcon;
+            btn.classList.add('hero-share-btn--copied');
+            setTimeout(function () {
+              btn.innerHTML = linkIcon;
+              btn.classList.remove('hero-share-btn--copied');
+            }, 1500);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(showCopied).catch(function () {
+              const temp = document.createElement('input');
+              temp.value = url;
+              document.body.appendChild(temp);
+              temp.select();
+              document.execCommand('copy');
+              temp.remove();
+              showCopied();
+            });
+          } else {
+            const temp = document.createElement('input');
+            temp.value = url;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            temp.remove();
+            showCopied();
+          }
+        });
+      })();
+    </script>
 
     <h2 class="sr-only">Overview</h2>
     <div class="grid hero-grid">
