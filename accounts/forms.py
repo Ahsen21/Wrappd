@@ -1,6 +1,8 @@
 from django import forms
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
+from .models import Profile
+
 
 class _StyledFormMixin:
     """Adds the site's shared .text-input class to every field's widget, so these
@@ -37,3 +39,15 @@ class SignUpForm(_StyledFormMixin, UserCreationForm):
 
 class LoginForm(_StyledFormMixin, AuthenticationForm):
     pass
+
+
+class ProfileSettingsForm(_StyledFormMixin, forms.ModelForm):
+    """The Account page's editable copy of the same is_searchable setting
+    SignUpForm sets once at signup -- same label, so it reads as one setting in two
+    places, not two different ones."""
+
+    class Meta:
+        model = Profile
+        fields = ('is_searchable',)
+        labels = {'is_searchable': 'Let friends find me by my Letterboxd username in Double Feature'}
+        widgets = {'is_searchable': forms.CheckboxInput(attrs={'class': 'toggle-switch'})}

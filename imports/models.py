@@ -92,7 +92,7 @@ class ImportSession(models.Model):
     def latest_for_owner_username(cls, username):
         """The account with this Wrappd username's own most recent completed
         upload, if any -- used to resolve stats:dashboard_by_username. Same
-        "most recent READY wins" tiebreak as ready_for/MyUploadsView, for the same
+        "most recent READY wins" tiebreak as ready_for/accounts.AccountView, for the same
         reason: an account can have uploaded more than once."""
         return (
             cls.objects

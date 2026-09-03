@@ -79,21 +79,19 @@ class LandingRouterTests(TestCase):
 
 
 class NavProfileMenuTests(TestCase):
-    """The nav's logged-in profile menu (core/templates/core/base.html), rendered on
-    any page -- checked here via accounts:login since that's reachable both logged
-    out and logged in."""
+    """The nav's logged-in state (core/templates/core/base.html) -- just a plain
+    link to the Account page (no dropdown; with only one destination left once Log
+    out moved onto that page too, a dropdown had nothing left to toggle), checked
+    here via accounts:login since that's reachable both logged out and logged in."""
 
-    def test_logged_out_shows_login_and_signup_not_a_profile_button(self):
+    def test_logged_out_shows_login_and_signup_not_an_account_link(self):
         response = self.client.get(reverse('accounts:login'))
 
         self.assertContains(response, reverse('accounts:login'))
         self.assertContains(response, reverse('accounts:signup'))
-        # The nav's toggle <script> always renders and references this id by name --
-        # check for the actual markup, not just the substring, so the JS doesn't
-        # make this assertion a false negative.
-        self.assertNotContains(response, '<div class="nav-profile">')
+        self.assertNotContains(response, reverse('accounts:account'))
 
-    def test_logged_in_shows_profile_button_with_username_and_menu_items(self):
+    def test_logged_in_shows_a_plain_link_to_the_account_page(self):
         user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
         self.client.force_login(user)
 
@@ -102,8 +100,8 @@ class NavProfileMenuTests(TestCase):
         response = self.client.get(reverse('core:landing'), follow=True)
 
         self.assertContains(response, 'alex')
-        self.assertContains(response, 'nav-profile-btn')
-        self.assertContains(response, reverse('imports:upload') + '?new=1')
-        self.assertContains(response, reverse('imports:my_uploads'))
-        self.assertContains(response, reverse('accounts:logout'))
+        self.assertContains(response, reverse('accounts:account'))
         self.assertNotContains(response, reverse('accounts:login'))
+        # Log out lives on the Account page itself now, not a nav dropdown -- the
+        # nav on an arbitrary page shouldn't be POSTing there directly anymore.
+        self.assertNotContains(response, reverse('accounts:logout'))

@@ -1,8 +1,11 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
 from accounts.models import Profile
+from imports.models import ImportSession
 
 User = get_user_model()
 
@@ -113,5 +116,103 @@ class LoginLogoutViewTests(TestCase):
         # accounts:login (now doubling as the entry gate) -- same reasoning as the
         # signup/login tests above.
         self.assertRedirects(response, reverse('core:landing'), target_status_code=302)
+        whoami = self.client.get(reverse('core:landing'))
+        self.assertFalse(whoami.wsgi_request.user.is_authenticated)
+
+
+class AccountViewTests(TestCase):
+    """The consolidated "Account" page: the searchable/private setting, plus the
+    uploads list that used to be its own separate "Previous uploads" page
+    (imports.MyUploadsView, retired -- folded in here since both are account-level
+    concerns)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+
+    def test_anonymous_get_redirects_to_login(self):
+        response = self.client.get(reverse('accounts:account'))
+        self.assertRedirects(
+            response, f"{reverse('accounts:login')}?next={reverse('accounts:account')}"
+        )
+
+    def test_get_shows_current_searchable_value(self):
+        self.user.profile.is_searchable = False
+        self.user.profile.save(update_fields=['is_searchable'])
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('accounts:account'))
+
+        self.assertFalse(response.context['form'].initial['is_searchable'])
+
+    def test_post_updates_searchable_setting(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(reverse('accounts:account'), {})  # unchecked box -- absent from POST
+
+        self.assertRedirects(response, reverse('accounts:account'))
+        self.user.profile.refresh_from_db()
+        self.assertFalse(self.user.profile.is_searchable)
+
+        response = self.client.post(reverse('accounts:account'), {'is_searchable': 'on'})
+        self.assertRedirects(response, reverse('accounts:account'))
+        self.user.profile.refresh_from_db()
+        self.assertTrue(self.user.profile.is_searchable)
+
+    def test_post_shows_a_confirmation_message(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(reverse('accounts:account'), {'is_searchable': 'on'}, follow=True)
+
+        messages = list(response.context['messages'])
+        self.assertTrue(any('saved' in str(m).lower() for m in messages))
+
+    def test_lists_only_this_users_ready_sessions_most_recent_first(self):
+        self.client.force_login(self.user)
+        older = ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.READY, source_filename='old.zip'
+        )
+        newer = ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.READY, source_filename='new.zip'
+        )
+        ImportSession.objects.filter(pk=older.pk).update(uploaded_at=older.uploaded_at - timedelta(days=1))
+        ImportSession.objects.create(status=ImportSession.Status.READY, source_filename='other.zip')  # someone else
+        ImportSession.objects.create(
+            owner=self.user, status=ImportSession.Status.PENDING, source_filename='pending.zip'
+        )
+
+        response = self.client.get(reverse('accounts:account'))
+
+        self.assertEqual(list(response.context['sessions']), [newer, older])
+        self.assertEqual(response.context['current'], newer)
+        self.assertContains(response, 'new.zip')
+        self.assertContains(response, 'old.zip')
+        self.assertNotContains(response, 'other.zip')
+        self.assertNotContains(response, 'pending.zip')
+
+    def test_current_session_is_tagged_and_links_to_its_dashboard(self):
+        self.client.force_login(self.user)
+        session = ImportSession.objects.create(owner=self.user, status=ImportSession.Status.READY)
+
+        response = self.client.get(reverse('accounts:account'))
+
+        self.assertContains(response, 'current')
+        self.assertContains(response, reverse('stats:dashboard', kwargs={'session_id': session.id}))
+
+    def test_no_uploads_shows_empty_state(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('accounts:account'))
+
+        self.assertContains(response, 'No uploads yet')
+
+    def test_page_includes_a_working_logout_form(self):
+        # Log out lives here now, not the nav dropdown (retired alongside it).
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('accounts:account'))
+        self.assertContains(response, reverse('accounts:logout'))
+
+        logout_response = self.client.post(reverse('accounts:logout'))
+        self.assertRedirects(logout_response, reverse('core:landing'), target_status_code=302)
         whoami = self.client.get(reverse('core:landing'))
         self.assertFalse(whoami.wsgi_request.user.is_authenticated)
