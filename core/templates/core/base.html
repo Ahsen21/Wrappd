@@ -16,7 +16,18 @@
 </head>
 <body>
   <nav class="nav">
-    <a class="brand" href="{% url 'core:landing' %}">Wrappd</a>
+    <div class="nav-brand-menu">
+      <a class="brand" href="{% url 'core:landing' %}">Wrappd</a>
+      <button type="button" class="nav-menu-toggle" id="nav-menu-toggle" aria-haspopup="true" aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      <div class="nav-menu-dropdown" id="nav-menu-dropdown" hidden>
+        <a href="{% url 'imports:upload' %}">Director's Cut</a>
+        <a href="{% url 'imports:compare_join' %}">Double Feature</a>
+      </div>
+    </div>
     <a class="nav-primary-link" href="{% url 'imports:upload' %}">Director's Cut</a>
     <a class="nav-primary-link" href="{% url 'imports:compare_join' %}">Double Feature</a>
     <span class="nav-spacer"></span>
@@ -26,7 +37,7 @@
           <circle cx="12" cy="8" r="4"></circle>
           <path d="M4 20c0-4 4-6 8-6s8 2 8 6"></path>
         </svg>
-        {{ user.username }}
+        <span class="nav-account-name">{{ user.username }}</span>
       </a>
     {% else %}
       <a href="{% url 'accounts:login' %}">Log in</a>
@@ -34,6 +45,36 @@
     {% endif %}
   </nav>
   <script>
+    // The mobile-only dropdown attached to the brand (see .nav-menu-toggle/
+    // .nav-primary-link in base.css) -- Director's Cut/Double Feature are hidden as
+    // plain nav links on narrow screens (that's what caused the nav to need to wrap
+    // at all, before), so this is how they stay reachable from the nav there instead
+    // of only from the home screen. The "Wrappd" text itself is a plain link to
+    // core:landing, unaffected by any of this -- only the small arrow button next to
+    // it opens/closes the dropdown. Same open/close/outside-click/Escape pattern the
+    // old profile dropdown used before it was retired -- reintroduced here because
+    // this menu has two genuine destinations, unlike that one's eventual single link.
+    (function () {
+      const btn = document.getElementById('nav-menu-toggle');
+      const menu = document.getElementById('nav-menu-dropdown');
+      if (!btn || !menu) return;
+      function close() {
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+      }
+      btn.addEventListener('click', function (event) {
+        event.stopPropagation();
+        const isOpen = !menu.hidden;
+        if (isOpen) { close(); } else { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+      });
+      document.addEventListener('click', function (event) {
+        if (!menu.hidden && !menu.contains(event.target) && event.target !== btn) close();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') close();
+      });
+    })();
+
     // .tip-bubble (the .info-tip "i" badge's hover/focus explanation, see base.css)
     // is centered under its icon via left:50%; transform:translateX(-50%) -- fine
     // when the icon sits away from an edge, but an icon near the left/right edge of
