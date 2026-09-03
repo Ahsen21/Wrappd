@@ -327,6 +327,46 @@ class DashboardNewStatsTests(TestCase):
         total_weekday_count = sum(row['count'] for row in calendar['weekday_distribution'])
         self.assertEqual(total_weekday_count, 5)
 
+    def test_viewing_heatmap_buckets_by_year(self):
+        # All 5 diary entries in setUp are distinct 2024 dates -- one film each.
+        heatmap = build_dashboard_context(self.session)['calendar']['heatmap']
+        self.assertEqual(heatmap['years'], [2024])
+        self.assertEqual(heatmap['default_year'], 2024)
+        self.assertEqual(
+            heatmap['data']['2024'],
+            {'2024-01-01': 1, '2024-01-02': 1, '2024-01-03': 1, '2024-01-10': 1, '2024-01-11': 1},
+        )
+
+    def test_viewing_heatmap_counts_multiple_films_same_day_and_spans_years(self):
+        session = ImportSession.objects.create(display_name='Multi')
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/one', title='One', year=2020,
+            watched_date='2023-06-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/two', title='Two', year=2020,
+            watched_date='2023-06-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/three', title='Three', year=2020,
+            watched_date='2024-01-01',
+        )
+
+        heatmap = build_dashboard_context(session)['calendar']['heatmap']
+        # Oldest -> newest for the toggle's left-to-right order, but default_year is
+        # still the most recent one regardless of its position in that list.
+        self.assertEqual(heatmap['years'], [2023, 2024])
+        self.assertEqual(heatmap['default_year'], 2024)
+        self.assertEqual(heatmap['data']['2023'], {'2023-06-01': 2})
+        self.assertEqual(heatmap['data']['2024'], {'2024-01-01': 1})
+
+    def test_viewing_heatmap_empty_when_no_diary_entries(self):
+        session = ImportSession.objects.create(display_name='Empty')
+        heatmap = build_dashboard_context(session)['calendar']['heatmap']
+        self.assertEqual(heatmap['years'], [])
+        self.assertIsNone(heatmap['default_year'])
+        self.assertEqual(heatmap['data'], {})
+
     def test_favorite_directors_and_actors(self):
         favorite_people = build_dashboard_context(self.session)['favorite_people']
 

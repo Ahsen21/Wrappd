@@ -418,7 +418,37 @@
       <div class="stat"><div class="value">{{ calendar.longest_gap_days }}</div><div class="label">Longest dry spell (days)</div></div>
     </div>
     <h4>Day of week</h4>
-    <canvas id="weekdayChart"></canvas>
+    <div class="weekday-chart">
+      <canvas id="weekdayChart"></canvas>
+    </div>
+
+    {% if calendar.heatmap.years %}
+      <h4>Activity</h4>
+      {% if calendar.heatmap.years|length > 1 %}
+        <div class="toggle-group" data-chart-toggle="heatmapYear">
+          {% for year in calendar.heatmap.years %}
+            <button
+              type="button" class="toggle-btn{% if year == calendar.heatmap.default_year %} active{% endif %}"
+              data-year="{{ year }}"
+            >{{ year }}</button>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="heatmap-wrap">
+        <div class="heatmap-months" id="heatmapMonths"></div>
+        <div class="heatmap-grid" id="heatmapGrid"></div>
+        <div class="heatmap-tip" id="heatmapTip" hidden></div>
+      </div>
+      <div class="heatmap-legend">
+        <span>Less</span>
+        <span class="heatmap-legend-swatch" data-level="0"></span>
+        <span class="heatmap-legend-swatch" data-level="1"></span>
+        <span class="heatmap-legend-swatch" data-level="2"></span>
+        <span class="heatmap-legend-swatch" data-level="3"></span>
+        <span class="heatmap-legend-swatch" data-level="4"></span>
+        <span>More</span>
+      </div>
+    {% endif %}
   </div>
 
   <div class="card">
@@ -788,8 +818,154 @@
     new Chart(document.getElementById('weekdayChart'), {
       type: 'bar',
       data: { labels: chartData.weekday_distribution.labels, datasets: [{ label: 'Films', data: chartData.weekday_distribution.data, backgroundColor: '#00e054', hoverBackgroundColor: lighten('#00e054', 40), borderRadius: 4 }] },
-      options: { scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } }, plugins: { legend: { display: false } } }
+      options: {
+        maintainAspectRatio: false,
+        scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } },
+        plugins: { legend: { display: false } },
+      }
     });
+
+    // Viewing calendar's activity heatmap -- a GitHub-contribution-style grid, one
+    // year at a time (a whole multi-year history in one grid reads as illegible
+    // columns, same reason GitHub's own only ever shows a year at a time). Laid out
+    // client-side rather than via Chart.js, which has no calendar/matrix chart type
+    // built in -- chartData.heatmap carries {years, default_year, data: {year:
+    // {'YYYY-MM-DD': count}}} from the server (see _viewing_heatmap in
+    // stats/services/dashboard.py), and everything below just positions <div> cells
+    // on a CSS grid.
+    (function () {
+      const gridEl = document.getElementById('heatmapGrid');
+      const monthsEl = document.getElementById('heatmapMonths');
+      const tipEl = document.getElementById('heatmapTip');
+      const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
+      if (!gridEl || !chartData.heatmap) return;
+
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      // Manual YYYY-MM-DD formatting, not toISOString() -- that converts to UTC
+      // first, which shifts local midnight to the previous calendar day in any
+      // timezone behind UTC, silently mismatching cells against the wrong date's
+      // count.
+      function isoDate(d) {
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return d.getFullYear() + '-' + month + '-' + day;
+      }
+
+      // Bucketed relative to this year's own busiest day, not a fixed scale -- someone
+      // who rarely logs more than one film a day would otherwise never see the top
+      // color, while someone who marathons in bursts would max it out constantly.
+      function levelFor(count, max) {
+        if (!count) return 0;
+        return Math.min(4, Math.max(1, Math.ceil((count / max) * 4)));
+      }
+
+      function hideTip() { tipEl.hidden = true; }
+
+      // Viewport coordinates (getBoundingClientRect + position:fixed on .heatmap-tip
+      // in base.css), not offsetLeft/offsetTop against .heatmap-wrap -- that wrap
+      // scrolls horizontally, which makes the browser clip vertical overflow too
+      // (setting only overflow-x computes overflow-y as auto), silently cutting off
+      // a tooltip positioned above its cell. Also clamped against the actual
+      // viewport edges here, the same way .tip-bubble's own reposition script keeps
+      // .info-tip on-screen near a narrow phone's edges.
+      function showTip(cell, text) {
+        tipEl.textContent = text;
+        tipEl.hidden = false;
+        const margin = 8;
+        const cellRect = cell.getBoundingClientRect();
+        let left = cellRect.left;
+        const maxLeft = window.innerWidth - margin - tipEl.offsetWidth;
+        if (left > maxLeft) left = maxLeft;
+        if (left < margin) left = margin;
+        let top = cellRect.top - tipEl.offsetHeight - 6;
+        if (top < margin) top = cellRect.bottom + 6;
+        tipEl.style.left = left + 'px';
+        tipEl.style.top = top + 'px';
+      }
+
+      function renderYear(year) {
+        gridEl.innerHTML = '';
+        monthsEl.innerHTML = '';
+        hideTip();
+
+        const counts = chartData.heatmap.data[String(year)] || {};
+        const max = Math.max(1, ...Object.values(counts));
+
+        const startOfYear = new Date(year, 0, 1);
+        const startOffset = startOfYear.getDay();
+        // Rounded, not left as raw ms division -- a DST transition inside the year
+        // makes the raw division land a fraction off whole days, even though the
+        // actual number of calendar days between two Jan 1s never does.
+        const daysInYear = Math.round((new Date(year + 1, 0, 1) - startOfYear) / 86400000);
+        const weekCount = Math.floor((startOffset + daysInYear - 1) / 7) + 1;
+
+        // Column width AND row height, computed together so cells stay square --
+        // see the comment on .heatmap-grid in base.css for why this can't be left
+        // to CSS grid alone. Floors at 11px, same floor minmax() enforced on
+        // columns before this -- once a full year no longer fits at that floor,
+        // .heatmap-wrap's overflow-x:auto scrolls it instead of shrinking further.
+        const gap = 3;
+        const rawSize = (wrapEl.clientWidth - (weekCount - 1) * gap) / weekCount;
+        const cellSize = Math.max(11, Math.floor(rawSize));
+        const columns = 'repeat(' + weekCount + ', ' + cellSize + 'px)';
+        gridEl.style.gridTemplateColumns = columns;
+        gridEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
+        monthsEl.style.gridTemplateColumns = columns;
+
+        // A running counter, not (date - startOfYear) / 86400000 -- a DST transition
+        // makes that division land on a non-integer number of days for the dates on
+        // the far side of it, occasionally flooring to the wrong week column.
+        let dayIndex = startOffset;
+        let lastMonth = -1;
+
+        for (
+          let d = new Date(year, 0, 1);
+          d.getFullYear() === year;
+          d.setDate(d.getDate() + 1), dayIndex += 1
+        ) {
+          const row = d.getDay();
+          const col = Math.floor(dayIndex / 7);
+
+          if (d.getMonth() !== lastMonth) {
+            lastMonth = d.getMonth();
+            const label = document.createElement('div');
+            label.className = 'heatmap-month-label';
+            label.textContent = monthNames[lastMonth];
+            label.style.gridColumn = String(col + 1);
+            monthsEl.appendChild(label);
+          }
+
+          const iso = isoDate(d);
+          const count = counts[iso] || 0;
+          const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          const text = (count === 0 ? 'No films' : count + ' film' + (count > 1 ? 's' : '')) + ' — ' + dateLabel;
+
+          const cell = document.createElement('div');
+          cell.className = 'heatmap-cell';
+          cell.dataset.level = String(levelFor(count, max));
+          cell.style.gridRow = String(row + 1);
+          cell.style.gridColumn = String(col + 1);
+          cell.tabIndex = 0;
+          cell.setAttribute('aria-label', text);
+          cell.addEventListener('mouseenter', function () { showTip(cell, text); });
+          cell.addEventListener('mouseleave', hideTip);
+          cell.addEventListener('focus', function () { showTip(cell, text); });
+          cell.addEventListener('blur', hideTip);
+          gridEl.appendChild(cell);
+        }
+      }
+
+      renderYear(chartData.heatmap.default_year);
+
+      document.querySelectorAll('[data-chart-toggle="heatmapYear"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="heatmapYear"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          renderYear(parseInt(btn.dataset.year, 10));
+        });
+      });
+    })();
 
     new Chart(document.getElementById('tagsChart'), {
       type: 'bar',
