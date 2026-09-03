@@ -1,0 +1,58 @@
+{% extends "core/base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+  <h1>Account Settings</h1>
+  <!-- <p class="muted">Signed in as <strong>{{ user.username }}</strong>.</p> -->
+
+  <div class="card">
+    <h2>Privacy</h2>
+    {% if form.non_field_errors %}
+      <ul class="errorlist">
+        {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    <form method="post">
+      {% csrf_token %}
+      <div class="settings-toggle-row">
+        {{ form.is_searchable.label_tag }}
+        {{ form.is_searchable }}
+      </div>
+      {% if form.is_searchable.errors %}
+        <ul class="errorlist">
+          {% for error in form.is_searchable.errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <button type="submit">Save</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header-row">
+      <h2>Your uploads</h2>
+      <a
+        href="{% url 'imports:upload' %}?new=1" class="btn"
+        title="Upload a new export -- this becomes your current dashboard"
+      >+ New export</a>
+    </div>
+    {% if sessions %}
+      <ul class="upload-list">
+        {% for session in sessions %}
+          <li>
+            <a href="{% url 'stats:dashboard' session_id=session.id %}">
+              {{ session.source_filename|default:"export.zip" }}
+              <span class="muted">&mdash; uploaded {{ session.uploaded_at|date:"M j, Y, g:i A" }}</span>
+              {% if session == current %}<span class="upload-current-tag">current</span>{% endif %}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty-state">No uploads yet.</p>
+    {% endif %}
+  </div>
+
+  <form method="post" action="{% url 'accounts:logout' %}" class="logout-form">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-secondary">Log out</button>
+  </form>
+{% endblock %}

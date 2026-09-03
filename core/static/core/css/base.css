@@ -25,17 +25,14 @@ html { scroll-behavior: smooth; }
 @media (max-width: 700px) {
   html { font-size: 13px; }
   /* Mobile nav is just brand (left) + profile/auth (right) -- Director's Cut and
-     Double Feature are reachable from the home screen and the profile menu, so
+     Double Feature are reachable from the home screen and the Account page, so
      they're redundant here and were the main cause of the nav needing to wrap at
      all. */
   .nav-primary-link { display: none; }
   /* Still kept as a safety net even though hiding the two links above means the
      nav fits on one row in the overwhelming majority of cases now -- an unusually
      long, unbreakable username (no spaces to wrap at, unlike "Director's
-     Cut"/"Double Feature" used to have) could still overflow otherwise. Since
-     .nav-profile-menu is now anchored to .nav itself rather than to wherever the
-     button ends up (see its own comment), the menu stays correctly positioned
-     either way -- no matching override needed here anymore. */
+     Cut"/"Double Feature" used to have) could still overflow otherwise. */
   .nav { flex-wrap: wrap; row-gap: 0.5rem; }
 }
 
@@ -50,7 +47,6 @@ body {
 a { color: var(--accent-2); }
 
 .nav {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 1.5rem;
@@ -61,66 +57,13 @@ a { color: var(--accent-2); }
 .nav a { text-decoration: none; color: var(--text); font-weight: 600; }
 .nav .brand { color: var(--accent); font-weight: 700; font-size: 1.1rem; }
 .nav-spacer { flex: 1; }
-
-/* The logged-in profile menu: a plain button (username + caret) toggling a small
-   dropdown. The menu is positioned relative to .nav itself (not this button) and
-   anchored to .nav's own right padding edge -- deliberately decoupled from wherever
-   the button happens to render (its position shifts with username length, and with
-   whether the nav has wrapped onto two rows on mobile), so the menu can never end up
-   anchored to a button that's sitting near the left edge and overflow off-screen. */
-.nav-profile-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text);
-  font-weight: 600;
-  font-size: 1rem;
-  font-family: inherit;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-.nav-profile-btn:hover { color: var(--accent); }
-.nav-caret { font-size: 0.7em; }
-
-.nav-profile-menu {
-  position: absolute;
-  top: 100%;
-  margin-top: 0.5rem;
-  right: 1.5rem; /* matches .nav's own right padding, not the button's position */
-  min-width: 180px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.4rem;
-  flex-direction: column;
-  gap: 0.1rem;
-  z-index: 10;
-}
-/* display only applies while NOT [hidden] -- an unconditional `display: flex` on
-   .nav-profile-menu itself would win the cascade over the browser's own
-   `[hidden] { display: none }`, silently defeating the JS toggle (the menu would
-   stay visually open no matter what `hidden` was set to). */
-.nav-profile-menu:not([hidden]) { display: flex; }
-.nav-profile-menu a,
-.nav-profile-menu-btn {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 0.5rem 0.6rem;
-  border-radius: calc(var(--radius) - 2px);
-  font-weight: 600;
-  font-size: 0.95rem;
-  background: none;
-  border: none;
-  color: var(--text);
-  font-family: inherit;
-  cursor: pointer;
-}
-.nav-profile-menu a:hover,
-.nav-profile-menu-btn:hover { background: var(--bg); color: var(--accent); }
-.nav-profile-menu form { margin: 0; }
+/* A small icon signals this link goes somewhere (Account settings), not just a
+   "you're logged in as" label -- .nav a otherwise strips ordinary link styling
+   (color/underline) for a clean look, which left the plain username with no visual
+   cue that it's clickable at all. Deliberately not a caret/chevron -- that implies
+   a dropdown opens in place, which isn't true here anymore (it's a plain link). */
+.nav-account-link { display: inline-flex; align-items: center; gap: 0.4rem; }
+.nav-account-link:hover { color: var(--accent); }
 
 .container {
   max-width: 1000px;
@@ -663,6 +606,59 @@ button, .btn {
   border-radius: 999px;
   padding: 0.1rem 0.5rem;
 }
+
+/* Account page: a card-internal header row (title + a small action button, e.g.
+   "Your uploads" + "+ New export") -- .card h3's own margin-bottom would otherwise
+   fight this row's own gap for the vertical spacing, so it's zeroed here only. */
+.card-header-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.card-header-row h3 { margin: 0; }
+
+.settings-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.settings-toggle-row label { color: var(--text); font-size: 0.95rem; line-height: 1.4; }
+
+/* A checkbox restyled as a toggle switch (appearance:none + a custom thumb via
+   ::before) rather than the bare OS checkbox _StyledFormMixin otherwise leaves
+   untouched -- the site's only other checkbox (SignUpForm's, same underlying
+   setting) stays a plain checkbox for now; this is scoped to the Account page's
+   copy of it, not a sitewide checkbox restyle. */
+.toggle-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 22px;
+  margin: 0;
+  background: var(--border);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.toggle-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+.toggle-switch:checked { background: var(--accent); }
+.toggle-switch:checked::before { transform: translateX(18px); background: var(--accent-text); }
+
+/* Log out is a different kind of action from "Save"/"+ New export" (ends your
+   session rather than changing account state) -- de-emphasized so it doesn't
+   compete with them at the same visual weight, and given room to breathe above it
+   rather than sitting flush against the uploads card. */
+.logout-form { margin-top: 1.5rem; }
+.btn-secondary {
+  background: none;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { color: var(--text); border-color: var(--muted); }
 
 table { width: 100%; border-collapse: collapse; }
 /* Default td vertical-align is baseline, not middle -- fine for plain text cells, but

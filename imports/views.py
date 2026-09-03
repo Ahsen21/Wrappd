@@ -192,26 +192,3 @@ class CompareJoinView(LoginRequiredMixin, View):
 
         friend_session = join_form.cleaned_friend_session
         return redirect(canonical_compare_path(my_session, friend_session))
-
-
-class MyUploadsView(LoginRequiredMixin, View):
-    """The profile menu's "Previous uploads" -- every READY upload this account
-    owns, most recent first, each linking straight to its dashboard. Purely a
-    browsing list: opening an older one doesn't change what ImportSession.ready_for
-    considers "current" elsewhere (nav, home screen, share link) -- those keep
-    tracking whichever upload is genuinely most recent, so this never surprises the
-    rest of the app by silently switching your active session out from under it.
-
-    Login-gated because it's reached from the profile menu, which only exists for
-    logged-in accounts -- a guest's uploads (session_key-scoped) aren't listed here."""
-
-    template_name = 'imports/my_uploads.html'
-
-    def get(self, request):
-        sessions = list(ImportSession.objects.filter(
-            owner=request.user, status=ImportSession.Status.READY
-        ).order_by('-uploaded_at'))
-        # The most recent is always what ImportSession.ready_for would return for a
-        # logged-in owner (same filter/order) -- reuse it instead of a second query.
-        current = sessions[0] if sessions else None
-        return render(request, self.template_name, {'sessions': sessions, 'current': current})
