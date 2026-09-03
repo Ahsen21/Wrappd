@@ -360,6 +360,7 @@ def build_dashboard_context(import_session) -> dict:
                 'labels': [row['label'] for row in calendar['weekday_distribution']],
                 'data': [row['count'] for row in calendar['weekday_distribution']],
             },
+            'heatmap': calendar['heatmap'],
             'release_year_distribution': {
                 'labels': [str(row['year']) for row in release_year_distribution],
                 'data': [row['count'] for row in release_year_distribution],
@@ -671,6 +672,30 @@ def _viewing_calendar(diary) -> dict:
         'weekday_distribution': weekday_distribution,
         'longest_streak_days': longest_streak,
         'longest_gap_days': longest_gap,
+        'heatmap': _viewing_heatmap(diary),
+    }
+
+
+def _viewing_heatmap(diary) -> dict:
+    """Per-day watch counts bucketed by year, for the calendar-heatmap grid in the
+    Viewing calendar card. The grid itself is laid out client-side (see
+    dashboard.html's heatmap script) rather than computed here -- this just hands
+    over {year: {'YYYY-MM-DD': count}} plus which years actually have data, so a
+    year with zero entries never shows up as an empty toggle option."""
+    rows = diary.values('watched_date').annotate(count=Count('id'))
+    by_year = defaultdict(dict)
+    for row in rows:
+        watched_date = row['watched_date']
+        by_year[watched_date.year][watched_date.isoformat()] = row['count']
+
+    # Oldest -> newest, so the year toggle reads left-to-right chronologically --
+    # default_year (the most recent) is taken from the end of this list rather than
+    # the start, and is what the toggle opens on, not necessarily years[0].
+    years = sorted(by_year.keys())
+    return {
+        'years': years,
+        'default_year': years[-1] if years else None,
+        'data': {str(year): counts for year, counts in by_year.items()},
     }
 
 

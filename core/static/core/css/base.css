@@ -419,6 +419,69 @@ h2#watching-stats {
 .h-chart { position: relative; height: 340px; }
 .h-chart canvas { height: 100% !important; }
 
+/* Viewing calendar's day-of-week chart -- without a fixed height + maintainAspectRatio:
+   false (set alongside this in the dashboard's own script), Chart.js falls back to its
+   own default 2:1 aspect ratio against the card's full width, rendering much taller than
+   this simple 7-bar chart needs. Shrunk to make room in the same card for the viewing
+   heatmap sitting below it. */
+.weekday-chart { position: relative; height: 160px; }
+.weekday-chart canvas { height: 100% !important; }
+
+/* Viewing calendar's activity heatmap -- a GitHub-contribution-style grid built
+   client-side (see dashboard.html's heatmap script), one year at a time via the
+   .toggle-group above it. Column width AND row height are both set inline per
+   render, to the same computed px value -- CSS grid can size a track to fill
+   available space on its own axis (that alone was tried first, via minmax(11px,
+   1fr) columns), but it has no way to size the *other* axis (row height) to match,
+   so keeping cells square across a variable container width means computing one
+   shared size in JS rather than leaning on the grid for it. That size grows to
+   fill the card on desktop, where there's room to spare, but floors at 11px so
+   cells stay legible/tappable on a narrow phone -- once a full year's minimum
+   width (~53 * 11px) no longer fits at that floor, .heatmap-wrap's
+   overflow-x:auto scrolls it horizontally instead of shrinking further. */
+.heatmap-wrap { position: relative; overflow-x: auto; padding-bottom: 2px; }
+.heatmap-months, .heatmap-grid { display: grid; gap: 3px; }
+.heatmap-months { margin-bottom: 4px; }
+.heatmap-month-label { font-size: 0.65rem; color: var(--muted); }
+/* No explicit width/height -- a grid item defaults to stretching to fill its own
+   track on both axes, which is what actually makes each cell match the square
+   column/row size set in JS without repeating that value here too. */
+.heatmap-cell { border-radius: 2px; cursor: default; }
+.heatmap-cell:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+/* Levels are relative to each year's own busiest day (computed in JS), not a fixed
+   film-count scale -- see levelFor() in dashboard.html. */
+.heatmap-cell[data-level="0"], .heatmap-legend-swatch[data-level="0"] { background: var(--border); }
+.heatmap-cell[data-level="1"], .heatmap-legend-swatch[data-level="1"] { background: rgba(0, 224, 84, 0.3); }
+.heatmap-cell[data-level="2"], .heatmap-legend-swatch[data-level="2"] { background: rgba(0, 224, 84, 0.55); }
+.heatmap-cell[data-level="3"], .heatmap-legend-swatch[data-level="3"] { background: rgba(0, 224, 84, 0.8); }
+.heatmap-cell[data-level="4"], .heatmap-legend-swatch[data-level="4"] { background: var(--accent); }
+.heatmap-legend { display: flex; align-items: center; gap: 6px; margin-top: 0.75rem; font-size: 0.7rem; color: var(--muted); }
+.heatmap-legend-swatch { width: 11px; height: 11px; border-radius: 2px; }
+/* position:fixed, positioned via JS against the hovered/focused cell's own
+   getBoundingClientRect() (viewport coordinates), not position:absolute against
+   .heatmap-wrap -- that wrap has overflow-x:auto, and setting only one overflow
+   axis makes the browser compute the other as auto too, so an absolutely-
+   positioned tooltip poking above the wrap's top edge (as this one does, sitting
+   above its anchor cell) was getting silently clipped there, on top of also
+   running out of room sideways for cells near the wrap's own edges. Escaping to
+   the viewport with a fixed position sidesteps both, and the JS also clamps its
+   left/top against the actual viewport edges the same way .tip-bubble's own
+   reposition script does for .info-tip. No display toggle needed here (unlike
+   .nav-menu-dropdown) -- nothing else sets this element's display, so removing
+   the hidden attribute alone is enough to fall back to a plain block. */
+.heatmap-tip {
+  position: fixed;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 20;
+}
+
 .toggle-group {
   display: inline-flex;
   border: 1px solid var(--border);
