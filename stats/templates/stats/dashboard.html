@@ -6,12 +6,6 @@
   {% if unenriched_count %}
     <div class="card muted">{{ unenriched_count }} film(s) couldn't be matched to TMDB yet and are excluded from genre/director/cast/runtime breakdowns.</div>
   {% endif %}
-  {% if excluded_tv_count %}
-    <div class="card muted">
-      {{ excluded_tv_count }} logged entr{{ excluded_tv_count|pluralize:"y,ies" }} confirmed as TV (not a film) and excluded from every stat on this page:
-      {% for entry in excluded_tv_titles %}{{ entry.title }}{% if entry.year %} ({{ entry.year }}){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}
-    </div>
-  {% endif %}
 
   <div class="hero" {% if hero_poster_url %}style="--hero-image: url('{{ hero_poster_url }}');"{% endif %}>
     <p class="hero-eyebrow">Director's Cut</p>
@@ -71,7 +65,15 @@
 
     <h2 class="sr-only">Overview</h2>
     <div class="grid hero-grid">
-      <div class="stat"><div class="value">{{ films_watched_total|intcomma }}</div><div class="label">Films watched</div></div>
+      <div class="stat">
+        <div class="value">{{ films_watched_total|intcomma }}</div>
+        <div class="label th-with-tip">
+          Films watched
+          {% if excluded_tv_count %}
+            <span class="info-tip" tabindex="0">i<span class="tip-bubble">Excluded {{ excluded_tv_count }} TV show{{ excluded_tv_count|pluralize }}: {% for entry in excluded_tv_titles %}{{ entry.title }}{% if entry.year %} ({{ entry.year }}){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</span></span>
+          {% endif %}
+        </div>
+      </div>
       <div class="stat"><div class="value">{{ total_runtime_hours|default:"0"|intcomma }}</div><div class="label">Hours watched</div></div>
       <div class="stat"><div class="value">{{ total_films|intcomma }}</div><div class="label">Films logged</div></div>
       <div class="stat"><div class="value">{{ films_rated|intcomma }}</div><div class="label">Films rated</div></div>

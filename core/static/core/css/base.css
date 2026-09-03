@@ -24,10 +24,12 @@ html { scroll-behavior: smooth; }
    match how a phone screen reads text and whitespace differently than a desktop. */
 @media (max-width: 700px) {
   html { font-size: 13px; }
-  /* Mobile nav is just brand (left) + profile/auth (right) -- Director's Cut and
-     Double Feature are reachable from the home screen and the Account page, so
-     they're redundant here and were the main cause of the nav needing to wrap at
-     all. */
+  /* Director's Cut/Double Feature as plain nav links were the main cause of the nav
+     needing to wrap at all on a narrow screen -- hidden here, but still reachable
+     via the arrow dropdown next to the brand (.nav-menu-toggle, shown only at this
+     width -- see its own mobile override further down, kept next to its base rule)
+     rather than dropped entirely; the home screen and Account page also still link
+     to both. */
   .nav-primary-link { display: none; }
   /* Still kept as a safety net even though hiding the two links above means the
      nav fits on one row in the overwhelming majority of cases now -- an unusually
@@ -57,13 +59,80 @@ a { color: var(--accent-2); }
 .nav a { text-decoration: none; color: var(--text); font-weight: 600; }
 .nav .brand { color: var(--accent); font-weight: 700; font-size: 1.1rem; }
 .nav-spacer { flex: 1; }
+
+/* The brand doubles as the mobile menu's anchor -- "Wrappd" itself is always just a
+   plain link home (unaffected by any of this), with a small arrow button next to it
+   that's the actual dropdown trigger. .nav-brand-menu is the positioned anchor for
+   the dropdown itself, left-aligned since the brand sits at the nav's far left --
+   unlike the old profile dropdown (anchored to .nav as a whole to avoid overflowing
+   the right edge), a menu expanding rightward from x=0 has nowhere near it to
+   overflow off screen. */
+.nav-brand-menu { display: flex; align-items: center; gap: 0.3rem; position: relative; }
+/* The arrow button only makes sense once Director's Cut/Double Feature are hidden
+   as plain nav links (see the @media block above) -- hidden by default (display:
+   none) since desktop shows both already and never needs this at all. */
+.nav-menu-toggle { display: none; }
+/* Same specificity as the base rule above (both are just `.nav-menu-toggle`), so
+   which one wins is decided by source order, not by being inside a @media block --
+   this has to stay physically below the base rule (not up in the general mobile
+   @media block near the top of the file) or the base rule's display:none would
+   always win regardless of viewport width. */
+@media (max-width: 700px) {
+  .nav-menu-toggle { display: flex; }
+}
+.nav-menu-toggle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.nav-menu-toggle:hover { color: var(--accent); }
+.nav-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.4rem;
+  flex-direction: column;
+  gap: 0.1rem;
+  z-index: 10;
+}
+/* display only applies while NOT [hidden] -- an unconditional `display: flex` here
+   would win the cascade over the browser's own `[hidden] { display: none }`,
+   silently defeating the JS toggle (the same bug this exact pattern already caught
+   once this session, on the now-retired profile dropdown). */
+.nav-menu-dropdown:not([hidden]) { display: flex; }
+.nav-menu-dropdown a {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border-radius: calc(var(--radius) - 2px);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.nav-menu-dropdown a:hover { background: var(--bg); color: var(--accent); }
 /* A small icon signals this link goes somewhere (Account settings), not just a
    "you're logged in as" label -- .nav a otherwise strips ordinary link styling
    (color/underline) for a clean look, which left the plain username with no visual
    cue that it's clickable at all. Deliberately not a caret/chevron -- that implies
    a dropdown opens in place, which isn't true here anymore (it's a plain link). */
-.nav-account-link { display: inline-flex; align-items: center; gap: 0.4rem; }
+/* min-width:0 on both the link and the name span -- without it, an unusually long
+   username doesn't wrap at all (a flex item's default min-width:auto refuses to
+   shrink below its content's natural, unwrapped width), so it just spills out past
+   the nav's own right edge instead of wrapping onto a second line. Same root cause
+   as the .three-col chart-overflow bug from earlier this session, flex's version of
+   it. svg gets flex-shrink:0 so the icon itself never gets squeezed in the process. */
+.nav-account-link { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; max-width: 100%; }
 .nav-account-link:hover { color: var(--accent); }
+.nav-account-link svg { flex-shrink: 0; }
+.nav-account-name { min-width: 0; overflow-wrap: anywhere; }
 
 .container {
   max-width: 1000px;
