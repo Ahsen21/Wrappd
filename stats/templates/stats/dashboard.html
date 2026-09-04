@@ -499,6 +499,24 @@
     </div>
   </div>
 
+  {% if recommendations %}
+    <div class="card">
+      <h3>Recommended from your watchlist</h3>
+      <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
+      <div class="favs favs--eight">
+        {% for rec in recommendations %}
+          <div class="fav-card">
+            {% if rec.movie.poster_url %}
+              <img src="{{ rec.movie.poster_url }}" alt="{{ rec.movie.title }}" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">
+            {% else %}
+              <div class="fav-placeholder" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">🎬</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
   {{ chart_data|json_script:"chart-data" }}
   <script>
     // Highlights whichever section ("Movie Stats" / "Watching Stats") is currently in
