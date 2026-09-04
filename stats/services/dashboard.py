@@ -11,10 +11,12 @@ Three data sources are used deliberately:
     (genre/director/actor/country/language/release year) -- see _watched_movies.
 """
 
+import math
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal
 
-from django.db.models import Avg, Count, Min, Q, Sum
+from django.db.models import Avg, Count, Max, Min, Q, Sum
 from django.db.models.functions import ExtractWeekDay, ExtractYear, TruncMonth
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
@@ -81,6 +83,65 @@ FIVE_STAR_BONUS_WEIGHT = 0.2
 # 40-120; a lead actor stays well under 0.1 regardless of cast size).
 MIN_CAST_SIZE_FOR_CAMEO_FILTER = 30
 CAMEO_RELATIVE_BILLING_THRESHOLD = 0.4
+
+# Watchlist recommender: how much each signal counts toward a candidate film's score.
+# Summed on top of the user's own overall average rating, not averaged together --
+# averaging the signals would cap a film's score at roughly its single best signal,
+# so a film matching several things you love could never score higher than one
+# matching just one of them. Summing lets multiple favorite signals stack, and lets a
+# single standout signal (e.g. a beloved director) carry a film with otherwise-neutral
+# genre/cast, which a plain average can't express either. Sums to 1.0.
+RECOMMENDATION_WEIGHTS = {
+    'genre': 0.30,
+    'director': 0.25,
+    'actor': 0.15,
+    'country': 0.10,
+    'language': 0.05,
+    'decade': 0.10,
+    'runtime': 0.05,
+}
+# How much a film's TMDB community rating (adjusted by the person's own generosity
+# score -- see _watchlist_recommendations) nudges its score, on top of the 7 taste-
+# based signals above -- deliberately small and NOT part of RECOMMENDATION_WEIGHTS'
+# own adaptive reweighting (_adaptive_weights only ever redistributes across those
+# 7, this stays fixed). TMDB rating isn't a personal-taste axis the way genre/
+# director are -- it's an external quality prior -- so it shouldn't be able to grow
+# via the same "this varies a lot for you" adaptive logic as a real taste signal,
+# and a candidate never qualifies on this signal alone (see the empty-components
+# guard below) -- it only nudges a film that already matched something personal.
+TMDB_WEIGHT = 0.05
+# How much weight _adaptive_weights gives to each person's own variance-derived
+# weights versus the fixed RECOMMENDATION_WEIGHTS above -- 0.5 means an even blend.
+# Kept below 1.0 deliberately: a data-starved axis' variance is noisy, not a
+# confident signal on its own, so the fixed weights act as a floor rather than
+# being fully replaced. See _adaptive_weights.
+ADAPTIVE_WEIGHT_BLEND = 0.5
+# How much each category's confidence-shrunk *peak* rating (its single highest
+# rating, not its average) contributes to that category's delta, blended alongside
+# the existing average-based delta -- see _rating_deltas. A category's average can
+# be mediocre or even negative while still containing a genuine outlier favorite
+# (e.g. someone who's picky about Action generally but rates their favorite Action
+# film a 5) -- averaging alone erases exactly that kind of favorite, since it
+# treats "loved a couple, indifferent to the rest" the same as "consistently
+# lukewarm" whenever the two happen to average out similarly. Kept below 1.0 so the
+# average still dominates -- a peak from a category with only one or two ratings
+# shouldn't swing the delta on its own merit; PEAK_BLEND's job is to let a *real*,
+# confidence-backed peak (many ratings in this category, one of them clearly
+# excellent) surface, not to chase every lucky single high rating.
+PEAK_BLEND = 0.35
+# Top-N cap for the "Recommended from your watchlist" grid -- .favs--eight's full
+# 2-rows-of-8 shape (4x4 on mobile), same convention as Most rewatched films/
+# Biggest over-/under-rates.
+RECOMMENDATION_DISPLAY_CAP = 16
+# A signal's delta has to clear this before it's worth naming as a "why" reason in
+# the UI -- otherwise a barely-above-baseline genre would clutter the tooltip
+# alongside a film's actually meaningful matches.
+RECOMMENDATION_REASON_THRESHOLD = 0.15
+# At most this many recommended picks can credit the same director/actor -- without
+# it, one dominant favorite (a director whose whole filmography sits on the
+# watchlist) could flood the grid, crowding out otherwise-strong picks driven by
+# different signals entirely. See _watchlist_recommendations' greedy selection pass.
+PERSON_CREDIT_CAP = 2
 
 
 def _avg_or_none(values) -> float | None:
@@ -155,10 +216,8 @@ def build_dashboard_context(import_session) -> dict:
         exclude_tv_shows(LikedFilmEntry.objects.filter(import_session=import_session))
         .values('title', 'year').distinct().count()
     )
-    watchlist_count = (
-        exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session))
-        .values('title', 'year').distinct().count()
-    )
+    watchlist = exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session))
+    watchlist_count = watchlist.values('title', 'year').distinct().count()
     # Distinct (title, year) pairs excluded from either source -- a title can be TV-
     # flagged and present in only one of diary/ratings (e.g. rated but never diary-
     # logged), so counting diary rows alone would undercount.
@@ -198,11 +257,14 @@ def build_dashboard_context(import_session) -> dict:
     # independently and merged by name. rating_count enforces MIN_COUNT_FOR_AVERAGE
     # (a director with 5 watched films but only 1 rated shouldn't show a 1-data-point
     # "average").
+    # max_rating feeds _watchlist_recommendations' peak-blended director delta (see
+    # PEAK_BLEND) -- not used by top_directors/favorite_people below, which only
+    # ever read rating_count/avg_rating, so this is a free addition for them.
     director_ratings = {
         row['movie__directors__name']: row
         for row in rated.filter(movie__directors__isnull=False)
         .values('movie__directors__name')
-        .annotate(rating_count=Count('id'), avg_rating=Avg('rating'))
+        .annotate(rating_count=Count('id'), avg_rating=Avg('rating'), max_rating=Max('rating'))
     }
     # Sliced to TOP_N only after avg_rating is merged in below, not at the DB query
     # level -- a tie in count has to be broken by avg_rating before truncating, or a
@@ -300,6 +362,11 @@ def build_dashboard_context(import_session) -> dict:
     favorites = _favorite_films(import_session)
     top_tags = _tag_distribution(diary)
     highlights = _highlights(watched_movies, rated, rewatch['most_rewatched_films'])
+    recommendations = _watchlist_recommendations(
+        rated, watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating,
+        actor_rating_lists, director_ratings, rated_count,
+        taste['generosity_score'], taste['rated_and_enriched_count'],
+    )
     # First favorite with a resolved poster, used as the header banner's backdrop --
     # not necessarily favorites[0] itself, since an earlier favorite might not have
     # resolved to a Movie (and therefore have no poster) while a later one did.
@@ -335,6 +402,7 @@ def build_dashboard_context(import_session) -> dict:
         'hero_poster_url': hero_poster_url,
         'top_tags': top_tags,
         'highlights': highlights,
+        'recommendations': recommendations,
         'chart_data': {
             'films_per_year': {
                 'labels': [str(row['y']) for row in films_per_year],
@@ -577,6 +645,381 @@ def _rating_by_language(rated) -> list:
         reverse=True,
     )
     return ranked[:TOP_N]
+
+
+def _decade_bucket(year) -> str:
+    return f'{(year // 10) * 10}s'
+
+
+def _runtime_bucket(minutes) -> str:
+    if minutes < 90:
+        return 'Under 90 min'
+    if minutes <= 150:
+        return '90-150 min'
+    return 'Over 150 min'
+
+
+def _rarity_factor(count, total) -> float:
+    """How much a signal value's rarity within the person's own rated history should
+    scale its contribution to a recommendation score -- close to 1.0 for a value only
+    a handful of rated films share (maximally distinguishing), fading toward 0 for a
+    value shared by nearly every rated film (present everywhere, so it says little
+    about *this* person's specific taste rather than being true of almost anything
+    they'd rate). The same idea as TF-IDF's inverse-document-frequency: a common
+    genre/decade carries less signal than a rare one, even backed by equal evidence
+    -- confidence shrinkage (_true_score) already answers "how much should I trust
+    this average", this answers the different question "how much does this average
+    actually tell me about this person specifically, versus being true of almost
+    everything they've rated". Smoothed (+1 both sides) so a value that's literally
+    every rated film still returns exactly 0 (log(1) = 0), not a divide-by-zero, and
+    that's exactly the right answer -- not merely discounted, but genuinely
+    uninformative on its own since it can't distinguish this candidate from any other.
+
+    (A cardinality-normalized version of this -- measuring each key's count against
+    its own axis's average instead of the person's total rated-film count -- was
+    tried and reverted: it was more theoretically correct for the genre-vs-director
+    fairness gap it targeted, but produced worse real recommendations in practice,
+    and a holdout validation showed it didn't move the actual ranking metric that
+    mattered. Reverted rather than kept as a "more correct but worse" change.)"""
+    return math.log((total + 1) / (count + 1)) / math.log(total + 1)
+
+
+def _shrunk_delta(value, count, overall_avg_rating) -> float:
+    """Confidence-shrunk delta of `value` from overall_avg_rating -- reuses
+    _true_score's own evidence-weighted shrinkage (count/(count+k) confidence
+    toward the overall average) rather than a hard MIN_COUNT_FOR_AVERAGE cutoff.
+    `value` can be any single statistic about a group of `count` ratings (their
+    average, their max, ...) -- the shrinkage math is the same either way, it's
+    just asking "how much should I trust this number given how much evidence backs
+    it," not "is this number itself an average."""
+    return _true_score(value, count, TRUE_SCORE_SHRINKAGE_K, overall_avg_rating) - overall_avg_rating
+
+
+def _rating_deltas(pairs, overall_avg_rating, total_count) -> dict:
+    """Given an iterable of (key, rating) pairs, returns {key: confidence-shrunk
+    delta from overall_avg_rating, scaled by that key's rarity} for every key seen.
+    A key backed by just one or two ratings still contributes, just heavily
+    discounted, rather than being excluded outright the way it would be on the
+    dashboard's own display stats. total_count is the person's total rated-film
+    count, the denominator _rarity_factor measures each key's share against.
+
+    Each key's delta blends two shrunk statistics, not just the average (see
+    PEAK_BLEND): the average rating in that key, and the single highest rating in
+    it. A key's average can be mediocre while it still contains a genuine outlier
+    favorite (picky about a genre generally, but rates their favorite entry a 5) --
+    averaging alone erases exactly that favorite, since "loved a couple, indifferent
+    to the rest" and "consistently lukewarm" can land on the same average. Both
+    statistics get the same confidence shrinkage, based on the key's real count --
+    a peak backed by only one or two ratings is barely trusted either, same as a
+    thin average would be."""
+    ratings_by_key = defaultdict(list)
+    for key, rating in pairs:
+        ratings_by_key[key].append(rating)
+
+    def _blended_delta(ratings):
+        count = len(ratings)
+        avg_delta = _shrunk_delta(sum(ratings) / count, count, overall_avg_rating)
+        peak_delta = _shrunk_delta(max(ratings), count, overall_avg_rating)
+        return (1 - PEAK_BLEND) * avg_delta + PEAK_BLEND * peak_delta
+
+    return {
+        key: _blended_delta(ratings) * _rarity_factor(len(ratings), total_count)
+        for key, ratings in ratings_by_key.items()
+    }
+
+
+def _variance(values) -> float:
+    """Population variance of an iterable of numbers, or 0 for fewer than 2 values
+    -- variance needs at least 2 points to mean anything, and 0 is the right
+    fallback for _adaptive_weights specifically, where 0 already means "this axis
+    isn't informative"."""
+    values = list(values)
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    return sum((v - mean) ** 2 for v in values) / len(values)
+
+
+def _adaptive_weights(axis_deltas: dict) -> dict:
+    """Per-person axis weights, blended with the fixed RECOMMENDATION_WEIGHTS (see
+    ADAPTIVE_WEIGHT_BLEND) rather than replacing them outright. Derived from how
+    much each axis's own deltas vary for this person, as a proxy for how much that
+    axis actually discriminates their taste -- an axis whose deltas all cluster near
+    0 isn't telling us anything about what this person likes, while one that swings
+    between strongly positive and negative clearly is. The fixed weights stay in the
+    blend as a floor because variance from a handful of data points is noisy, not a
+    confident signal on its own -- the same "don't let noise pass as signal"
+    principle as _rarity_factor and _true_score's own shrinkage elsewhere in this
+    file, just applied to entire axes instead of individual keys within one.
+
+    axis_deltas is {'genre': {...}, 'director': {...}, ...} -- the same 7 per-axis
+    delta maps _watchlist_recommendations already builds. Both RECOMMENDATION_WEIGHTS
+    and the variance-derived weights sum to 1.0 on their own, so blending them at a
+    fixed ratio does too, with no separate renormalization step needed."""
+    variances = {axis: _variance(deltas.values()) for axis, deltas in axis_deltas.items()}
+    total_variance = sum(variances.values())
+    if total_variance == 0:
+        # No axis shows any spread at all (e.g. someone who's rated everything the
+        # same) -- nothing to adapt to, so the fixed weights stand untouched.
+        return dict(RECOMMENDATION_WEIGHTS)
+    return {
+        axis: (
+            (1 - ADAPTIVE_WEIGHT_BLEND) * RECOMMENDATION_WEIGHTS[axis]
+            + ADAPTIVE_WEIGHT_BLEND * (variances[axis] / total_variance)
+        )
+        for axis in RECOMMENDATION_WEIGHTS
+    }
+
+
+def _watchlist_recommendations(
+    rated, watchlist, watched_movie_ids, avg_rating, actor_rating_lists, director_ratings, rated_count,
+    generosity_score, rated_and_enriched_count,
+) -> list:
+    """Scores every watchlist film the user hasn't already watched, hasn't released
+    yet, or is under an hour long (see the candidates queryset below) against their
+    own rating history across genre, director, actor, country, language, decade, and
+    runtime, and returns the top RECOMMENDATION_DISPLAY_CAP as
+    {'movie', 'score', 'reasons'} dicts, highest score first (subject to
+    PERSON_CREDIT_CAP -- see the greedy selection pass at the end). See
+    RECOMMENDATION_WEIGHTS' comment for why this sums confidence-weighted deltas
+    across signals rather than averaging them (within one signal -- e.g. a film's
+    several genres -- the deltas ARE averaged, since those describe the same kind
+    of thing about one film rather than independent kinds of evidence). Each delta
+    is also scaled by _rarity_factor -- a decade or runtime bucket shared by most of
+    someone's rated films says little about their specific taste even if their
+    average rating within it is reliable, so it shouldn't compete on equal footing
+    with a rare, specific match like a favorite director. The per-axis weights
+    themselves aren't the fixed RECOMMENDATION_WEIGHTS either -- see
+    _adaptive_weights for how they're nudged per-person toward whichever axes
+    actually vary for that person's own taste.
+
+    On top of those 7 taste-based signals, a film's TMDB community rating nudges the
+    score by a small, fixed TMDB_WEIGHT (see that constant) -- adjusted by the
+    person's own generosity_score (their average delta from TMDB's crowd rating on
+    films they HAVE rated, from _taste_vs_crowd) so a systematically harsher or more
+    generous rater's own scale is accounted for, not the raw crowd number. Both
+    generosity_score and this whole TMDB nudge are confidence-shrunk by
+    rated_and_enriched_count -- a generosity_score from only a couple of TMDB-
+    enriched rated films is noisy, so it's pulled toward 0 (assume crowd-aligned)
+    the same way every other thin-evidence signal in this file is.
+
+    Requires avg_rating (i.e. at least MIN_COUNT_FOR_AVERAGE rated films) -- there's
+    no baseline to compute a delta against otherwise, so this returns [] rather than
+    a fabricated "recommendation". A candidate with no matching signal on any of the
+    7 taste axes (new genre, unknown director, unrecognized cast/country/language/
+    decade/runtime) is skipped entirely too -- TMDB rating alone never qualifies a
+    candidate on its own, it only nudges one that already matched something
+    personal (see TMDB_WEIGHT's own comment for why)."""
+    if avg_rating is None:
+        return []
+    # _true_score does float(avg) internally but not float(overall_avg_rating) --
+    # avg_rating arrives here as a Decimal (RatingEntry.rating is a DecimalField),
+    # and float * Decimal raises TypeError, so this has to happen before any of the
+    # _true_score calls below (same fix _favorite_people already applies).
+    avg_rating = float(avg_rating)
+
+    # Confidence-shrunk toward 0 (crowd-aligned) the same way every other thin-
+    # evidence signal here is -- generosity_score itself can be None (fewer than
+    # MIN_COUNT_FOR_AVERAGE TMDB-enriched rated films), in which case there's
+    # nothing to shrink and this just stays 0.
+    if generosity_score is not None and rated_and_enriched_count:
+        generosity_confidence = rated_and_enriched_count / (rated_and_enriched_count + TRUE_SCORE_SHRINKAGE_K)
+        shrunk_generosity = generosity_confidence * generosity_score
+    else:
+        shrunk_generosity = 0.0
+
+    genre_deltas = _rating_deltas(
+        rated.filter(movie__genres__isnull=False).values_list('movie__genres__name', 'rating'), avg_rating,
+        rated_count,
+    )
+    country_deltas = _rating_deltas(
+        rated.filter(movie__countries__isnull=False).values_list('movie__countries__name', 'rating'), avg_rating,
+        rated_count,
+    )
+    language_deltas = _rating_deltas(
+        rated.exclude(movie__isnull=True).exclude(movie__original_language='')
+        .values_list('movie__original_language', 'rating'),
+        avg_rating, rated_count,
+    )
+    decade_deltas = _rating_deltas(
+        (
+            (_decade_bucket(year), rating)
+            for rating, year in rated.filter(movie__release_year__isnull=False)
+            .values_list('rating', 'movie__release_year')
+        ),
+        avg_rating, rated_count,
+    )
+    runtime_deltas = _rating_deltas(
+        (
+            (_runtime_bucket(minutes), rating)
+            for rating, minutes in rated.filter(movie__runtime_minutes__isnull=False)
+            .values_list('rating', 'movie__runtime_minutes')
+        ),
+        avg_rating, rated_count,
+    )
+    # Directors/actors reuse the same rating groupings already built in
+    # build_dashboard_context for top_directors/top_actors/favorite_people
+    # (director_ratings, actor_rating_lists) rather than rebuilding them -- that
+    # avoids duplicating actor_rating_lists' cameo filtering here, and keeps an
+    # actor/director's numbers from ever disagreeing between the two views.
+    # Peak-blended (see PEAK_BLEND/_shrunk_delta) same as every other axis -- an
+    # inconsistent director (one standout among otherwise-average films) shouldn't
+    # be invisible here just because director_ratings' own avg_rating doesn't show
+    # it; max_rating (added to that query above) is what makes the peak side of the
+    # blend possible without a second query.
+    director_deltas = {
+        name: (
+            (
+                (1 - PEAK_BLEND) * _shrunk_delta(stats['avg_rating'], stats['rating_count'], avg_rating)
+                + PEAK_BLEND * _shrunk_delta(stats['max_rating'], stats['rating_count'], avg_rating)
+            )
+            * _rarity_factor(stats['rating_count'], rated_count)
+        )
+        for name, stats in director_ratings.items()
+    }
+    actor_deltas = {
+        name: (
+            (
+                (1 - PEAK_BLEND) * _shrunk_delta(sum(ratings) / len(ratings), len(ratings), avg_rating)
+                + PEAK_BLEND * _shrunk_delta(max(ratings), len(ratings), avg_rating)
+            )
+            * _rarity_factor(len(ratings), rated_count)
+        )
+        for name, ratings in actor_rating_lists.items()
+    }
+
+    weights = _adaptive_weights({
+        'genre': genre_deltas, 'director': director_deltas, 'actor': actor_deltas,
+        'country': country_deltas, 'language': language_deltas, 'decade': decade_deltas,
+        'runtime': runtime_deltas,
+    })
+
+    # Excludes unreleased films (a confirmed future release_year -- there's no exact
+    # release_date stored, just the year TMDB gave it, so a same-year film that
+    # hasn't actually come out yet can still slip through; this is the closest check
+    # the data on hand allows) and shorts (a confirmed runtime under 60 minutes).
+    # Both filters keep a NULL value rather than exclude it -- an unknown release
+    # year/runtime hasn't been confirmed bad, so it shouldn't be penalized for
+    # missing data the way a genuinely-future or genuinely-short film should be.
+    candidates = list(
+        watchlist.filter(movie__isnull=False)
+        .exclude(movie_id__in=watched_movie_ids)
+        .filter(Q(movie__release_year__isnull=True) | Q(movie__release_year__lte=date.today().year))
+        .filter(Q(movie__runtime_minutes__isnull=True) | Q(movie__runtime_minutes__gte=60))
+        .select_related('movie')
+        .prefetch_related('movie__genres', 'movie__countries', 'movie__directors')
+    )
+    candidate_movie_ids = {entry.movie_id for entry in candidates}
+    # Cast, not just genre/director, needs its own pass -- computed once for every
+    # candidate up front (same _cameo_credit_ids reused elsewhere) rather than one
+    # query per film in the loop below.
+    candidate_cameo_ids = _cameo_credit_ids(candidate_movie_ids)
+    actors_by_movie = defaultdict(list)
+    for movie_id, person_name in (
+        Credit.objects.filter(movie_id__in=candidate_movie_ids)
+        .exclude(id__in=candidate_cameo_ids)
+        .values_list('movie_id', 'person__name')
+    ):
+        actors_by_movie[movie_id].append(person_name)
+
+    scored = []
+    seen_movie_ids = set()
+    for entry in candidates:
+        movie = entry.movie
+        if movie.tmdb_id in seen_movie_ids:
+            continue
+        seen_movie_ids.add(movie.tmdb_id)
+
+        # (axis, label, delta) for every signal this film actually has -- axes
+        # missing entirely (e.g. an unrecognized genre) just never appear here,
+        # rather than contributing a fabricated neutral 0.
+        components = []
+        for genre in movie.genres.all():
+            if genre.name in genre_deltas:
+                components.append(('genre', genre.name, genre_deltas[genre.name]))
+        for director in movie.directors.all():
+            if director.name in director_deltas:
+                components.append(('director', director.name, director_deltas[director.name]))
+        for actor_name in actors_by_movie.get(movie.tmdb_id, []):
+            if actor_name in actor_deltas:
+                components.append(('actor', actor_name, actor_deltas[actor_name]))
+        for country in movie.countries.all():
+            if country.name in country_deltas:
+                components.append(('country', country.name, country_deltas[country.name]))
+        if movie.original_language in language_deltas:
+            components.append(('language', movie.original_language, language_deltas[movie.original_language]))
+        if movie.release_year:
+            decade = _decade_bucket(movie.release_year)
+            if decade in decade_deltas:
+                components.append(('decade', decade, decade_deltas[decade]))
+        if movie.runtime_minutes:
+            bucket = _runtime_bucket(movie.runtime_minutes)
+            if bucket in runtime_deltas:
+                components.append(('runtime', bucket, runtime_deltas[bucket]))
+
+        if not components:
+            continue
+
+        axis_deltas = defaultdict(list)
+        for axis, _, delta in components:
+            axis_deltas[axis].append(delta)
+        taste_score = sum(
+            weights[axis] * (sum(deltas) / len(deltas)) for axis, deltas in axis_deltas.items()
+        )
+
+        # TMDB_WEIGHT's own comment explains why this is fixed rather than part of
+        # the adaptive weights above -- components is already non-empty by this
+        # point (the guard above), so this only ever nudges a candidate that
+        # already qualified on taste, never qualifies one on its own. A film with
+        # no TMDB rating at all just uses the plain taste_score, unscaled -- it
+        # shouldn't lose 5% of its score to a signal that simply isn't there.
+        if movie.tmdb_rating is not None:
+            crowd_rating = float(movie.tmdb_rating) / 2
+            tmdb_delta = (crowd_rating + shrunk_generosity) - avg_rating
+            score = avg_rating + (1 - TMDB_WEIGHT) * taste_score + TMDB_WEIGHT * tmdb_delta
+        else:
+            score = avg_rating + taste_score
+
+        reasons = [
+            label for _, label, delta in sorted(components, key=lambda c: c[2], reverse=True)
+            if delta >= RECOMMENDATION_REASON_THRESHOLD
+        ][:3]
+        # Directors/actors this candidate is meaningfully credited to, for
+        # PERSON_CREDIT_CAP below -- same RECOMMENDATION_REASON_THRESHOLD as
+        # `reasons` (just not capped to the top 3), not every director/actor axis
+        # component. actor_deltas has an entry for anyone who's ever appeared in even
+        # one rated film (see _rating_deltas' docstring on why there's no hard count
+        # cutoff) -- most of those are negligible, shrunk-near-zero deltas, and
+        # counting every one of them toward the cap would let a handful of trivial
+        # one-film overlaps exhaust a genuinely favorite actor's 2 real slots.
+        people = {
+            label for axis, label, delta in components
+            if axis in ('director', 'actor') and delta >= RECOMMENDATION_REASON_THRESHOLD
+        }
+
+        scored.append({'movie': movie, 'score': score, 'reasons': reasons, 'people': people})
+
+    scored.sort(key=lambda item: item['score'], reverse=True)
+
+    # Greedy selection, highest score first, skipping any candidate that would push
+    # a director/actor already credited PERSON_CREDIT_CAP times over that limit --
+    # without this, one favorite director whose whole filmography sits on the
+    # watchlist could dominate the grid, crowding out otherwise-strong picks driven
+    # by entirely different signals. Draws from the full scored list, not just the
+    # first RECOMMENDATION_DISPLAY_CAP, so a skipped slot gets backfilled by the
+    # next-best candidate rather than just shrinking the grid.
+    selected = []
+    person_credit_counts = defaultdict(int)
+    for item in scored:
+        if any(person_credit_counts[name] >= PERSON_CREDIT_CAP for name in item['people']):
+            continue
+        for name in item['people']:
+            person_credit_counts[name] += 1
+        selected.append(item)
+        if len(selected) == RECOMMENDATION_DISPLAY_CAP:
+            break
+
+    return selected
 
 
 def _rewatch_leaderboard(diary) -> dict:

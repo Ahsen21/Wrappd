@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from django.test import TestCase
@@ -991,6 +992,293 @@ class TvShowExclusionTests(TestCase):
         self.assertEqual(context['only_b_count'], 0)
 
 
+class WatchlistRecommendationTests(TestCase):
+    """_watchlist_recommendations, exercised via build_dashboard_context's
+    'recommendations' key."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+
+        self.horror, _ = Genre.objects.get_or_create(tmdb_id=27, defaults={'name': 'Horror'})
+        self.drama, _ = Genre.objects.get_or_create(tmdb_id=18, defaults={'name': 'Drama'})
+        self.mystery, _ = Genre.objects.get_or_create(tmdb_id=9648, defaults={'name': 'Mystery'})
+        self.director_x, _ = Person.objects.get_or_create(tmdb_id=501, defaults={'name': 'Director X'})
+        self.director_unknown, _ = Person.objects.get_or_create(tmdb_id=502, defaults={'name': 'Unknown Director'})
+
+        # 3 horror films rated 5.0 -- a strong positive genre signal.
+        for i in range(3):
+            movie = Movie.objects.create(tmdb_id=1000 + i, title=f'Horror {i}', release_year=2015)
+            movie.genres.add(self.horror)
+            RatingEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/h{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        # 3 drama films rated 1.0 -- a strong negative genre signal.
+        for i in range(3):
+            movie = Movie.objects.create(tmdb_id=2000 + i, title=f'Drama {i}', release_year=2015)
+            movie.genres.add(self.drama)
+            RatingEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/d{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('1.0'), movie=movie,
+            )
+        # 3 films by Director X rated 5.0 -- a strong positive director signal.
+        for i in range(3):
+            movie = Movie.objects.create(tmdb_id=3000 + i, title=f'DirectorX Film {i}', release_year=2015)
+            movie.directors.add(self.director_x)
+            RatingEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/dx{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+
+        self.only_genre = Movie.objects.create(tmdb_id=4001, title='Only Genre Match', release_year=2020)
+        self.only_genre.genres.add(self.horror)
+
+        self.genre_and_director = Movie.objects.create(
+            tmdb_id=4002, title='Genre And Director Match', release_year=2020
+        )
+        self.genre_and_director.genres.add(self.horror)
+        self.genre_and_director.directors.add(self.director_x)
+
+        self.no_signal = Movie.objects.create(tmdb_id=4003, title='No Signal', release_year=2020)
+        self.no_signal.genres.add(self.mystery)
+        self.no_signal.directors.add(self.director_unknown)
+
+        self.already_watched = Movie.objects.create(tmdb_id=4004, title='Already Watched', release_year=2020)
+        self.already_watched.genres.add(self.horror)
+
+        for movie in [self.only_genre, self.genre_and_director, self.no_signal, self.already_watched]:
+            WatchlistEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/wl{movie.tmdb_id}',
+                title=movie.title, year=movie.release_year, movie=movie,
+            )
+        # An unenriched watchlist entry (no matched Movie) -- just needs to not crash.
+        WatchlistEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/wl-unmatched',
+            title='Unmatched Film', year=2021,
+        )
+        # Still on the watchlist export, but already watched -- must be excluded even
+        # though it matches a loved genre.
+        WatchedEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/watched4004',
+            title=self.already_watched.title, year=self.already_watched.release_year, movie=self.already_watched,
+        )
+
+    def test_excludes_films_with_no_matching_signal(self):
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        recommended_ids = {rec['movie'].tmdb_id for rec in recommendations}
+        self.assertNotIn(self.no_signal.tmdb_id, recommended_ids)
+
+    def test_excludes_already_watched_films_even_if_still_on_watchlist(self):
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        recommended_ids = {rec['movie'].tmdb_id for rec in recommendations}
+        self.assertNotIn(self.already_watched.tmdb_id, recommended_ids)
+
+    def test_multiple_matching_signals_score_higher_than_one(self):
+        # The whole point of summing deltas instead of averaging them: a film
+        # matching a loved genre AND a loved director should outscore one matching
+        # only the genre, not land in roughly the same range either way.
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        by_id = {rec['movie'].tmdb_id: rec for rec in recommendations}
+        self.assertIn(self.only_genre.tmdb_id, by_id)
+        self.assertIn(self.genre_and_director.tmdb_id, by_id)
+        self.assertGreater(
+            by_id[self.genre_and_director.tmdb_id]['score'], by_id[self.only_genre.tmdb_id]['score']
+        )
+
+    def test_reasons_reflect_the_matching_signal(self):
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        by_id = {rec['movie'].tmdb_id: rec for rec in recommendations}
+        self.assertIn('Horror', by_id[self.only_genre.tmdb_id]['reasons'])
+        self.assertIn('Director X', by_id[self.genre_and_director.tmdb_id]['reasons'])
+
+    def test_no_recommendations_without_enough_rated_films(self):
+        session = ImportSession.objects.create(display_name='NewUser')
+        movie = Movie.objects.create(tmdb_id=9001, title='Some Film', release_year=2020)
+        WatchlistEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/newuser-wl', title=movie.title,
+            year=movie.release_year, movie=movie,
+        )
+        recommendations = build_dashboard_context(session)['recommendations']
+        self.assertEqual(recommendations, [])
+
+    def test_unenriched_watchlist_entries_dont_crash(self):
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        self.assertIsInstance(recommendations, list)
+
+    def test_rarity_factor_favors_rare_signals_over_common_ones(self):
+        from stats.services.dashboard import _rarity_factor
+
+        self.assertGreater(_rarity_factor(1, 10), _rarity_factor(9, 10))
+        self.assertEqual(_rarity_factor(10, 10), 0.0)
+
+    def test_adaptive_weights_favor_axes_with_more_variance(self):
+        from stats.services.dashboard import RECOMMENDATION_WEIGHTS, _adaptive_weights
+
+        # Genre deltas vary a lot (strong, differentiated opinions); director deltas
+        # barely vary at all (no real directorial preference) -- adaptive weighting
+        # should lean harder on genre for this person than the fixed weights alone.
+        axis_deltas = {
+            'genre': {'Horror': 0.8, 'Romance': -0.6, 'Comedy': 0.1},
+            'director': {'Director A': 0.01, 'Director B': -0.01, 'Director C': 0.0},
+            'actor': {}, 'country': {}, 'language': {}, 'decade': {}, 'runtime': {},
+        }
+        weights = _adaptive_weights(axis_deltas)
+        self.assertGreater(weights['genre'], RECOMMENDATION_WEIGHTS['genre'])
+        self.assertLess(weights['director'], RECOMMENDATION_WEIGHTS['director'])
+        self.assertAlmostEqual(sum(weights.values()), 1.0, places=6)
+
+    def test_adaptive_weights_fall_back_to_fixed_when_nothing_varies(self):
+        from stats.services.dashboard import RECOMMENDATION_WEIGHTS, _adaptive_weights
+
+        axis_deltas = {axis: {} for axis in RECOMMENDATION_WEIGHTS}
+        self.assertEqual(_adaptive_weights(axis_deltas), RECOMMENDATION_WEIGHTS)
+
+    def test_person_credit_cap_limits_how_many_picks_credit_the_same_director(self):
+        session = ImportSession.objects.create(display_name='DirectorFan')
+        prolific_director, _ = Person.objects.get_or_create(tmdb_id=7601, defaults={'name': 'Prolific Director'})
+        filler_genre, _ = Genre.objects.get_or_create(tmdb_id=7601, defaults={'name': 'Filler Genre'})
+        alt_genre, _ = Genre.objects.get_or_create(tmdb_id=7602, defaults={'name': 'Alt Genre'})
+
+        # 16 unrelated films rated 3.5 -- bulk out the rated corpus so the director
+        # below (4 of 20 rated films) is genuinely rare relative to it, not half of
+        # someone's entire history the way a tiny fixture would make them look.
+        for i in range(16):
+            movie = Movie.objects.create(tmdb_id=7700 + i, title=f'Filler {i}', release_year=2010)
+            movie.genres.add(filler_genre)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/f{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.5'), movie=movie,
+            )
+        # 4 rated films from the favorite director, all 5.0 -- a strong, well-
+        # evidenced, genuinely rare favorite.
+        for i in range(4):
+            movie = Movie.objects.create(tmdb_id=7800 + i, title=f'Rated Prolific {i}', release_year=2010)
+            movie.directors.add(prolific_director)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/rp{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        # A couple of rated films in the alternative candidate's genre too, so it has
+        # a real (if modest) signal of its own rather than being excluded outright
+        # for matching nothing.
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=7850 + i, title=f'Rated Alt {i}', release_year=2010)
+            movie.genres.add(alt_genre)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/ra{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+            )
+
+        # One more film from the same director than PERSON_CREDIT_CAP allows sits on
+        # the watchlist, unwatched.
+        from stats.services.dashboard import PERSON_CREDIT_CAP
+
+        director_watchlist_titles = []
+        for i in range(PERSON_CREDIT_CAP + 1):
+            movie = Movie.objects.create(tmdb_id=7900 + i, title=f'Watchlist Prolific {i}', release_year=2020)
+            movie.directors.add(prolific_director)
+            WatchlistEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/wp{i}', title=movie.title,
+                year=movie.release_year, movie=movie,
+            )
+            director_watchlist_titles.append(movie.title)
+
+        # An unrelated candidate, driven by a different signal entirely -- should
+        # backfill the slot the capped-out director film would otherwise take.
+        alternative = Movie.objects.create(tmdb_id=7950, title='Unrelated Alternative', release_year=2020)
+        alternative.genres.add(alt_genre)
+        WatchlistEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/alt', title=alternative.title,
+            year=alternative.release_year, movie=alternative,
+        )
+
+        recommendations = build_dashboard_context(session)['recommendations']
+        titles = [r['movie'].title for r in recommendations]
+        director_picks = [t for t in titles if t in director_watchlist_titles]
+        self.assertEqual(len(director_picks), PERSON_CREDIT_CAP)
+        self.assertIn('Unrelated Alternative', titles)
+
+    def test_tmdb_rating_nudges_an_already_qualified_candidate(self):
+        # Two otherwise-identical horror candidates, differing only in TMDB rating
+        # -- the higher-rated one should score higher, but the nudge shouldn't be
+        # so large it dwarfs the taste signal both films already share.
+        high_tmdb = Movie.objects.create(
+            tmdb_id=4020, title='High TMDB Horror', release_year=2020, tmdb_rating=Decimal('9.0'),
+        )
+        high_tmdb.genres.add(self.horror)
+        low_tmdb = Movie.objects.create(
+            tmdb_id=4021, title='Low TMDB Horror', release_year=2020, tmdb_rating=Decimal('3.0'),
+        )
+        low_tmdb.genres.add(self.horror)
+        for movie in [high_tmdb, low_tmdb]:
+            WatchlistEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/wl{movie.tmdb_id}',
+                title=movie.title, year=movie.release_year, movie=movie,
+            )
+
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        by_title = {r['movie'].title: r['score'] for r in recommendations}
+        self.assertGreater(by_title['High TMDB Horror'], by_title['Low TMDB Horror'])
+        # "Only a little" -- the TMDB-driven gap between an otherwise-identical
+        # 9.0 and 3.0 shouldn't rival the size of a real taste-signal difference.
+        self.assertLess(by_title['High TMDB Horror'] - by_title['Low TMDB Horror'], 0.5)
+
+    def test_missing_tmdb_rating_is_not_penalized(self):
+        no_tmdb = Movie.objects.create(tmdb_id=4022, title='No TMDB Rating Horror', release_year=2020)
+        no_tmdb.genres.add(self.horror)
+        WatchlistEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/wlnotmdb', title=no_tmdb.title,
+            year=no_tmdb.release_year, movie=no_tmdb,
+        )
+        titles = [r['movie'].title for r in build_dashboard_context(self.session)['recommendations']]
+        self.assertIn('No TMDB Rating Horror', titles)
+
+    def test_excludes_unreleased_films_even_with_a_strong_signal(self):
+        unreleased = Movie.objects.create(
+            tmdb_id=4010, title='Unreleased Horror', release_year=date.today().year + 1,
+        )
+        unreleased.genres.add(self.horror)
+        WatchlistEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/wlunreleased', title=unreleased.title,
+            year=unreleased.release_year, movie=unreleased,
+        )
+
+        # self.only_genre is already on the watchlist from setUp -- same horror
+        # signal, real release year, kept as the positive control.
+        titles = [r['movie'].title for r in build_dashboard_context(self.session)['recommendations']]
+        self.assertNotIn('Unreleased Horror', titles)
+        self.assertIn('Only Genre Match', titles)
+
+    def test_excludes_films_under_an_hour_even_with_a_strong_signal(self):
+        short_film = Movie.objects.create(
+            tmdb_id=4011, title='Short Horror', release_year=2020, runtime_minutes=45,
+        )
+        short_film.genres.add(self.horror)
+        WatchlistEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/wlshort', title=short_film.title,
+            year=short_film.release_year, movie=short_film,
+        )
+
+        # self.only_genre is already on the watchlist from setUp -- same horror
+        # signal, real (unset -> not-short) runtime, kept as the positive control.
+        titles = [r['movie'].title for r in build_dashboard_context(self.session)['recommendations']]
+        self.assertNotIn('Short Horror', titles)
+        self.assertIn('Only Genre Match', titles)
+
+    def test_keeps_candidates_with_unknown_release_year_or_runtime(self):
+        # release_year and runtime_minutes are both unset (None) here -- unconfirmed
+        # isn't the same as confirmed-bad, so this should still be recommendable.
+        unknown = Movie.objects.create(tmdb_id=4012, title='Unknown Release Info')
+        unknown.genres.add(self.horror)
+        WatchlistEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/wlunknown', title=unknown.title,
+            year=None, movie=unknown,
+        )
+
+        titles = [r['movie'].title for r in build_dashboard_context(self.session)['recommendations']]
+        self.assertIn('Unknown Release Info', titles)
+
+
 class BuildCompareContextTests(TestCase):
     def setUp(self):
         self.session_a = ImportSession.objects.create(display_name='Alex')
@@ -1959,6 +2247,333 @@ class WatchlistMatchesTests(TestCase):
         by_title = {f['title']: f for f in context['watchlist_matches']}
         self.assertTrue(by_title['Watchlist Movie']['poster_url'])
         self.assertEqual(by_title['No Movie Match']['poster_url'], '')
+
+    def test_excludes_unreleased_films(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        unreleased = Movie.objects.create(
+            tmdb_id=951, title='Unreleased Movie', release_year=date.today().year + 1,
+        )
+        for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+            WatchlistEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/unrel-{prefix}',
+                title=unreleased.title, year=unreleased.release_year, movie=unreleased,
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(context['watchlist_matches'], [])
+        self.assertEqual(context['watchlist_matches_total'], 0)
+
+    def test_excludes_films_under_an_hour(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        short_film = Movie.objects.create(
+            tmdb_id=952, title='Short Film', release_year=2020, runtime_minutes=45,
+        )
+        for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+            WatchlistEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/short-{prefix}',
+                title=short_film.title, year=short_film.release_year, movie=short_film,
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(context['watchlist_matches'], [])
+        self.assertEqual(context['watchlist_matches_total'], 0)
+
+    def test_keeps_matches_with_unknown_release_year_or_runtime(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        # release_year and runtime_minutes both unset -- unconfirmed isn't the same
+        # as confirmed-bad.
+        unknown = Movie.objects.create(tmdb_id=953, title='Unknown Info Movie')
+        for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+            WatchlistEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/unk-{prefix}',
+                title=unknown.title, year=None, movie=unknown,
+            )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual([f['title'] for f in context['watchlist_matches']], ['Unknown Info Movie'])
+
+
+class WatchlistMatchesRankingTests(TestCase):
+    """_rank_watchlist_matches, exercised via build_compare_context's
+    'watchlist_matches' key -- covers the least-misery combination (min of the two
+    people's scores, not their average) that's the whole point of this ranking."""
+
+    def setUp(self):
+        self.session_a = ImportSession.objects.create(display_name='Alex')
+        self.session_b = ImportSession.objects.create(display_name='Sam')
+
+        self.horror, _ = Genre.objects.get_or_create(tmdb_id=27, defaults={'name': 'Horror'})
+        self.romance, _ = Genre.objects.get_or_create(tmdb_id=10749, defaults={'name': 'Romance'})
+
+        # Both people rate 3 horror films highly -- a genuinely shared taste signal.
+        for i in range(3):
+            movie = Movie.objects.create(tmdb_id=5000 + i, title=f'Horror {i}', release_year=2015)
+            movie.genres.add(self.horror)
+            for session, prefix in [(self.session_a, 'a'), (self.session_b, 'b')]:
+                RatingEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}h{i}', title=movie.title,
+                    year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+                )
+
+        # Alex loves romance, Sam can't stand it -- a genuinely one-sided signal.
+        for i in range(3):
+            movie = Movie.objects.create(tmdb_id=6000 + i, title=f'Romance {i}', release_year=2015)
+            movie.genres.add(self.romance)
+            RatingEntry.objects.create(
+                import_session=self.session_a, letterboxd_uri=f'https://boxd.it/ar{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+            RatingEntry.objects.create(
+                import_session=self.session_b, letterboxd_uri=f'https://boxd.it/br{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('1.0'), movie=movie,
+            )
+
+        self.shared_horror_pick = Movie.objects.create(tmdb_id=7001, title='Shared Horror Pick', release_year=2020)
+        self.shared_horror_pick.genres.add(self.horror)
+
+        self.one_sided_romance_pick = Movie.objects.create(
+            tmdb_id=7002, title='One Sided Romance Pick', release_year=2020
+        )
+        self.one_sided_romance_pick.genres.add(self.romance)
+
+        for movie in [self.shared_horror_pick, self.one_sided_romance_pick]:
+            for session, prefix in [(self.session_a, 'a'), (self.session_b, 'b')]:
+                WatchlistEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}wl{movie.tmdb_id}',
+                    title=movie.title, year=movie.release_year, movie=movie,
+                )
+
+    def test_least_misery_ranks_a_mutual_pick_above_a_one_sided_love(self):
+        # Alex would score "One Sided Romance Pick" very highly (they love romance),
+        # but Sam would score it low (they hate it) -- averaging the two people's
+        # scores could still favor it over a horror pick both of them merely like.
+        # Least-misery (the min of the two) has to rank the mutual pick first.
+        context = build_compare_context(self.session_a, self.session_b)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        self.assertLess(titles.index('Shared Horror Pick'), titles.index('One Sided Romance Pick'))
+
+    def test_blend_lets_combined_enthusiasm_break_a_near_tie_on_least_misery(self):
+        # Pure least-misery (min of the two scores) alone can't be swayed by combined
+        # enthusiasm except on an exact float tie, which two independently-computed
+        # scores essentially never land on. This fixture engineers a near-miss: Alex
+        # loves comedy and is fine with mystery, Sam is completely neutral on comedy
+        # (never rated it) but has a small positive lean on mystery -- so "Mystery
+        # Pick"'s min (bounded by Sam's small mystery bump) edges out "Comedy Pick"'s
+        # min (bounded by Sam's flat, unbumped baseline) by a hair, while "Comedy
+        # Pick" is the clearly better pick overall (Alex loves it much more, Sam is
+        # no worse off than baseline either way). LEAST_MISERY_BLEND_WEIGHT should
+        # let that combined-enthusiasm gap flip the order.
+        session_a = ImportSession.objects.create(display_name='Alex2')
+        session_b = ImportSession.objects.create(display_name='Sam2')
+
+        comedy, _ = Genre.objects.get_or_create(tmdb_id=910035, defaults={'name': 'Comedy2'})
+        thriller, _ = Genre.objects.get_or_create(tmdb_id=910053, defaults={'name': 'Thriller2'})
+        mystery, _ = Genre.objects.get_or_create(tmdb_id=910648, defaults={'name': 'Mystery2'})
+        drama, _ = Genre.objects.get_or_create(tmdb_id=910018, defaults={'name': 'Drama2'})
+
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=910100 + i, title=f'AComedy{i}', release_year=2010)
+            movie.genres.add(comedy)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/ac{i}', title=movie.title, year=2010,
+                rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=910110 + i, title=f'AThriller{i}', release_year=2010)
+            movie.genres.add(thriller)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/at{i}', title=movie.title, year=2010,
+                rating=Decimal('3.0'), movie=movie,
+            )
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=910120 + i, title=f'BDrama{i}', release_year=2010)
+            movie.genres.add(drama)
+            RatingEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/bd{i}', title=movie.title, year=2010,
+                rating=Decimal('3.5'), movie=movie,
+            )
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=910130 + i, title=f'BMystery{i}', release_year=2010)
+            movie.genres.add(mystery)
+            RatingEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/bm{i}', title=movie.title, year=2010,
+                rating=Decimal('3.6'), movie=movie,
+            )
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=910140 + i, title=f'AMystery{i}', release_year=2010)
+            movie.genres.add(mystery)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/am{i}', title=movie.title, year=2010,
+                rating=Decimal('4.05'), movie=movie,
+            )
+
+        comedy_pick = Movie.objects.create(tmdb_id=910200, title='Comedy Pick', release_year=2020)
+        comedy_pick.genres.add(comedy)
+        mystery_pick = Movie.objects.create(tmdb_id=910201, title='Mystery Pick', release_year=2020)
+        mystery_pick.genres.add(mystery)
+        for movie in [comedy_pick, mystery_pick]:
+            WatchlistEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/wla{movie.tmdb_id}',
+                title=movie.title, year=2020, movie=movie,
+            )
+            WatchlistEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/wlb{movie.tmdb_id}',
+                title=movie.title, year=2020, movie=movie,
+            )
+
+        context = build_compare_context(session_a, session_b)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        self.assertEqual(titles, ['Comedy Pick', 'Mystery Pick'])
+
+    def test_falls_back_to_alphabetical_when_a_session_has_too_few_ratings(self):
+        sparse_session = ImportSession.objects.create(display_name='NewUser')
+        movie_z = Movie.objects.create(tmdb_id=8001, title='Zebra', release_year=2020)
+        movie_a = Movie.objects.create(tmdb_id=8002, title='Aardvark', release_year=2020)
+        for movie in [movie_z, movie_a]:
+            WatchlistEntry.objects.create(
+                import_session=sparse_session, letterboxd_uri=f'https://boxd.it/sparse{movie.tmdb_id}',
+                title=movie.title, year=movie.release_year, movie=movie,
+            )
+            WatchlistEntry.objects.create(
+                import_session=self.session_a, letterboxd_uri=f'https://boxd.it/full{movie.tmdb_id}',
+                title=movie.title, year=movie.release_year, movie=movie,
+            )
+        # session_a has a rich rating history (from setUp), sparse_session has none --
+        # either side lacking a baseline is enough to fall back, so this still isn't
+        # personalized-ranked.
+        context = build_compare_context(self.session_a, sparse_session)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        self.assertEqual(titles, sorted(titles))
+
+    def test_rarity_factor_favors_rare_signals_over_common_ones(self):
+        from stats.services.compare import _rarity_factor
+
+        self.assertGreater(_rarity_factor(1, 10), _rarity_factor(9, 10))
+        self.assertEqual(_rarity_factor(10, 10), 0.0)
+
+    def test_adaptive_weights_favor_axes_with_more_variance(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _adaptive_weights
+
+        axis_deltas = {
+            'genre': {'Horror': 0.8, 'Romance': -0.6, 'Comedy': 0.1},
+            'director': {'Director A': 0.01, 'Director B': -0.01, 'Director C': 0.0},
+            'actor': {}, 'country': {}, 'language': {}, 'decade': {}, 'runtime': {},
+        }
+        weights = _adaptive_weights(axis_deltas)
+        self.assertGreater(weights['genre'], RECOMMENDATION_WEIGHTS['genre'])
+        self.assertLess(weights['director'], RECOMMENDATION_WEIGHTS['director'])
+        self.assertAlmostEqual(sum(weights.values()), 1.0, places=6)
+
+    def test_adaptive_weights_fall_back_to_fixed_when_nothing_varies(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _adaptive_weights
+
+        axis_deltas = {axis: {} for axis in RECOMMENDATION_WEIGHTS}
+        self.assertEqual(_adaptive_weights(axis_deltas), RECOMMENDATION_WEIGHTS)
+
+    def test_person_credit_cap_limits_how_many_matches_credit_the_same_director(self):
+        from stats.services.compare import PERSON_CREDIT_CAP
+
+        session_a = ImportSession.objects.create(display_name='AlexFan')
+        session_b = ImportSession.objects.create(display_name='SamFan')
+        prolific_director, _ = Person.objects.get_or_create(tmdb_id=920601, defaults={'name': 'Shared Favorite'})
+        alt_genre, _ = Genre.objects.get_or_create(tmdb_id=920602, defaults={'name': 'Alt Genre 2'})
+        filler_genre, _ = Genre.objects.get_or_create(tmdb_id=920603, defaults={'name': 'Filler Genre 2'})
+
+        # 16 unrelated films rated 3.5 by both -- bulks out each person's rated
+        # corpus so the director below (4 of 20 rated films) is genuinely rare
+        # relative to it, not most of their entire history the way a tiny fixture
+        # would make them look (rarity would otherwise discount the director's delta
+        # below CREDIT_THRESHOLD, same trap hit once already on Director's Cut's
+        # own version of this test).
+        for i in range(16):
+            movie = Movie.objects.create(tmdb_id=920600 + i, title=f'Filler {i}', release_year=2010)
+            movie.genres.add(filler_genre)
+            for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+                RatingEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}f{i}', title=movie.title,
+                    year=movie.release_year, rating=Decimal('3.5'), movie=movie,
+                )
+        # Both people rate several films from this director highly -- a genuinely
+        # shared, well-evidenced, genuinely rare favorite.
+        for i in range(4):
+            movie = Movie.objects.create(tmdb_id=920700 + i, title=f'Rated Shared {i}', release_year=2010)
+            movie.directors.add(prolific_director)
+            for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+                RatingEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}rs{i}', title=movie.title,
+                    year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+                )
+        # Both also rate a couple of alt-genre films decently, giving the alternative
+        # candidate below a real (if modest) signal of its own.
+        for i in range(2):
+            movie = Movie.objects.create(tmdb_id=920750 + i, title=f'Rated Alt {i}', release_year=2010)
+            movie.genres.add(alt_genre)
+            for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+                RatingEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}ra{i}', title=movie.title,
+                    year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+                )
+
+        # One more shared-watchlist film from the director than PERSON_CREDIT_CAP
+        # allows.
+        director_titles = []
+        for i in range(PERSON_CREDIT_CAP + 1):
+            movie = Movie.objects.create(tmdb_id=920800 + i, title=f'Watchlist Shared {i}', release_year=2020)
+            movie.directors.add(prolific_director)
+            for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+                WatchlistEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}wp{i}',
+                    title=movie.title, year=movie.release_year, movie=movie,
+                )
+            director_titles.append(movie.title)
+
+        # An alternative shared-watchlist pick, driven by a different signal.
+        alternative = Movie.objects.create(tmdb_id=920850, title='Unrelated Shared Alternative', release_year=2020)
+        alternative.genres.add(alt_genre)
+        for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+            WatchlistEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}alt',
+                title=alternative.title, year=alternative.release_year, movie=alternative,
+            )
+
+        context = build_compare_context(session_a, session_b)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        director_picks = [t for t in titles if t in director_titles]
+        self.assertEqual(len(director_picks), PERSON_CREDIT_CAP)
+        self.assertIn('Unrelated Shared Alternative', titles)
+
+    def test_tmdb_rating_nudges_an_already_qualified_candidate(self):
+        # Two otherwise-identical horror candidates, differing only in TMDB rating.
+        high_tmdb = Movie.objects.create(
+            tmdb_id=921001, title='High TMDB Shared Horror', release_year=2020, tmdb_rating=Decimal('9.0'),
+        )
+        high_tmdb.genres.add(self.horror)
+        low_tmdb = Movie.objects.create(
+            tmdb_id=921002, title='Low TMDB Shared Horror', release_year=2020, tmdb_rating=Decimal('3.0'),
+        )
+        low_tmdb.genres.add(self.horror)
+        for movie in [high_tmdb, low_tmdb]:
+            for session, prefix in [(self.session_a, 'a'), (self.session_b, 'b')]:
+                WatchlistEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}wl{movie.tmdb_id}',
+                    title=movie.title, year=movie.release_year, movie=movie,
+                )
+
+        context = build_compare_context(self.session_a, self.session_b)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        self.assertLess(titles.index('High TMDB Shared Horror'), titles.index('Low TMDB Shared Horror'))
+
+    def test_missing_tmdb_rating_is_not_penalized(self):
+        no_tmdb = Movie.objects.create(tmdb_id=921003, title='No TMDB Rating Shared Horror', release_year=2020)
+        no_tmdb.genres.add(self.horror)
+        for session, prefix in [(self.session_a, 'a'), (self.session_b, 'b')]:
+            WatchlistEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}wlnotmdb',
+                title=no_tmdb.title, year=no_tmdb.release_year, movie=no_tmdb,
+            )
+        context = build_compare_context(self.session_a, self.session_b)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        self.assertIn('No TMDB Rating Shared Horror', titles)
 
 
 class TopUnseenByOtherTests(TestCase):
