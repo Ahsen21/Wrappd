@@ -213,9 +213,58 @@ a { color: var(--accent-2); }
   letter-spacing: 0.1em;
   font-size: 0.85rem;
   font-weight: 700;
-  margin: 0 0 0.5rem;
+  margin: 0;
 }
+/* Wraps the eyebrow ("Director's Cut"/"Double Feature") and the shorts toggle
+   (see .shorts-toggle below) on one row, toggle pinned to the far side -- the
+   eyebrow's own margin-bottom moved here from .hero-eyebrow itself, since it's
+   this row's spacing to the h1 below that matters now, not the eyebrow element's
+   own. wrap rather than a hard cutoff, so a long display name's h1 below still
+   has room and the toggle just drops to its own line on a narrow viewport
+   instead of squeezing the eyebrow text. */
+.hero-top-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0 0 0.5rem; }
 .hero h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0; }
+/* The include/exclude short films (under 60 min) toggle, top-right of the hero on
+   both Director's Cut and Double Feature -- a GET-param link (?shorts=exclude),
+   not an instant client-side switch, since every stat on both pages is computed
+   server-side from the DB (see views.py's _render_dashboard/_render_compare) --
+   clicking it reloads the page with every card/chart recomputed against the
+   filtered querysets (see stats/services/filters.py's exclude_short_entries/
+   _movies). Styled as a switch despite being a plain <a> for the same reason
+   .hero-share-btn is a <button> styled as an icon -- the interaction should read
+   as "flip a setting", not "follow a link". */
+.shorts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.shorts-toggle:hover { color: var(--text); }
+.shorts-toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--border);
+  position: relative;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+}
+.shorts-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s ease;
+}
+.shorts-toggle--on .shorts-toggle-track { background: var(--accent); }
+.shorts-toggle--on .shorts-toggle-thumb { transform: translateX(14px); background: var(--accent-text); }
 /* The "copy link" share button sits right after the h1 rather than as its own
    card/row above the hero -- see the dashboard's inline script for the click
    handler. Icon-only (an SVG, not an icon font -- this codebase doesn't load one

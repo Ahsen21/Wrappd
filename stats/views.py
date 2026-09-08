@@ -10,14 +10,27 @@ from .services.person_filmography import build_person_filmography
 
 
 def _render_dashboard(request, import_session):
-    context = build_dashboard_context(import_session)
+    # ?shorts=exclude opts OUT of short films (under 60 min) across every stat on
+    # the page -- default stays "include" (today's existing behavior, unfiltered)
+    # so a plain dashboard link/share never silently shows different numbers than
+    # it used to. Every stat here is server-computed from the DB, not shipped to
+    # the browser as raw data, so this can't be an instant client-side toggle --
+    # the switch in the template reloads with this param, same as any other GET-
+    # driven filter on the site.
+    exclude_shorts = request.GET.get('shorts') == 'exclude'
+    context = build_dashboard_context(import_session, exclude_shorts)
     # The dashboard's own URL doubles as its share link (see the "Share your
     # dashboard" box) -- neither route this can be reached by has an ownership
     # check tying it to this browser's session, so anyone holding either kind of
     # link can already open it as is. canonical_dashboard_path prefers the
     # account's permanent /dashboard/<username>/ link when there is one, even if
-    # this particular request came in on the raw UUID route.
-    context['share_url'] = request.build_absolute_uri(import_session.canonical_dashboard_path())
+    # this particular request came in on the raw UUID route. Carries the shorts
+    # toggle's current state along -- sharing a filtered view should hand the
+    # recipient that same filtered view, not silently reset to the default.
+    share_url = request.build_absolute_uri(import_session.canonical_dashboard_path())
+    if exclude_shorts:
+        share_url += '?shorts=exclude'
+    context['share_url'] = share_url
     return render(request, 'stats/dashboard.html', context)
 
 
@@ -45,7 +58,9 @@ def person_filmography(request, session_id, tmdb_id):
 
 
 def _render_compare(request, session_a_obj, session_b_obj):
-    context = build_compare_context(session_a_obj, session_b_obj)
+    # See _render_dashboard's own comment on this same param.
+    exclude_shorts = request.GET.get('shorts') == 'exclude'
+    context = build_compare_context(session_a_obj, session_b_obj, exclude_shorts)
     return render(request, 'stats/compare.html', context)
 
 

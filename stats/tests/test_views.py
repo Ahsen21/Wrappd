@@ -117,6 +117,47 @@ class DashboardViewTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_shorts_param_defaults_to_included(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}))
+
+        self.assertFalse(response.context['exclude_shorts'])
+        self.assertNotIn('shorts=exclude', response.context['share_url'])
+
+    def test_shorts_exclude_param_is_read_and_carried_into_the_share_url(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(
+            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'exclude'}
+        )
+
+        self.assertTrue(response.context['exclude_shorts'])
+        self.assertIn('shorts=exclude', response.context['share_url'])
+
+    def test_an_unrecognized_shorts_value_is_treated_as_included(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(
+            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'nonsense'}
+        )
+
+        self.assertFalse(response.context['exclude_shorts'])
+
+
+class CompareViewTests(TestCase):
+    def test_shorts_exclude_param_is_read(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
+
+        response = self.client.get(
+            reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id}),
+            {'shorts': 'exclude'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['exclude_shorts'])
+
 
 class CompareByUsernamesViewTests(TestCase):
     """stats:compare_by_usernames -- the /compare/<username_a>-vs-<username_b>/

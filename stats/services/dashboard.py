@@ -20,7 +20,9 @@ from django.db.models import Avg, Count, Max, Min, Q, Sum
 from django.db.models.functions import ExtractWeekDay, ExtractYear, TruncMonth
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
-from stats.services.filters import exclude_tv_shows
+from stats.services.filters import (
+    SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short_entries, exclude_short_movies, exclude_tv_shows,
+)
 from tmdb.models import Credit, Movie, Person
 
 WEEKDAY_NAMES = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thursday', 6: 'Friday', 7: 'Saturday'}
@@ -208,43 +210,62 @@ def _cameo_credit_ids(movie_ids) -> set:
     }
 
 
-def _watched_movies(import_session, diary, rated):
+def _watched_movies(import_session, diary, rated, exclude_shorts=False):
     """Movie objects for every distinct film actually watched, logged or not -- the
     same 'watched.csv is authoritative, else union of diary+ratings' pattern as
     _films_watched_total (see its docstring). This is the source for every 'most
     watched' breakdown (genre/director/actor/country/language) so a rewatch doesn't
-    inflate a count and a watched.csv-only film (never diary-logged) still counts."""
+    inflate a count and a watched.csv-only film (never diary-logged) still counts.
+
+    exclude_shorts filters the FINAL Movie queryset (exclude_short_movies), not
+    `watched` itself, so it applies uniformly regardless of which of the two paths
+    above actually produced movie_ids -- diary/rated are already shorts-filtered
+    by the caller when this flag is set, but watched.csv's own WatchedEntry rows,
+    fetched fresh here, aren't filtered until this final step."""
     watched = exclude_tv_shows(WatchedEntry.objects.filter(import_session=import_session))
     movie_ids = set(watched.exclude(movie__isnull=True).values_list('movie_id', flat=True))
     if not movie_ids:
         movie_ids = set(diary.exclude(movie__isnull=True).values_list('movie_id', flat=True))
         movie_ids |= set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))
-    return Movie.objects.filter(tmdb_id__in=movie_ids)
+    movies = Movie.objects.filter(tmdb_id__in=movie_ids)
+    return exclude_short_movies(movies) if exclude_shorts else movies
 
 
-def build_dashboard_context(import_session) -> dict:
+def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
+    # _maybe_exclude_shorts is a no-op when the toggle is off -- every call site
+    # below stays identical either way, rather than an `if exclude_shorts: ...`
+    # branch at each one.
+    _maybe_exclude_shorts = exclude_short_entries if exclude_shorts else (lambda queryset: queryset)
+
     diary_all = DiaryEntry.objects.filter(import_session=import_session)
     rated_all = RatingEntry.objects.filter(import_session=import_session)
-    diary = exclude_tv_shows(diary_all)
-    rated = exclude_tv_shows(rated_all)
-    watched_movies = _watched_movies(import_session, diary, rated)
+    # TV-exclusion is tracked (excluded_tv_count/_titles below) against THIS
+    # intermediate stage specifically, not the final shorts-filtered diary/rated --
+    # otherwise a short film pulled out by the toggle would get miscounted as
+    # "couldn't be matched to TMDB" in that banner, which is about TV content, not
+    # runtime at all.
+    diary_no_tv = exclude_tv_shows(diary_all)
+    rated_no_tv = exclude_tv_shows(rated_all)
+    diary = _maybe_exclude_shorts(diary_no_tv)
+    rated = _maybe_exclude_shorts(rated_no_tv)
+    watched_movies = _watched_movies(import_session, diary, rated, exclude_shorts)
     # Deduped by (title, year) like every other distinct-film count on this page -- a
     # review or like logged against a rewatch shouldn't count twice.
     reviews_count = (
-        exclude_tv_shows(ReviewEntry.objects.filter(import_session=import_session))
+        _maybe_exclude_shorts(exclude_tv_shows(ReviewEntry.objects.filter(import_session=import_session)))
         .exclude(review='').values('title', 'year').distinct().count()
     )
     likes_count = (
-        exclude_tv_shows(LikedFilmEntry.objects.filter(import_session=import_session))
+        _maybe_exclude_shorts(exclude_tv_shows(LikedFilmEntry.objects.filter(import_session=import_session)))
         .values('title', 'year').distinct().count()
     )
-    watchlist = exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session))
+    watchlist = _maybe_exclude_shorts(exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session)))
     watchlist_count = watchlist.values('title', 'year').distinct().count()
     # Distinct (title, year) pairs excluded from either source -- a title can be TV-
     # flagged and present in only one of diary/ratings (e.g. rated but never diary-
     # logged), so counting diary rows alone would undercount.
-    excluded_pairs = set(diary_all.values_list('title', 'year')) - set(diary.values_list('title', 'year'))
-    excluded_pairs |= set(rated_all.values_list('title', 'year')) - set(rated.values_list('title', 'year'))
+    excluded_pairs = set(diary_all.values_list('title', 'year')) - set(diary_no_tv.values_list('title', 'year'))
+    excluded_pairs |= set(rated_all.values_list('title', 'year')) - set(rated_no_tv.values_list('title', 'year'))
     excluded_tv_count = len(excluded_pairs)
     excluded_tv_titles = sorted(
         ({'title': title, 'year': year} for title, year in excluded_pairs), key=lambda e: e['title']
@@ -367,7 +388,7 @@ def build_dashboard_context(import_session) -> dict:
 
     total_films = diary.count()
     unenriched_count = diary.filter(movie__isnull=True).count()
-    films_watched_total = _films_watched_total(import_session, diary, rated)
+    films_watched_total = _films_watched_total(import_session, diary, rated, exclude_shorts)
 
     taste = _taste_vs_crowd(rated)
     genre_decade = _rating_by_genre_and_decade(rated)
@@ -396,6 +417,7 @@ def build_dashboard_context(import_session) -> dict:
 
     return {
         'import_session': import_session,
+        'exclude_shorts': exclude_shorts,
         'total_films': total_films,
         'films_watched_total': films_watched_total,
         'films_rated': rated_count,
@@ -955,7 +977,7 @@ def _watchlist_recommendations(
         watchlist.filter(movie__isnull=False)
         .exclude(movie_id__in=watched_movie_ids)
         .filter(Q(movie__release_year__isnull=True) | Q(movie__release_year__lte=date.today().year))
-        .filter(Q(movie__runtime_minutes__isnull=True) | Q(movie__runtime_minutes__gte=60))
+        .filter(Q(movie__runtime_minutes__isnull=True) | Q(movie__runtime_minutes__gte=SHORT_FILM_MAX_RUNTIME_MINUTES))
         .select_related('movie')
         .prefetch_related('movie__genres', 'movie__countries', 'movie__directors')
     )
@@ -1771,13 +1793,20 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_
     }
 
 
-def _films_watched_total(import_session, diary, rated) -> int:
+def _films_watched_total(import_session, diary, rated, exclude_shorts=False) -> int:
     """Total distinct films ever marked watched, logged or not. watched.csv is the
     authoritative superset (diary.csv only has films with a logged date); if it wasn't
     included in this export, fall back to the union of diary + ratings as a best effort.
     The fallback is keyed by (title, year), not letterboxd_uri -- see _film_map's
-    docstring in stats/services/compare.py."""
+    docstring in stats/services/compare.py.
+
+    exclude_shorts is applied to `watched` explicitly here (fetched fresh from
+    WatchedEntry, same as _watched_movies' own primary path) -- diary/rated are
+    already shorts-filtered by the caller before reaching this function, so the
+    fallback branch needs no separate handling."""
     watched = exclude_tv_shows(WatchedEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        watched = exclude_short_entries(watched)
     watched_count = watched.values('title', 'year').distinct().count()
     if watched_count:
         return watched_count
