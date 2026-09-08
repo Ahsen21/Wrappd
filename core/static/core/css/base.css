@@ -413,6 +413,16 @@ a { color: var(--accent-2); }
   border-bottom: 1px solid var(--border);
   padding: 0.75rem 0;
   margin-bottom: 1.5rem;
+  /* 4 grouped links (longer labels than the original 2-link "Movie Stats"/
+     "Watching Stats" version) don't fit one row on a phone -- without this, flex's
+     default shrink-to-fit let each link's own box narrow until its text wrapped
+     mid-phrase ("Ratings &" / "Genres" on its own line), which also made this
+     bar's own height unpredictable, breaking the scroll-margin-top math below
+     (tuned against one specific, fixed bar height) and the sticky stacking with
+     .nav above it. A horizontally scrollable single-row strip instead -- the
+     standard mobile "tab bar" pattern -- keeps the height fixed regardless of
+     viewport width and how many groups a given page has. */
+  overflow-x: auto;
 }
 .section-nav-link {
   color: var(--muted);
@@ -422,6 +432,8 @@ a { color: var(--accent-2); }
   padding-bottom: 0.25rem;
   border-bottom: 2px solid transparent;
   transition: color 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .section-nav-link:hover { color: var(--text); }
 .section-nav-link.active { color: var(--text); border-bottom-color: var(--accent); }
