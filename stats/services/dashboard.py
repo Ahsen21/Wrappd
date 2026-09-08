@@ -21,7 +21,7 @@ from django.db.models.functions import ExtractWeekDay, ExtractYear, TruncMonth
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
 from stats.services.filters import exclude_tv_shows
-from tmdb.models import Credit, Movie
+from tmdb.models import Credit, Movie, Person
 
 WEEKDAY_NAMES = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thursday', 6: 'Friday', 7: 'Saturday'}
 # TMDB's production_countries gives full formal names -- shortened to their common
@@ -142,6 +142,28 @@ RECOMMENDATION_REASON_THRESHOLD = 0.15
 # watchlist) could flood the grid, crowding out otherwise-strong picks driven by
 # different signals entirely. See _watchlist_recommendations' greedy selection pass.
 PERSON_CREDIT_CAP = 2
+# A director-actor "collaboration" needs at least this many shared rated films to
+# be a pattern, not a coincidence -- most pairs that appear together at all only do
+# so in exactly one film, so this is deliberately low, not MIN_COUNT_FOR_FAVORITE_
+# DIRECTOR/_ACTOR's higher single-person bar. See _favorite_pairing_insight.
+MIN_COUNT_FOR_PAIRING = 2
+# A film's TMDB vote_count has to sit at or below this before it's genuinely
+# obscure enough to call a "hidden gem" -- vote counts scale enormously by a
+# film's prominence (a real blockbuster sits in the tens of thousands even at the
+# "less popular" end), so without an absolute floor, someone whose most obscure
+# favorite still has, say, 15,000 votes would get it mislabeled as hidden. See
+# _hidden_gem_insight.
+HIDDEN_GEM_MAX_VOTE_COUNT = 1000
+# A percentage-based pattern insight (the liked-vs-rated correlation) needs more
+# evidence than a plain average to not be noise -- MIN_COUNT_FOR_AVERAGE's 2 is far
+# too thin. See _liked_vs_rated_insight.
+MIN_COUNT_FOR_PATTERN_INSIGHT = 5
+# How far apart the like-rate among a person's 4★+ films and everything else has
+# to be before it's worth calling out -- as either closely tracking their ratings
+# (>= LIKE_RATE_CLOSE_GAP) or barely tracking them (<= LIKE_RATE_DECOUPLED_GAP). A
+# gap in between isn't distinctive enough either way. See _liked_vs_rated_insight.
+LIKE_RATE_CLOSE_GAP = 0.4
+LIKE_RATE_DECOUPLED_GAP = 0.15
 
 
 def _avg_or_none(values) -> float | None:
@@ -361,12 +383,12 @@ def build_dashboard_context(import_session) -> dict:
     favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, avg_rating)
     favorites = _favorite_films(import_session)
     top_tags = _tag_distribution(diary)
-    highlights = _highlights(watched_movies, rated, rewatch['most_rewatched_films'])
+    axis_deltas = _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, rated_count)
     recommendations = _watchlist_recommendations(
-        rated, watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating,
-        actor_rating_lists, director_ratings, rated_count,
+        watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating, axis_deltas,
         taste['generosity_score'], taste['rated_and_enriched_count'],
     )
+    insights = _dashboard_insights(diary, rated, avg_rating, actor_rating_lists, director_ratings, import_session)
     # First favorite with a resolved poster, used as the header banner's backdrop --
     # not necessarily favorites[0] itself, since an earlier favorite might not have
     # resolved to a Movie (and therefore have no poster) while a later one did.
@@ -401,7 +423,7 @@ def build_dashboard_context(import_session) -> dict:
         'favorites': favorites,
         'hero_poster_url': hero_poster_url,
         'top_tags': top_tags,
-        'highlights': highlights,
+        'insights': insights,
         'recommendations': recommendations,
         'chart_data': {
             'films_per_year': {
@@ -771,62 +793,23 @@ def _adaptive_weights(axis_deltas: dict) -> dict:
     }
 
 
-def _watchlist_recommendations(
-    rated, watchlist, watched_movie_ids, avg_rating, actor_rating_lists, director_ratings, rated_count,
-    generosity_score, rated_and_enriched_count,
-) -> list:
-    """Scores every watchlist film the user hasn't already watched, hasn't released
-    yet, or is under an hour long (see the candidates queryset below) against their
-    own rating history across genre, director, actor, country, language, decade, and
-    runtime, and returns the top RECOMMENDATION_DISPLAY_CAP as
-    {'movie', 'score', 'reasons'} dicts, highest score first (subject to
-    PERSON_CREDIT_CAP -- see the greedy selection pass at the end). See
-    RECOMMENDATION_WEIGHTS' comment for why this sums confidence-weighted deltas
-    across signals rather than averaging them (within one signal -- e.g. a film's
-    several genres -- the deltas ARE averaged, since those describe the same kind
-    of thing about one film rather than independent kinds of evidence). Each delta
-    is also scaled by _rarity_factor -- a decade or runtime bucket shared by most of
-    someone's rated films says little about their specific taste even if their
-    average rating within it is reliable, so it shouldn't compete on equal footing
-    with a rare, specific match like a favorite director. The per-axis weights
-    themselves aren't the fixed RECOMMENDATION_WEIGHTS either -- see
-    _adaptive_weights for how they're nudged per-person toward whichever axes
-    actually vary for that person's own taste.
+def _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, rated_count) -> dict:
+    """{'genre': {...}, 'director': {...}, 'actor': {...}, 'country': {...},
+    'language': {...}, 'decade': {...}, 'runtime': {...}} -- the confidence-shrunk,
+    peak-blended, rarity-scaled per-key delta maps (see _rating_deltas) for all 7
+    taste axes at once. Factored out from _watchlist_recommendations so
+    _rating_insights can reuse the exact same numbers rather than recomputing a
+    second, potentially-drifting copy -- an axis/key's delta can never disagree
+    between the recommendation grid and the insights card.
 
-    On top of those 7 taste-based signals, a film's TMDB community rating nudges the
-    score by a small, fixed TMDB_WEIGHT (see that constant) -- adjusted by the
-    person's own generosity_score (their average delta from TMDB's crowd rating on
-    films they HAVE rated, from _taste_vs_crowd) so a systematically harsher or more
-    generous rater's own scale is accounted for, not the raw crowd number. Both
-    generosity_score and this whole TMDB nudge are confidence-shrunk by
-    rated_and_enriched_count -- a generosity_score from only a couple of TMDB-
-    enriched rated films is noisy, so it's pulled toward 0 (assume crowd-aligned)
-    the same way every other thin-evidence signal in this file is.
-
-    Requires avg_rating (i.e. at least MIN_COUNT_FOR_AVERAGE rated films) -- there's
-    no baseline to compute a delta against otherwise, so this returns [] rather than
-    a fabricated "recommendation". A candidate with no matching signal on any of the
-    7 taste axes (new genre, unknown director, unrecognized cast/country/language/
-    decade/runtime) is skipped entirely too -- TMDB rating alone never qualifies a
-    candidate on its own, it only nudges one that already matched something
-    personal (see TMDB_WEIGHT's own comment for why)."""
+    Returns {} if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films)
+    -- there's no baseline to compute a delta against. avg_rating arrives here as a
+    Decimal (RatingEntry.rating is a DecimalField) when not None; converted to float
+    up front since float * Decimal raises TypeError in _shrunk_delta below (same fix
+    _favorite_people applies)."""
     if avg_rating is None:
-        return []
-    # _true_score does float(avg) internally but not float(overall_avg_rating) --
-    # avg_rating arrives here as a Decimal (RatingEntry.rating is a DecimalField),
-    # and float * Decimal raises TypeError, so this has to happen before any of the
-    # _true_score calls below (same fix _favorite_people already applies).
+        return {}
     avg_rating = float(avg_rating)
-
-    # Confidence-shrunk toward 0 (crowd-aligned) the same way every other thin-
-    # evidence signal here is -- generosity_score itself can be None (fewer than
-    # MIN_COUNT_FOR_AVERAGE TMDB-enriched rated films), in which case there's
-    # nothing to shrink and this just stays 0.
-    if generosity_score is not None and rated_and_enriched_count:
-        generosity_confidence = rated_and_enriched_count / (rated_and_enriched_count + TRUE_SCORE_SHRINKAGE_K)
-        shrunk_generosity = generosity_confidence * generosity_score
-    else:
-        shrunk_generosity = 0.0
 
     genre_deltas = _rating_deltas(
         rated.filter(movie__genres__isnull=False).values_list('movie__genres__name', 'rating'), avg_rating,
@@ -887,12 +870,79 @@ def _watchlist_recommendations(
         )
         for name, ratings in actor_rating_lists.items()
     }
-
-    weights = _adaptive_weights({
+    return {
         'genre': genre_deltas, 'director': director_deltas, 'actor': actor_deltas,
         'country': country_deltas, 'language': language_deltas, 'decade': decade_deltas,
         'runtime': runtime_deltas,
-    })
+    }
+
+
+def _watchlist_recommendations(
+    watchlist, watched_movie_ids, avg_rating, axis_deltas, generosity_score, rated_and_enriched_count,
+) -> list:
+    """Scores every watchlist film the user hasn't already watched, hasn't released
+    yet, or is under an hour long (see the candidates queryset below) against their
+    own rating history across genre, director, actor, country, language, decade, and
+    runtime, and returns the top RECOMMENDATION_DISPLAY_CAP as
+    {'movie', 'score', 'reasons'} dicts, highest score first (subject to
+    PERSON_CREDIT_CAP -- see the greedy selection pass at the end). See
+    RECOMMENDATION_WEIGHTS' comment for why this sums confidence-weighted deltas
+    across signals rather than averaging them (within one signal -- e.g. a film's
+    several genres -- the deltas ARE averaged, since those describe the same kind
+    of thing about one film rather than independent kinds of evidence). Each delta
+    is also scaled by _rarity_factor -- a decade or runtime bucket shared by most of
+    someone's rated films says little about their specific taste even if their
+    average rating within it is reliable, so it shouldn't compete on equal footing
+    with a rare, specific match like a favorite director. The per-axis weights
+    themselves aren't the fixed RECOMMENDATION_WEIGHTS either -- see
+    _adaptive_weights for how they're nudged per-person toward whichever axes
+    actually vary for that person's own taste.
+
+    On top of those 7 taste-based signals, a film's TMDB community rating nudges the
+    score by a small, fixed TMDB_WEIGHT (see that constant) -- adjusted by the
+    person's own generosity_score (their average delta from TMDB's crowd rating on
+    films they HAVE rated, from _taste_vs_crowd) so a systematically harsher or more
+    generous rater's own scale is accounted for, not the raw crowd number. Both
+    generosity_score and this whole TMDB nudge are confidence-shrunk by
+    rated_and_enriched_count -- a generosity_score from only a couple of TMDB-
+    enriched rated films is noisy, so it's pulled toward 0 (assume crowd-aligned)
+    the same way every other thin-evidence signal in this file is.
+
+    Requires avg_rating (i.e. at least MIN_COUNT_FOR_AVERAGE rated films) -- there's
+    no baseline to compute a delta against otherwise, so this returns [] rather than
+    a fabricated "recommendation" (axis_deltas is already {} in that case -- see
+    _all_axis_deltas -- which the guard below catches). A candidate with no matching
+    signal on any of the 7 taste axes (new genre, unknown director, unrecognized
+    cast/country/language/decade/runtime) is skipped entirely too -- TMDB rating
+    alone never qualifies a candidate on its own, it only nudges one that already
+    matched something personal (see TMDB_WEIGHT's own comment for why)."""
+    if not axis_deltas:
+        return []
+    # _true_score does float(avg) internally but not float(overall_avg_rating) --
+    # avg_rating arrives here as a Decimal (RatingEntry.rating is a DecimalField),
+    # and float * Decimal raises TypeError, so this has to happen before any of the
+    # _true_score calls below (same fix _favorite_people already applies).
+    avg_rating = float(avg_rating)
+
+    # Confidence-shrunk toward 0 (crowd-aligned) the same way every other thin-
+    # evidence signal here is -- generosity_score itself can be None (fewer than
+    # MIN_COUNT_FOR_AVERAGE TMDB-enriched rated films), in which case there's
+    # nothing to shrink and this just stays 0.
+    if generosity_score is not None and rated_and_enriched_count:
+        generosity_confidence = rated_and_enriched_count / (rated_and_enriched_count + TRUE_SCORE_SHRINKAGE_K)
+        shrunk_generosity = generosity_confidence * generosity_score
+    else:
+        shrunk_generosity = 0.0
+
+    genre_deltas = axis_deltas['genre']
+    director_deltas = axis_deltas['director']
+    actor_deltas = axis_deltas['actor']
+    country_deltas = axis_deltas['country']
+    language_deltas = axis_deltas['language']
+    decade_deltas = axis_deltas['decade']
+    runtime_deltas = axis_deltas['runtime']
+
+    weights = _adaptive_weights(axis_deltas)
 
     # Excludes unreleased films (a confirmed future release_year -- there's no exact
     # release_date stored, just the year TMDB gave it, so a same-year film that
@@ -960,11 +1010,13 @@ def _watchlist_recommendations(
         if not components:
             continue
 
-        axis_deltas = defaultdict(list)
+        # Named distinctly from the axis_deltas parameter above (this is per-candidate
+        # matched deltas grouped by axis, not the person's whole taste profile).
+        matched_deltas_by_axis = defaultdict(list)
         for axis, _, delta in components:
-            axis_deltas[axis].append(delta)
+            matched_deltas_by_axis[axis].append(delta)
         taste_score = sum(
-            weights[axis] * (sum(deltas) / len(deltas)) for axis, deltas in axis_deltas.items()
+            weights[axis] * (sum(deltas) / len(deltas)) for axis, deltas in matched_deltas_by_axis.items()
         )
 
         # TMDB_WEIGHT's own comment explains why this is fixed rather than part of
@@ -1020,6 +1072,469 @@ def _watchlist_recommendations(
             break
 
     return selected
+
+
+def _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings) -> dict:
+    """{'director': {...}, 'actor': {...}, 'decade': {...}, 'runtime': {...}} --
+    plain, unadjusted average-rating deltas from avg_rating, for the 4 axes
+    _rating_insights actually shows (see that function's own comment on why only
+    those 4). Deliberately NOT _all_axis_deltas' confidence-shrunk, peak-blended,
+    rarity-scaled numbers -- those exist to make a *scoring* decision
+    (_watchlist_recommendations) robust to thin evidence, at the cost of producing
+    a number you can't sanity-check by eye against the person's own raw average
+    shown elsewhere on the dashboard (Favorite Directors/Actors, "Highest rated").
+    This card is meant to be checkable against those, so it reports the real
+    average, not an adjusted one -- backed by the same minimum-evidence gates
+    those other raw-average displays already use (MIN_COUNT_FOR_FAVORITE_DIRECTOR/
+    _ACTOR, MIN_COUNT_FOR_AVERAGE) so a single-film fluke still can't dominate a
+    slot, it just isn't reshaped by shrinkage/peak-blend/rarity on top of that.
+
+    Returns {} if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films
+    -- no baseline to compute a delta against)."""
+    if avg_rating is None:
+        return {}
+    avg_rating = float(avg_rating)
+
+    director_deltas = {
+        name: float(stats['avg_rating']) - avg_rating
+        for name, stats in director_ratings.items()
+        if stats['rating_count'] >= MIN_COUNT_FOR_FAVORITE_DIRECTOR
+    }
+    actor_deltas = {
+        name: sum(float(r) for r in ratings) / len(ratings) - avg_rating
+        for name, ratings in actor_rating_lists.items()
+        if len(ratings) >= MIN_COUNT_FOR_FAVORITE_ACTOR
+    }
+
+    decade_ratings = defaultdict(list)
+    for rating, year in rated.filter(movie__release_year__isnull=False).values_list('rating', 'movie__release_year'):
+        decade_ratings[_decade_bucket(year)].append(float(rating))
+    decade_deltas = {
+        decade: sum(ratings) / len(ratings) - avg_rating
+        for decade, ratings in decade_ratings.items()
+        if len(ratings) >= MIN_COUNT_FOR_AVERAGE
+    }
+
+    runtime_ratings = defaultdict(list)
+    for rating, minutes in rated.filter(movie__runtime_minutes__isnull=False).values_list(
+        'rating', 'movie__runtime_minutes'
+    ):
+        runtime_ratings[_runtime_bucket(minutes)].append(float(rating))
+    runtime_deltas = {
+        bucket: sum(ratings) / len(ratings) - avg_rating
+        for bucket, ratings in runtime_ratings.items()
+        if len(ratings) >= MIN_COUNT_FOR_AVERAGE
+    }
+
+    return {
+        'director': director_deltas, 'actor': actor_deltas, 'decade': decade_deltas, 'runtime': runtime_deltas,
+    }
+
+
+# Shared by every _rating_insights slot (director/actor/decade/runtime) -- deliber-
+# ately ONE plain format now, not a per-axis/per-direction sentence, since the
+# combined insight grid's own tile label (see _INSIGHT_LABELS) already says what
+# the tile is and which direction it goes ("Favorite director", "Least favorite
+# runtime", ...), so the body text just needs the value and the number, tight
+# enough to read in a grid tile rather than a full-width row.
+_DELTA_INSIGHT_TEXT = '{value} — {delta:+.1f}★ vs. avg'
+
+# Only 4 of the 7 axes _all_axis_deltas/_raw_axis_deltas compute get a slot in the
+# combined insight grid at all (see _PERSON_INSIGHT_SLOTS/_AXIS_INSIGHT_SLOTS
+# below) -- genre/country/language are excluded even though
+# _watchlist_recommendations still uses them, because this grid exists to say
+# something the rest of the dashboard doesn't: those three already have their own
+# "Highest rated" tab (_rating_by_genre_and_decade/_country/_language), showing the
+# exact same raw average this grid uses (see _raw_axis_deltas) -- a genre/country/
+# language tile would be a pure duplicate, not just a rephrase.
+#
+# Director/actor's positive slot IS now the same raw average as Favorite
+# Directors/Actors' own "Highest rated" tab, for the same reason -- what still
+# earns this axis its place here is the *negative* slot, which that tab (and its
+# "True score" variant) structurally can never show, being favorites-only and
+# capped to FAVORITE_PEOPLE_GRID_CAP. Decade and runtime have no dashboard tab of
+# their own at all, so both directions on those two are unconditionally new
+# information regardless.
+
+# Icon shown next to an insight with no natural single photo (director/actor get a
+# real headshot when one resolves instead -- see _rating_insights) or when a photo
+# doesn't resolve. Not meant to be precise iconography, just a quick visual anchor
+# distinguishing one tile from the next.
+_AXIS_ICONS = {'director': '🎥', 'actor': '🎭', 'decade': '📅', 'runtime': '⏱️'}
+
+# Small header title shown above each grid tile in _rating_insights -- director/
+# actor are always explicitly "Favorite"/"Least favorite" since _PERSON_INSIGHT_
+# SLOTS always asks for both directions on those two; decade/runtime get a
+# direction-aware title too even though _AXIS_INSIGHT_SLOTS only ever asks for
+# whichever single direction is stronger on those axes, so the title still says
+# which way it goes.
+_INSIGHT_LABELS = {
+    'director': {'positive': 'Favorite director', 'negative': 'Least favorite director'},
+    'actor': {'positive': 'Favorite actor', 'negative': 'Least favorite actor'},
+    'decade': {'positive': 'Favorite decade', 'negative': 'Least favorite decade'},
+    'runtime': {'positive': 'Favorite runtime', 'negative': 'Least favorite runtime'},
+}
+
+# The combined insight grid's first row -- favorite director, least favorite
+# director, favorite actor, least favorite actor. Director/actor are the most
+# personal, recognizable signals (a name, a face), so they lead the grid.
+_PERSON_INSIGHT_SLOTS = [
+    ('director', 'positive'), ('director', 'negative'),
+    ('actor', 'positive'), ('actor', 'negative'),
+]
+# Two of the grid's second row (the other two -- duo, hidden gem -- come from
+# _favorite_pairing_insight/_hidden_gem_insight, computed separately -- see
+# _dashboard_insights). 'either' means "whichever of positive/negative actually
+# clears the bar, picking the stronger one if both do" -- decade/runtime only get
+# one grid slot each, unlike director/actor's two, so there's no separate slot to
+# give the other direction.
+_AXIS_INSIGHT_SLOTS = [('runtime', 'either'), ('decade', 'either')]
+
+
+def _strongest_axis_delta(deltas: dict, direction: str):
+    """The single (value, delta) pair from a _rating_deltas-shaped dict that best
+    matches `direction` ('positive', 'negative', or 'either' for whichever of the
+    two clears RECOMMENDATION_REASON_THRESHOLD with the larger |delta|), or None if
+    nothing in that direction clears the threshold. Shared by _rating_insights'
+    fixed grid slots so 'either' doesn't duplicate the positive/negative logic."""
+    if not deltas:
+        return None
+    candidates = []
+    if direction in ('positive', 'either'):
+        value, delta = max(deltas.items(), key=lambda item: item[1])
+        if delta >= RECOMMENDATION_REASON_THRESHOLD:
+            candidates.append((value, delta))
+    if direction in ('negative', 'either'):
+        value, delta = min(deltas.items(), key=lambda item: item[1])
+        if delta <= -RECOMMENDATION_REASON_THRESHOLD:
+            candidates.append((value, delta))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: abs(c[1]))
+
+
+def _rating_insights(axis_deltas: dict, slots: list) -> list:
+    """Plain-English, grid-tile-sized facts about what actually moves this
+    person's ratings -- e.g. "Denis Villeneuve — +0.6★ vs. avg" -- built from
+    _raw_axis_deltas' plain, unadjusted average-rating deltas (deliberately NOT
+    _all_axis_deltas' confidence-shrunk/peak-blended/rarity-scaled numbers, which
+    exist for _watchlist_recommendations' own scoring purposes -- see
+    _raw_axis_deltas' own comment for why this grid wants the checkable raw
+    number instead). Returns [] if axis_deltas is {} (fewer than
+    MIN_COUNT_FOR_AVERAGE rated films -- no baseline to compute a delta against).
+
+    `slots` is a list of (axis, direction) pairs -- _dashboard_insights calls this
+    twice, once with _PERSON_INSIGHT_SLOTS (director/actor, both directions) and
+    once with _AXIS_INSIGHT_SLOTS (decade/runtime, one direction each), since
+    those two groups land in different, non-adjacent positions in the combined
+    grid (see that function). Each slot's axis has to clear
+    RECOMMENDATION_REASON_THRESHOLD in the requested direction to produce a tile
+    at all (same "don't fabricate a neutral insight" principle as the rest of
+    this file) -- a shorter grid rather than a fabricated filler. Unlike an
+    earlier version of this function, the result is NOT sorted by |delta| -- slot
+    order is fixed by category (favorite director, least favorite director, ...),
+    not by which axis happens to have the single strongest number this time, so
+    the same kind of insight always lands in the same grid position from one
+    visit to the next."""
+    insights = []
+    for axis, direction in slots:
+        best = _strongest_axis_delta(axis_deltas.get(axis, {}), direction)
+        if best is None:
+            continue
+        value, delta = best
+        actual_direction = 'positive' if delta > 0 else 'negative'
+        insight = {
+            'text': _DELTA_INSIGHT_TEXT.format(value=value, delta=delta),
+            'label': _INSIGHT_LABELS[axis][actual_direction],
+            'axis': axis,
+            'delta': delta,
+            'icon': _AXIS_ICONS[axis],
+            'image': None,
+        }
+        # Only director/actor map onto one real, photographable person -- every
+        # other axis (decade, runtime) describes a pattern, not a single subject,
+        # so it keeps the icon above rather than standing in a representative film's
+        # poster as if it were the whole story. Falls back to the icon if this
+        # person isn't in our Person cache or TMDB never gave them a headshot.
+        if axis in ('director', 'actor'):
+            person = Person.objects.filter(name=value).first()
+            if person and person.profile_url:
+                insight['image'] = person.profile_url
+        insights.append(insight)
+    return insights
+
+
+def _favorite_pairing_insight(rated, avg_rating) -> list:
+    """0 or 1 insight about this person's best-rated recurring director-actor
+    collaboration -- e.g. "Denis Villeneuve + Timothée Chalamet — 4 films, 4.8★".
+    One tile in the combined insight grid (see _dashboard_insights) -- a pairing
+    isn't a per-axis delta the way director/actor/decade/runtime are (it's a
+    two-person co-occurrence, a different shape of fact entirely), so it's
+    computed separately from _rating_insights' slot machinery rather than folded
+    into it.
+
+    Raw average, not confidence-shrunk/peak-blended -- same "checkable against
+    the real numbers" reasoning as _raw_axis_deltas. Only considers pairs sharing
+    at least MIN_COUNT_FOR_PAIRING rated films -- a single shared film is a
+    coincidence, not a collaboration pattern -- and only surfaces the single best
+    one if its average clears avg_rating + RECOMMENDATION_REASON_THRESHOLD, same
+    "don't fabricate a neutral insight" bar as every other insight in this file.
+    Ties (equal average) break toward whichever pair shares more films, same
+    "more evidence wins a tie" convention _favorite_people already uses.
+
+    Returns [] if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films
+    -- no baseline to compare against)."""
+    if avg_rating is None:
+        return []
+    avg_rating = float(avg_rating)
+
+    rated = rated.exclude(movie__isnull=True)
+    movie_ids = set(rated.values_list('movie_id', flat=True))
+    # Cast, not just directors, needs its own pass -- computed once up front (same
+    # _cameo_credit_ids reused elsewhere) rather than a query per film below.
+    cameo_ids = _cameo_credit_ids(movie_ids)
+
+    directors_by_movie = defaultdict(list)
+    for entry in rated.select_related('movie').prefetch_related('movie__directors'):
+        for director in entry.movie.directors.all():
+            directors_by_movie[entry.movie_id].append(director.name)
+
+    actors_by_movie = defaultdict(list)
+    for movie_id, name in (
+        Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
+        .values_list('movie_id', 'person__name')
+    ):
+        actors_by_movie[movie_id].append(name)
+
+    pair_ratings = defaultdict(list)
+    for movie_id, rating in rated.values_list('movie_id', 'rating'):
+        for director_name in directors_by_movie.get(movie_id, []):
+            for actor_name in actors_by_movie.get(movie_id, []):
+                pair_ratings[(director_name, actor_name)].append(float(rating))
+
+    qualifying = {
+        pair: ratings for pair, ratings in pair_ratings.items() if len(ratings) >= MIN_COUNT_FOR_PAIRING
+    }
+    if not qualifying:
+        return []
+
+    best_pair = max(
+        qualifying, key=lambda pair: (sum(qualifying[pair]) / len(qualifying[pair]), len(qualifying[pair])),
+    )
+    ratings = qualifying[best_pair]
+    avg = sum(ratings) / len(ratings)
+    if avg - avg_rating < RECOMMENDATION_REASON_THRESHOLD:
+        return []
+
+    director_name, actor_name = best_pair
+    return [{
+        'text': f'{director_name} + {actor_name} — {len(ratings)} films, {avg:.1f}★',
+        'label': 'Actor/director duo',
+        'axis': 'pairing',
+        'icon': '🤝',
+        'image': None,
+    }]
+
+
+def _hidden_gem_insight(rated, avg_rating) -> list:
+    """0 or 1 insight about this person's most obscure real favorite -- a film
+    they rated well above their own average that almost nobody on TMDB has rated
+    at all. e.g. "Perfect Blue — 5.0★, 1,900 TMDB votes". One tile in the combined
+    insight grid (see _dashboard_insights) -- same reasoning as
+    _favorite_pairing_insight: this isn't a per-axis delta, it's a single-film
+    fact, a different shape entirely.
+
+    "Obscure" is self-relative for WHICH film qualifies (the lowest vote_count
+    among the person's own favorites -- what counts as obscure varies far too
+    much by genre/era for one universal cutoff to make sense there), but still
+    has to clear HIDDEN_GEM_MAX_VOTE_COUNT in absolute terms before it's reported
+    at all -- otherwise even a mainstream hit that merely happens to be this
+    person's *least* mainstream favorite would get mislabeled "hidden". A
+    "favorite" here means a rating that clears avg_rating + RECOMMENDATION_
+    REASON_THRESHOLD, same bar as every other insight in this file.
+
+    Only considers films with a resolved vote_count -- Movie.vote_count is null
+    for anything enriched before that field existed and not yet backfilled (see
+    the backfill_vote_counts management command), so those are skipped rather
+    than wrongly treated as "0 votes, maximally obscure."
+
+    Returns [] if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films
+    -- no baseline to compare against)."""
+    if avg_rating is None:
+        return []
+    avg_rating = float(avg_rating)
+
+    favorites = [
+        entry for entry in rated.filter(movie__isnull=False, movie__vote_count__isnull=False)
+        .select_related('movie')
+        if float(entry.rating) - avg_rating >= RECOMMENDATION_REASON_THRESHOLD
+    ]
+    if not favorites:
+        return []
+
+    gem = min(favorites, key=lambda entry: entry.movie.vote_count)
+    if gem.movie.vote_count > HIDDEN_GEM_MAX_VOTE_COUNT:
+        return []
+
+    return [{
+        'text': f'{gem.movie.title} — {float(gem.rating):.1f}★, {gem.movie.vote_count:,} TMDB votes',
+        'label': 'Hidden gem',
+        'axis': 'hidden_gem',
+        'icon': '💎',
+        'image': gem.movie.poster_url or None,
+    }]
+
+
+def _rewatch_drift_insights(diary) -> list:
+    """Up to 2 insights about how a rewatched film's rating changed between the
+    first time it was logged and the most recent -- the single biggest upgrade and
+    the single biggest downgrade, each only included if it clears
+    RECOMMENDATION_REASON_THRESHOLD. Grouped by (title, year), not movie_id --
+    same reasoning as _rewatch_leaderboard: a rewatch's diary row can get a
+    different boxd.it short link than the original watch, but title/year is a
+    safe "same film" key either way, resolved or not. Only diary entries with a
+    logged rating count -- not every one has one."""
+    ratings_by_film = defaultdict(list)
+    for title, year, watched_date, rating, movie_id in diary.filter(rating__isnull=False).values_list(
+        'title', 'year', 'watched_date', 'rating', 'movie_id'
+    ):
+        ratings_by_film[(title, year)].append((watched_date, float(rating), movie_id))
+
+    drifts = []
+    for (title, year), entries in ratings_by_film.items():
+        if len(entries) < 2:
+            continue
+        entries.sort(key=lambda entry: entry[0])
+        first_rating = entries[0][1]
+        last_rating = entries[-1][1]
+        drift = last_rating - first_rating
+        if drift != 0:
+            # Any entry in the group with a resolved movie works for the poster --
+            # it's the same film either way, just whichever watch happened to match
+            # a TMDB id (a rewatch's diary row isn't guaranteed to have one -- see
+            # this function's own docstring on why title/year, not movie_id, is
+            # the grouping key).
+            movie_id = next((entry[2] for entry in entries if entry[2] is not None), None)
+            drifts.append({
+                'title': title, 'first': first_rating, 'last': last_rating, 'drift': drift, 'movie_id': movie_id,
+            })
+
+    if not drifts:
+        return []
+
+    selected = []
+    biggest_upgrade = max(drifts, key=lambda d: d['drift'])
+    if biggest_upgrade['drift'] >= RECOMMENDATION_REASON_THRESHOLD:
+        selected.append((biggest_upgrade, 'climbed'))
+    # Can never be the same film as biggest_upgrade -- a single drift can't clear
+    # both a positive and a negative threshold at once.
+    biggest_downgrade = min(drifts, key=lambda d: d['drift'])
+    if biggest_downgrade['drift'] <= -RECOMMENDATION_REASON_THRESHOLD:
+        selected.append((biggest_downgrade, 'dropped'))
+    if not selected:
+        return []
+
+    posters = Movie.objects.in_bulk(d['movie_id'] for d, _ in selected if d['movie_id'] is not None)
+    # {verb: grid label} -- "climbed" is the increase tile, "dropped" the decrease
+    # tile, matching _rewatch_drift_insights' own selected-tuple verbs above.
+    labels = {'climbed': 'Rewatch increase', 'dropped': 'Rewatch decrease'}
+    insights = []
+    for d, verb in selected:
+        movie = posters.get(d['movie_id'])
+        insights.append({
+            'text': f"{d['title']}: {d['first']:.1f}★ → {d['last']:.1f}★",
+            'label': labels[verb],
+            'icon': '🔁',
+            'image': movie.poster_url if movie and movie.poster_url else None,
+        })
+    return insights
+
+
+def _rewatch_vs_first_watch_insight(diary) -> list:
+    """0 or 1 insight comparing average rating on first-time watches vs. rewatches
+    -- e.g. "+0.3★ vs. first watches". Requires MIN_COUNT_FOR_AVERAGE logged-
+    rating diary entries on both sides, and only surfaces if the gap itself
+    clears RECOMMENDATION_REASON_THRESHOLD."""
+    first_watch = diary.filter(rewatch=False, rating__isnull=False).aggregate(avg=Avg('rating'), count=Count('id'))
+    rewatch = diary.filter(rewatch=True, rating__isnull=False).aggregate(avg=Avg('rating'), count=Count('id'))
+    if first_watch['count'] < MIN_COUNT_FOR_AVERAGE or rewatch['count'] < MIN_COUNT_FOR_AVERAGE:
+        return []
+    delta = float(rewatch['avg']) - float(first_watch['avg'])
+    if abs(delta) < RECOMMENDATION_REASON_THRESHOLD:
+        return []
+    return [{
+        'text': f'{delta:+.1f}★ vs. first watches',
+        'label': 'Rewatch score change',
+        'icon': '🔁', 'image': None,
+    }]
+
+
+def _liked_vs_rated_insight(rated, import_session) -> list:
+    """0 or 1 insight about how closely 'liked' (Letterboxd's heart) tracks star
+    rating -- e.g. "82% liked (4★+) vs 12% (rest)". Compares the like-rate among a
+    person's 4-star-and-up films to the like-rate among everything else; only
+    reported if that gap is clearly wide (>= LIKE_RATE_CLOSE_GAP) or clearly
+    narrow (<= LIKE_RATE_DECOUPLED_GAP) -- a gap in between isn't distinctive
+    enough to call out either way, though the tile text is the same regardless of
+    which threshold triggered it (the two percentages already say whichever of
+    those is true; a "closely tracks"/"barely tracks" framing sentence doesn't
+    fit a grid tile the way it did as its own full-width row). Requires
+    MIN_COUNT_FOR_PATTERN_INSIGHT rated films on both sides of the 4-star line, a
+    stricter bar than a plain average since a percentage from a handful of films
+    is noisy."""
+    liked_movie_ids = set(
+        LikedFilmEntry.objects.filter(import_session=import_session, movie__isnull=False)
+        .values_list('movie_id', flat=True)
+    )
+    high = list(rated.filter(movie__isnull=False, rating__gte=4).values_list('movie_id', flat=True))
+    low = list(rated.filter(movie__isnull=False, rating__lt=4).values_list('movie_id', flat=True))
+    if len(high) < MIN_COUNT_FOR_PATTERN_INSIGHT or len(low) < MIN_COUNT_FOR_PATTERN_INSIGHT:
+        return []
+
+    high_like_rate = sum(1 for movie_id in high if movie_id in liked_movie_ids) / len(high)
+    low_like_rate = sum(1 for movie_id in low if movie_id in liked_movie_ids) / len(low)
+    gap = high_like_rate - low_like_rate
+
+    if not (gap >= LIKE_RATE_CLOSE_GAP or gap <= LIKE_RATE_DECOUPLED_GAP):
+        return []
+    return [{
+        'text': f'{high_like_rate:.0%} liked (4★+) vs {low_like_rate:.0%} (rest)',
+        'label': 'Heart percent',
+        'icon': '❤️', 'image': None,
+    }]
+
+
+def _dashboard_insights(diary, rated, avg_rating, actor_rating_lists, director_ratings, import_session) -> list:
+    """The single, fixed-order insight grid combining every insight type this
+    file builds -- up to 12 tiles, 4 to a row:
+
+    Row 1: favorite director, least favorite director, favorite actor, least
+           favorite actor (_rating_insights with _PERSON_INSIGHT_SLOTS).
+    Row 2: favorite director-actor duo (_favorite_pairing_insight), hidden gem
+           (_hidden_gem_insight), favorite runtime, favorite decade
+           (_rating_insights with _AXIS_INSIGHT_SLOTS).
+    Row 3: biggest rewatch increase, biggest rewatch decrease
+           (_rewatch_drift_insights), rewatch vs. first-watch score change
+           (_rewatch_vs_first_watch_insight), heart-vs-rating percentage
+           (_liked_vs_rated_insight).
+
+    A hand-picked, fixed order -- not sorted by magnitude -- so the same kind of
+    insight always lands in the same grid position from one visit to the next;
+    see each individual function's own docstring for how its piece is computed
+    and gated. A slot with nothing that clears its own "worth reporting" bar is
+    skipped entirely, not filled with a placeholder -- the grid is just shorter
+    for that person (and earlier tiles shift up to fill the gap, same as any
+    other insight in this file), never a fabricated filler."""
+    raw_deltas = _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings)
+    return (
+        _rating_insights(raw_deltas, _PERSON_INSIGHT_SLOTS)
+        + _favorite_pairing_insight(rated, avg_rating)
+        + _hidden_gem_insight(rated, avg_rating)
+        + _rating_insights(raw_deltas, _AXIS_INSIGHT_SLOTS)
+        + _rewatch_drift_insights(diary)
+        + _rewatch_vs_first_watch_insight(diary)
+        + _liked_vs_rated_insight(rated, import_session)
+    )
 
 
 def _rewatch_leaderboard(diary) -> dict:
@@ -1163,26 +1678,6 @@ def _streak_and_gap(dates: list) -> tuple:
 
     longest_streak = max(longest_streak, current_streak)
     return longest_streak, longest_gap
-
-
-def _highlights(watched_movies, rated, most_rewatched_films) -> dict:
-    """A handful of single-film superlatives -- longest/shortest runtime, oldest/
-    newest release year, highest/lowest rated, most watched. Ties are broken
-    arbitrarily (whichever the DB returns first); these are meant as a few fun
-    exemplars, not a ranked list, so no MIN_COUNT_FOR_AVERAGE-style guard applies --
-    even a single rated film has a legitimate "highest rated" (itself).
-    Runtime/year come from watched_movies (Movie rows, TMDB's own title) since
-    they're about every film watched, not just rated ones; rating extremes come from
-    rated (RatingEntry, Letterboxd's own title) to match every other rating stat."""
-    return {
-        'longest_film': watched_movies.filter(runtime_minutes__isnull=False).order_by('-runtime_minutes').first(),
-        'shortest_film': watched_movies.filter(runtime_minutes__isnull=False).order_by('runtime_minutes').first(),
-        'newest_film': watched_movies.filter(release_year__isnull=False).order_by('-release_year').first(),
-        'oldest_film': watched_movies.filter(release_year__isnull=False).order_by('release_year').first(),
-        'highest_rated': rated.filter(movie__isnull=False).select_related('movie').order_by('-rating').first(),
-        'lowest_rated': rated.filter(movie__isnull=False).select_related('movie').order_by('rating').first(),
-        'most_watched_film': most_rewatched_films[0] if most_rewatched_films else None,
-    }
 
 
 def _true_score(avg, count, k, overall_avg_rating, five_star_count=0) -> float:

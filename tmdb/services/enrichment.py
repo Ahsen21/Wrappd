@@ -262,6 +262,7 @@ def _populate_details(movie):
     movie.runtime_minutes = details.get('runtime')
     movie.overview = details.get('overview', '') or movie.overview
     movie.tmdb_rating = details.get('vote_average')
+    movie.vote_count = details.get('vote_count')
     movie.original_title = details.get('original_title', '') or movie.original_title
     movie.release_year = _year_from_release_date(details.get('release_date')) or movie.release_year
     movie.original_language = _resolve_language_name(details)

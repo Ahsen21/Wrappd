@@ -826,6 +826,52 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   text-align: center;
   color: var(--muted);
 }
+/* "Your rating insights" -- a single combined grid of up to 12 tiles (see
+   _dashboard_insights in dashboard.py: 4 director/actor preference tiles, a
+   favorite duo + hidden gem + runtime + decade, then 4 rewatch/heart behavioral
+   tiles). Built on the same .favs/.fav-card system every other stat grid on this
+   site uses -- .fav-card's own image/.fav-placeholder/caption-<p> styling is
+   reused as-is, not reinvented -- so the only additions below are the handful of
+   things genuinely specific to this grid: its 4-column sizing, an eyebrow title
+   above each card (new -- see its own comment), and reapplying Favorite
+   Directors/Actors' existing narrower-headshot treatment per-card instead of
+   per-container. */
+.favs--insight { gap: 0.6rem; }
+.favs--insight .fav-card {
+  flex: 0 0 calc((100% - 3 * 0.6rem) / 4);
+  max-width: calc((100% - 3 * 0.6rem) / 4);
+}
+/* 4 columns is desktop-only math -- unwound to 2 at the same 700px breakpoint
+   every other responsive grid on this site uses (.favs--eight/.favs--six
+   included), rather than holding at 4 the way .favs--eight holds at 4 down to
+   phone width -- .favs--eight's mobile floor IS 4, so this grid's own floor
+   needs to sit a step below that, not repeat it. */
+@media (max-width: 700px) {
+  .favs--insight .fav-card {
+    flex: 0 0 calc((100% - 1 * 0.6rem) / 2);
+    max-width: calc((100% - 1 * 0.6rem) / 2);
+  }
+}
+/* A small eyebrow title above the image -- genuinely new, no other .fav-card
+   variant on the site has one, because this is the first grid whose cards mix
+   several distinct KINDS of fact (a person, a film, an aggregate stat) in the
+   same row rather than one repeated kind -- the title is what tells them apart
+   before the image even loads. */
+.fav-card-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+/* Director/actor tiles only -- the exact same narrower, centered headshot
+   treatment Favorite Directors/Actors already use (.favs--headshots), just
+   applied per-card here instead of per-container, since this grid mixes
+   headshots with film posters and icon placeholders in the same row rather than
+   being all-headshots the way that grid is. */
+.fav-card--headshot img, .fav-card--headshot .fav-placeholder { width: 75%; margin: 0 auto; }
+
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
 /* A plain vertical rule down the middle, for two-col layouts that need a clearer

@@ -53,6 +53,14 @@ class Movie(models.Model):
     poster_path = models.CharField(max_length=300, blank=True)
     overview = models.TextField(blank=True)
     tmdb_rating = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True)
+    # How many people have rated this film on TMDB -- feeds the "hidden gem"
+    # insight (a personal favorite most people haven't rated at all), not shown
+    # anywhere else. Nullable rather than defaulting to 0: a movie enriched before
+    # this field existed genuinely has an unknown count, not a confirmed zero, and
+    # the insight needs to tell those apart (see stats/services/dashboard.py's
+    # _hidden_gem_insight, which skips films with vote_count=None rather than
+    # treating them as the most obscure thing the person has ever rated).
+    vote_count = models.PositiveIntegerField(null=True, blank=True)
     # Human-readable name (e.g. "English"), resolved from TMDB's spoken_languages list
     # during enrichment since original_language on its own is just an ISO 639-1 code.
     original_language = models.CharField(max_length=100, blank=True)
