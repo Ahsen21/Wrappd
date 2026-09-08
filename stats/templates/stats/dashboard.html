@@ -113,8 +113,12 @@
   </div>
 
   <nav class="section-nav">
-    <a href="#movie-stats" class="section-nav-link active" data-section="movie-stats">Movie Stats</a>
-    <a href="#watching-stats" class="section-nav-link" data-section="watching-stats">Watching Stats</a>
+    <a href="#ratings-genres" class="section-nav-link active" data-section="ratings-genres">Ratings &amp; Genres</a>
+    <a href="#favorites-taste" class="section-nav-link" data-section="favorites-taste">Favorites &amp; Taste</a>
+    <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
+    {% if recommendations %}
+      <a href="#watchlist" class="section-nav-link" data-section="watchlist">Watchlist</a>
+    {% endif %}
   </nav>
 
   <h2 id="movie-stats"><span class="section-heading-tick">Movie Stats</span></h2>
@@ -140,7 +144,7 @@
     </div>
   {% endif %} -->
 
-  <div class="card">
+  <div class="card jump-target" id="ratings-genres">
     <h3>Rating distribution</h3>
     <p class="muted">Average rating: <strong>{% if avg_rating %}{{ avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong></p>
     <canvas id="ratingDistributionChart"></canvas>
@@ -189,7 +193,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card jump-target" id="favorites-taste">
     <h3>Favorite Directors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
@@ -352,7 +356,7 @@
   <h2 id="watching-stats"><span class="section-heading-tick">Watching Stats</span></h2>
   <p class="muted">How much, how often, and when you watch.</p>
 
-  <div class="card">
+  <div class="card jump-target" id="watching-habits">
     <h3>Films per year</h3>
     <canvas id="filmsPerYearChart"></canvas>
   </div>
@@ -450,7 +454,7 @@
   </div>
 
   {% if recommendations %}
-    <div class="card">
+    <div class="card jump-target" id="watchlist">
       <h3>Recommended from your watchlist</h3>
       <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
       <div class="favs favs--eight">
