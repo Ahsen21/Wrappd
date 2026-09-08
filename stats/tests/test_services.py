@@ -993,6 +993,110 @@ class TvShowExclusionTests(TestCase):
         self.assertEqual(context['only_b_count'], 0)
 
 
+class ShortFilmExclusionTests(TestCase):
+    """The include/exclude shorts toggle -- exclude_shorts=True drops any row whose
+    resolved movie has a *confirmed* runtime under SHORT_FILM_MAX_RUNTIME_MINUTES
+    (60), on both Director's Cut and Double Feature, while leaving unresolved/
+    unknown-runtime films untouched either way (see
+    stats/services/filters.py's exclude_short_entries/_movies)."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+
+        self.feature = Movie.objects.create(tmdb_id=7001, title='Feature Film', release_year=2020, runtime_minutes=120)
+        self.short = Movie.objects.create(tmdb_id=7002, title='Short Film', release_year=2020, runtime_minutes=30)
+        # No runtime_minutes at all -- unconfirmed, must survive exclude_shorts too.
+        self.unknown = Movie.objects.create(tmdb_id=7003, title='Unknown Runtime Film', release_year=2020)
+
+        for movie, rating in [(self.feature, Decimal('4.0')), (self.short, Decimal('2.0')), (self.unknown, Decimal('3.0'))]:
+            DiaryEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, watched_date='2024-01-01', rating=rating, movie=movie,
+            )
+            RatingEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+            WatchedEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, movie=movie,
+            )
+
+    def test_dashboard_includes_shorts_by_default(self):
+        context = build_dashboard_context(self.session)
+        self.assertFalse(context['exclude_shorts'])
+        self.assertEqual(context['total_films'], 3)
+        self.assertEqual(context['films_watched_total'], 3)
+
+    def test_dashboard_excludes_confirmed_shorts_only_when_toggled(self):
+        context = build_dashboard_context(self.session, exclude_shorts=True)
+        self.assertTrue(context['exclude_shorts'])
+        # Short Film is dropped; Feature Film and the unresolved-runtime film both
+        # survive -- an unknown runtime isn't the same as a confirmed-short one.
+        self.assertEqual(context['total_films'], 2)
+        self.assertEqual(context['films_watched_total'], 2)
+
+    def test_excluding_shorts_does_not_affect_the_tv_exclusion_banner(self):
+        """A real regression risk from how this was implemented: shorts filtered
+        out of diary/rated must not get miscounted as "couldn't be matched to
+        TMDB" (that banner is specifically about TV exclusions, computed against
+        the TV-only-filtered stage, not the final shorts-filtered one)."""
+        context = build_dashboard_context(self.session, exclude_shorts=True)
+        self.assertEqual(context['excluded_tv_count'], 0)
+        self.assertEqual(context['excluded_tv_titles'], [])
+
+    def test_compare_excludes_confirmed_shorts_from_both_sessions(self):
+        other = ImportSession.objects.create(display_name='Sam')
+        for movie, rating in [(self.feature, Decimal('3.5')), (self.short, Decimal('5.0'))]:
+            RatingEntry.objects.create(
+                import_session=other, letterboxd_uri=f'https://boxd.it/b-{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+
+        context = build_compare_context(self.session, other, exclude_shorts=True)
+        self.assertTrue(context['exclude_shorts'])
+        # Short Film rated by both, but excluded -- only Feature Film counts shared.
+        self.assertEqual(context['shared_count'], 1)
+        self.assertEqual(context['biggest_disagreements'][0]['title'], 'Feature Film')
+
+    def test_compare_includes_shorts_by_default(self):
+        other = ImportSession.objects.create(display_name='Sam')
+        for movie, rating in [(self.feature, Decimal('3.5')), (self.short, Decimal('5.0'))]:
+            RatingEntry.objects.create(
+                import_session=other, letterboxd_uri=f'https://boxd.it/c-{movie.tmdb_id}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+        context = build_compare_context(self.session, other)
+        self.assertFalse(context['exclude_shorts'])
+        self.assertEqual(context['shared_count'], 2)
+
+    def test_exclude_short_entries_keeps_unresolved_and_unknown_runtime_rows(self):
+        """Direct check of the filter helper itself (already exercised indirectly
+        above via build_dashboard_context) -- an entry with no movie at all, and
+        one whose movie has no runtime_minutes, both have to survive
+        exclude_short_entries; only a *confirmed* under-60-minute runtime should
+        drop a row."""
+        from stats.services.filters import exclude_short_entries
+
+        RatingEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/unresolved', title='Unresolved',
+            year=2020, rating=Decimal('3.0'), movie=None,
+        )
+        rated = RatingEntry.objects.filter(import_session=self.session)
+        titles = set(exclude_short_entries(rated).values_list('title', flat=True))
+        self.assertIn('Feature Film', titles)
+        self.assertIn('Unknown Runtime Film', titles)
+        self.assertIn('Unresolved', titles)
+        self.assertNotIn('Short Film', titles)
+
+    def test_exclude_short_movies_keeps_unknown_runtime_movies(self):
+        from stats.services.filters import exclude_short_movies
+
+        movies = Movie.objects.filter(tmdb_id__in=[self.feature.tmdb_id, self.short.tmdb_id, self.unknown.tmdb_id])
+        titles = set(exclude_short_movies(movies).values_list('title', flat=True))
+        self.assertEqual(titles, {'Feature Film', 'Unknown Runtime Film'})
+
+
 class WatchlistRecommendationTests(TestCase):
     """_watchlist_recommendations, exercised via build_dashboard_context's
     'recommendations' key."""

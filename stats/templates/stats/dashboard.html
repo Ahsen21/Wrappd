@@ -8,7 +8,18 @@
   {% endif %}
 
   <div class="hero" {% if hero_poster_url %}style="--hero-image: url('{{ hero_poster_url }}');"{% endif %}>
-    <p class="hero-eyebrow">Director's Cut</p>
+    <div class="hero-top-row">
+      <p class="hero-eyebrow">Director's Cut</p>
+      <a
+        href="{% if exclude_shorts %}{{ request.path }}{% else %}?shorts=exclude{% endif %}"
+        class="shorts-toggle{% if exclude_shorts %} shorts-toggle--on{% endif %}"
+        role="switch" aria-checked="{% if exclude_shorts %}true{% else %}false{% endif %}"
+        title="{% if exclude_shorts %}Showing films 60+ min only -- click to include shorts{% else %}Click to exclude short films (under 60 min) from every stat on this page{% endif %}"
+      >
+        Exclude shorts
+        <span class="shorts-toggle-track"><span class="shorts-toggle-thumb"></span></span>
+      </a>
+    </div>
     <div class="hero-heading">
       <h1>{{ import_session.display_name|default:"Your" }} stats</h1>
       <button
@@ -109,7 +120,7 @@
   <h2 id="movie-stats"><span class="section-heading-tick">Movie Stats</span></h2>
   <p class="muted">What you watch and how you rate it.</p>
 
-  {% if insights %}
+  <!-- {% if insights %}
     <div class="card">
       <h3>Your rating insights</h3>
       <p class="muted">What moves your rating, your standout picks, and how you actually watch.</p>
@@ -127,7 +138,7 @@
         {% endfor %}
       </div>
     </div>
-  {% endif %}
+  {% endif %} -->
 
   <div class="card">
     <h3>Rating distribution</h3>

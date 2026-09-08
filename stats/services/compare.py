@@ -11,7 +11,7 @@ from itertools import groupby
 from django.db.models import Avg, Count, Min
 
 from imports.models import DiaryEntry, RatingEntry, WatchlistEntry
-from stats.services.filters import exclude_tv_shows
+from stats.services.filters import SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short_entries, exclude_tv_shows
 from tmdb.models import Credit, Movie
 
 AGREEMENT_THRESHOLD = Decimal('0.5')
@@ -65,7 +65,7 @@ CAMEO_RELATIVE_BILLING_THRESHOLD = 0.4
 RATING_BUCKETS = [Decimal(v) for v in ('0.5', '1.0', '1.5', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0')]
 
 
-def _film_map(import_session):
+def _film_map(import_session, exclude_shorts=False):
     """One row per (title, year) for this session, combining the authoritative rating
     (ratings.csv) with the movie FK / title fallback from diary.csv.
 
@@ -73,14 +73,23 @@ def _film_map(import_session):
     a per-log-entry short link, not a stable per-film id -- the same film gets a
     *different* boxd.it code in diary.csv than in ratings.csv. (title, year) is the
     same key TMDB matching already uses (see tmdb/services/enrichment.py), so this
-    keeps film identity consistent across the whole app."""
+    keeps film identity consistent across the whole app.
+
+    exclude_shorts drops any row whose resolved movie has a confirmed runtime under
+    SHORT_FILM_MAX_RUNTIME_MINUTES -- the include/exclude shorts toggle on this
+    page. Unresolved/unknown runtimes are kept either way (see
+    exclude_short_entries)."""
     films = {}
 
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
+        diary = exclude_short_entries(diary)
+
     for r in rated.select_related('movie'):
         films[(r.title, r.year)] = {'title': r.title, 'year': r.year, 'rating': r.rating, 'movie_id': r.movie_id}
 
-    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
     for d in diary.select_related('movie').order_by('watched_date'):
         key = (d.title, d.year)
         entry = films.setdefault(key, {'title': d.title, 'year': d.year, 'rating': None, 'movie_id': None})
@@ -92,32 +101,38 @@ def _film_map(import_session):
     return films
 
 
-def _watchlist_map(import_session):
+def _watchlist_map(import_session, exclude_shorts=False):
     """(title, year) -> {title, year, movie_id} for this session's watchlist.csv.
     Its own identity space, not merged with _film_map's rated/diary data (a film on
     the watchlist hasn't been watched) -- intersected independently between the two
-    sessions in build_compare_context."""
+    sessions in build_compare_context. exclude_shorts -- see _film_map's own
+    comment."""
     films = {}
     watchlist = exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        watchlist = exclude_short_entries(watchlist)
     for w in watchlist:
         films[(w.title, w.year)] = {'title': w.title, 'year': w.year, 'movie_id': w.movie_id}
     return films
 
 
-def _films_by_date(import_session) -> dict:
+def _films_by_date(import_session, exclude_shorts=False) -> dict:
     """watched_date -> [{'title', 'year', 'movie_id'}, ...] for this session's
     diary.csv -- a date can have more than one entry (a marathon day, or a rewatch
     logged the same day as something else), so every value is a list, never a single
     film. Dicts rather than formatted strings so a poster can be resolved per film,
-    same as every other film list on this page."""
+    same as every other film list on this page. exclude_shorts -- see _film_map's
+    own comment."""
     entries = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session)).order_by('title')
+    if exclude_shorts:
+        entries = exclude_short_entries(entries)
     by_date = defaultdict(list)
     for title, year, watched_date, movie_id in entries.values_list('title', 'year', 'watched_date', 'movie_id'):
         by_date[watched_date].append({'title': title, 'year': year, 'movie_id': movie_id})
     return by_date
 
 
-def _same_day_logs(session_a, session_b) -> dict:
+def _same_day_logs(session_a, session_b, exclude_shorts=False) -> dict:
     """{'logs': [...], 'exact_matches': [...]}. logs = dates both sessions logged at
     least one film on -- not necessarily the *same* film (that's shared_films/
     same_rating elsewhere on this page); a same-day viewing pattern, not a
@@ -125,9 +140,9 @@ def _same_day_logs(session_a, session_b) -> dict:
     instance where the *same* (title, year) was logged by both people on the same
     date -- surfaced separately via the page's 'Exact matches' toggle rather than
     mixed into logs, since it's a different (stronger) claim than 'you both watched
-    something that day'."""
-    dates_a = _films_by_date(session_a)
-    dates_b = _films_by_date(session_b)
+    something that day'. exclude_shorts -- see _film_map's own comment."""
+    dates_a = _films_by_date(session_a, exclude_shorts)
+    dates_b = _films_by_date(session_b, exclude_shorts)
     shared_dates = set(dates_a) & set(dates_b)
 
     logs = []
@@ -147,7 +162,7 @@ def _same_day_logs(session_a, session_b) -> dict:
     return {'logs': logs, 'exact_matches': exact_matches}
 
 
-def _top_unseen_by_other(import_session, other_watched_keys):
+def _top_unseen_by_other(import_session, other_watched_keys, exclude_shorts=False):
     """This session's TOP_UNSEEN_MIN_RATING+ films, ranked highest rating first, that
     the other session has no record of watching at all -- not restricted to a
     perfect 5.0 (that returned nothing for anyone who rarely hands out perfect
@@ -157,6 +172,7 @@ def _top_unseen_by_other(import_session, other_watched_keys):
     than a separate WatchedEntry-based definition just for this one list. Returns
     every match, uncapped -- the caller slices to GRID_DISPLAY_CAP_NARROW and tracks
     the true total, same cap-with-total pattern as watchlist_matches/only_a_films.
+    exclude_shorts -- see _film_map's own comment.
 
     Sorted by rating descending, (title, year) as the tiebreak for determinism --
     `rated` is a QuerySet with unspecified DB ordering otherwise, and two different
@@ -164,6 +180,8 @@ def _top_unseen_by_other(import_session, other_watched_keys):
     rated = exclude_tv_shows(
         RatingEntry.objects.filter(import_session=import_session, rating__gte=TOP_UNSEEN_MIN_RATING)
     )
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
     films = [
         {'title': r.title, 'year': r.year, 'movie_id': r.movie_id, 'rating': r.rating}
         for r in rated
@@ -173,14 +191,17 @@ def _top_unseen_by_other(import_session, other_watched_keys):
     return films
 
 
-def _rating_curve(import_session) -> dict:
+def _rating_curve(import_session, exclude_shorts=False) -> dict:
     """Per-session rating distribution, zero-filled across every RATING_BUCKETS value.
     Not the same shape as dashboard.py's rating_distribution (which only returns
     buckets that actually have data) -- the two-session grouped bar chart this feeds
     needs both sessions plotted against one identical, gap-free x-axis, so it's
     reimplemented locally rather than imported, the same way this file already
-    reimplements its own MIN_COUNT_FOR_AVERAGE instead of importing dashboard.py's."""
+    reimplements its own MIN_COUNT_FOR_AVERAGE instead of importing dashboard.py's.
+    exclude_shorts -- see _film_map's own comment."""
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
     counts_by_rating = {row['rating']: row['count'] for row in rated.values('rating').annotate(count=Count('id'))}
     counts = [counts_by_rating.get(bucket, 0) for bucket in RATING_BUCKETS]
 
@@ -213,16 +234,20 @@ def _tmdb_image_url(path: str, size: str) -> str:
     return f'https://image.tmdb.org/t/p/{size}{path}' if path else ''
 
 
-def _director_averages(import_session, min_count):
+def _director_averages(import_session, min_count, exclude_shorts=False):
     """{name: (avg, count, profile_url, tmdb_id)} for directors this session has
     rated at least min_count films from. min_count is MIN_COUNT_FOR_FAVORITE_DIRECTOR,
     not MIN_COUNT_FOR_AVERAGE -- 'favorite' has a higher bar than a merely-averageable
     sample size. tmdb_id is threaded through for the person-filmography modal (same
     dashboard.py feature, reused as-is here since it's keyed by session_id alone --
     session_a and session_b are each just an ImportSession id, so the existing
-    endpoint needs no Double-Feature-specific changes)."""
+    endpoint needs no Double-Feature-specific changes). exclude_shorts -- see
+    _film_map's own comment."""
+    rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
     rows = (
-        exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
+        rated
         .filter(movie__directors__isnull=False)
         .values('movie__directors__name')
         .annotate(
@@ -258,7 +283,7 @@ def _cameo_credit_ids(movie_ids) -> set:
     }
 
 
-def _actor_averages(import_session, min_count):
+def _actor_averages(import_session, min_count, exclude_shorts=False):
     """{name: (avg, count, profile_url, tmdb_id)} for actors this session has rated
     at least min_count *non-cameo* films from -- same cameo exclusion as
     dashboard.py's favorite_actors/top_actors (a big-cast film's one-scene bit part
@@ -267,8 +292,10 @@ def _actor_averages(import_session, min_count):
     id needs an explicit query through Credit, not the cast_members M2M field, so this
     is its own function rather than a shared 'filter_field' parameter. tmdb_id is
     threaded through for the person-filmography modal, same reasoning as
-    _director_averages above."""
+    _director_averages above. exclude_shorts -- see _film_map's own comment."""
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session)).exclude(movie__isnull=True)
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
     rated_ratings_by_movie = dict(rated.values_list('movie_id', 'rating'))
     cameo_ids = _cameo_credit_ids(rated_ratings_by_movie.keys())
 
@@ -440,7 +467,7 @@ def _generosity_score(rated) -> tuple:
     return sum(deltas) / len(deltas), len(deltas)
 
 
-def _preference_deltas(import_session):
+def _preference_deltas(import_session, exclude_shorts=False):
     """This session's own preference model: {'overall_avg', 'genre', 'director',
     'actor', 'country', 'language', 'decade', 'runtime', 'weights',
     'shrunk_generosity'}, where each of the 7 signal maps is {key: confidence-shrunk
@@ -451,10 +478,12 @@ def _preference_deltas(import_session):
     imported. 'weights' is this person's own _adaptive_weights, derived from all 7
     maps above -- also reimplemented locally, see that function. 'shrunk_generosity'
     is their confidence-shrunk _generosity_score, used by _preference_score for the
-    small TMDB_WEIGHT nudge. Returns None if this session doesn't even have
-    MIN_COUNT_FOR_AVERAGE rated films -- there's no baseline to compute a delta
-    against otherwise."""
+    small TMDB_WEIGHT nudge. exclude_shorts -- see _film_map's own comment. Returns
+    None if this session doesn't even have MIN_COUNT_FOR_AVERAGE rated films --
+    there's no baseline to compute a delta against otherwise."""
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session)).exclude(movie__isnull=True)
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
     rated_count = rated.count()
     if rated_count < MIN_COUNT_FOR_AVERAGE:
         return None
@@ -628,14 +657,14 @@ def _eligible_watchlist_matches(matches: list) -> list:
             return True
         if movie.release_year is not None and movie.release_year > current_year:
             return False
-        if movie.runtime_minutes is not None and movie.runtime_minutes < 60:
+        if movie.runtime_minutes is not None and movie.runtime_minutes < SHORT_FILM_MAX_RUNTIME_MINUTES:
             return False
         return True
 
     return [f for f in matches if _is_eligible(f)]
 
 
-def _rank_watchlist_matches(session_a, session_b, matches: list, display_cap: int) -> list:
+def _rank_watchlist_matches(session_a, session_b, matches: list, display_cap: int, exclude_shorts=False) -> list:
     """Ranks `matches` (already eligibility-filtered, see _eligible_watchlist_matches)
     by joint best-fit for both people, instead of the (title, year) order they
     arrive in, and returns at most `display_cap` of them. PERSON_CREDIT_CAP is
@@ -667,9 +696,13 @@ def _rank_watchlist_matches(session_a, session_b, matches: list, display_cap: in
     Falls back to the original (title, year) order, still capped to display_cap, if
     either session doesn't have enough rated films to build a preference profile at
     all (see _preference_deltas) -- nothing to rank or credit-cap by yet, so this
-    doesn't silently reorder or filter the list around half a picture."""
-    deltas_a = _preference_deltas(session_a)
-    deltas_b = _preference_deltas(session_b)
+    doesn't silently reorder or filter the list around half a picture. exclude_shorts
+    -- see _film_map's own comment; threaded through to _preference_deltas, not
+    applied to `matches` itself (already eligibility-filtered by the caller via
+    _eligible_watchlist_matches, an unconditional feature-length rule unrelated to
+    this toggle)."""
+    deltas_a = _preference_deltas(session_a, exclude_shorts)
+    deltas_b = _preference_deltas(session_b, exclude_shorts)
     if deltas_a is None or deltas_b is None:
         return sorted(matches, key=lambda f: (f['title'], f['year']))[:display_cap]
 
@@ -827,18 +860,20 @@ def _same_rating_display(same_rating_all, cap, high_slots_target):
     return _spread_by_rating(high, high_slots) + _spread_by_rating(low, low_slots)
 
 
-def _top_genres(import_session, limit=5):
+def _top_genres(import_session, limit=5, exclude_shorts=False):
+    entries = DiaryEntry.objects.filter(import_session=import_session, movie__genres__isnull=False)
+    if exclude_shorts:
+        entries = exclude_short_entries(entries)
     return list(
-        DiaryEntry.objects.filter(import_session=import_session, movie__genres__isnull=False)
-        .values('movie__genres__name')
+        entries.values('movie__genres__name')
         .annotate(count=Count('id'))
         .order_by('-count')[:limit]
     )
 
 
-def build_compare_context(session_a, session_b) -> dict:
-    map_a = _film_map(session_a)
-    map_b = _film_map(session_b)
+def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
+    map_a = _film_map(session_a, exclude_shorts)
+    map_b = _film_map(session_b, exclude_shorts)
 
     keys_a, keys_b = set(map_a), set(map_b)
     shared_keys = keys_a & keys_b
@@ -894,19 +929,24 @@ def build_compare_context(session_a, session_b) -> dict:
     only_a_films_all = sorted((map_a[k] for k in only_a_keys), key=lambda f: (f['title'], f['year']))
     only_b_films_all = sorted((map_b[k] for k in only_b_keys), key=lambda f: (f['title'], f['year']))
 
-    watchlist_a = _watchlist_map(session_a)
-    watchlist_b = _watchlist_map(session_b)
+    watchlist_a = _watchlist_map(session_a, exclude_shorts)
+    watchlist_b = _watchlist_map(session_b, exclude_shorts)
     shared_watchlist_keys = set(watchlist_a) & set(watchlist_b)
     # Ranked by joint best-fit for both people, not (title, year) -- see
     # _rank_watchlist_matches for the least-misery combination and its fallback when
     # one or both sessions don't have enough rated films to personalize at all.
     # Eligibility (released, feature-length) is filtered once here -- separate from
     # ranking, since it's what watchlist_matches_total counts, not something
-    # PERSON_CREDIT_CAP (a display-diversity concern) should affect.
+    # PERSON_CREDIT_CAP (a display-diversity concern) should affect. Always excludes
+    # shorts regardless of the exclude_shorts toggle -- an unconditional "is this
+    # actually watchable" rule (see _eligible_watchlist_matches), not the same
+    # concern as the toggle's own stats-wide inclusion/exclusion.
     watchlist_eligible = _eligible_watchlist_matches([watchlist_a[k] for k in shared_watchlist_keys])
-    watchlist_matches_ranked = _rank_watchlist_matches(session_a, session_b, watchlist_eligible, GRID_DISPLAY_CAP)
+    watchlist_matches_ranked = _rank_watchlist_matches(
+        session_a, session_b, watchlist_eligible, GRID_DISPLAY_CAP, exclude_shorts,
+    )
 
-    same_day = _same_day_logs(session_a, session_b)
+    same_day = _same_day_logs(session_a, session_b, exclude_shorts)
     same_day_logs_all = same_day['logs']
     same_day_exact_matches_all = same_day['exact_matches']
     # Flattened views over the same nested film dicts inside same_day_logs_all --
@@ -915,19 +955,19 @@ def build_compare_context(session_a, session_b) -> dict:
     same_day_films_a = [f for entry in same_day_logs_all for f in entry['films_a']]
     same_day_films_b = [f for entry in same_day_logs_all for f in entry['films_b']]
 
-    top_unseen_a_all = _top_unseen_by_other(session_a, keys_b)
-    top_unseen_b_all = _top_unseen_by_other(session_b, keys_a)
+    top_unseen_a_all = _top_unseen_by_other(session_a, keys_b, exclude_shorts)
+    top_unseen_b_all = _top_unseen_by_other(session_b, keys_a, exclude_shorts)
 
-    curve_a = _rating_curve(session_a)
-    curve_b = _rating_curve(session_b)
+    curve_a = _rating_curve(session_a, exclude_shorts)
+    curve_b = _rating_curve(session_b, exclude_shorts)
 
     # Each session's director/actor averages computed once and reused by both
     # _top_people (this session alone) and _shared_people (the intersection) --
     # avoids querying the same session's stats twice over.
-    director_stats_a = _director_averages(session_a, MIN_COUNT_FOR_FAVORITE_DIRECTOR)
-    director_stats_b = _director_averages(session_b, MIN_COUNT_FOR_FAVORITE_DIRECTOR)
-    actor_stats_a = _actor_averages(session_a, MIN_COUNT_FOR_FAVORITE_ACTOR)
-    actor_stats_b = _actor_averages(session_b, MIN_COUNT_FOR_FAVORITE_ACTOR)
+    director_stats_a = _director_averages(session_a, MIN_COUNT_FOR_FAVORITE_DIRECTOR, exclude_shorts)
+    director_stats_b = _director_averages(session_b, MIN_COUNT_FOR_FAVORITE_DIRECTOR, exclude_shorts)
+    actor_stats_a = _actor_averages(session_a, MIN_COUNT_FOR_FAVORITE_ACTOR, exclude_shorts)
+    actor_stats_b = _actor_averages(session_b, MIN_COUNT_FOR_FAVORITE_ACTOR, exclude_shorts)
 
     # Directors and actors both render as grids now (SHARED_PEOPLE_GRID_CAP/
     # GRID_DISPLAY_CAP_NARROW), same as this file's other poster grids -- not TOP_N,
@@ -977,6 +1017,7 @@ def build_compare_context(session_a, session_b) -> dict:
     return {
         'session_a': session_a,
         'session_b': session_b,
+        'exclude_shorts': exclude_shorts,
         'shared_count': len(shared_keys),
         'only_a_count': len(only_a_keys),
         'only_b_count': len(only_b_keys),
@@ -996,8 +1037,8 @@ def build_compare_context(session_a, session_b) -> dict:
         'same_rating_total': len(same_rating_all),
         'only_a_films': only_a_films_all[:TOP_N],
         'only_b_films': only_b_films_all[:TOP_N],
-        'genres_a': _top_genres(session_a),
-        'genres_b': _top_genres(session_b),
+        'genres_a': _top_genres(session_a, exclude_shorts=exclude_shorts),
+        'genres_b': _top_genres(session_b, exclude_shorts=exclude_shorts),
         'shared_directors': shared_directors,
         'shared_actors': shared_actors,
         'top_directors_a': top_directors_a,
