@@ -109,86 +109,25 @@
   <h2 id="movie-stats"><span class="section-heading-tick">Movie Stats</span></h2>
   <p class="muted">What you watch and how you rate it.</p>
 
-  {% comment %}
-  {% if highlights.longest_film or highlights.shortest_film or highlights.oldest_film or highlights.newest_film or highlights.highest_rated or highlights.lowest_rated or highlights.most_watched_film %}
+  {% if insights %}
     <div class="card">
-      <h3>Highlights</h3>
-      <div class="favs">
-        {% if highlights.longest_film %}
-          <div class="fav-card">
-            {% if highlights.longest_film.poster_url %}
-              <img src="{{ highlights.longest_film.poster_url }}" alt="{{ highlights.longest_film.title }}" title="{{ highlights.longest_film.title }} ({{ highlights.longest_film.release_year }})">
+      <h3>Your rating insights</h3>
+      <p class="muted">What moves your rating, your standout picks, and how you actually watch.</p>
+      <div class="favs favs--insight">
+        {% for insight in insights %}
+          <div class="fav-card{% if insight.axis == 'director' or insight.axis == 'actor' %} fav-card--headshot{% endif %}">
+            <p class="fav-card-label">{{ insight.label }}</p>
+            {% if insight.image %}
+              <img src="{{ insight.image }}" alt="">
             {% else %}
-              <div class="fav-placeholder" title="{{ highlights.longest_film.title }} ({{ highlights.longest_film.release_year }})">🎬</div>
+              <div class="fav-placeholder">{{ insight.icon }}</div>
             {% endif %}
-            <p class="muted">Longest film</p>
-            <p class="muted">{{ highlights.longest_film.runtime_minutes }} min</p>
+            <p class="muted">{{ insight.text }}</p>
           </div>
-        {% endif %}
-        {% if highlights.shortest_film %}
-          <div class="fav-card">
-            {% if highlights.shortest_film.poster_url %}
-              <img src="{{ highlights.shortest_film.poster_url }}" alt="{{ highlights.shortest_film.title }}" title="{{ highlights.shortest_film.title }} ({{ highlights.shortest_film.release_year }})">
-            {% else %}
-              <div class="fav-placeholder" title="{{ highlights.shortest_film.title }} ({{ highlights.shortest_film.release_year }})">🎬</div>
-            {% endif %}
-            <p class="muted">Shortest film</p>
-            <p class="muted">{{ highlights.shortest_film.runtime_minutes }} min</p>
-          </div>
-        {% endif %}
-        {% if highlights.oldest_film %}
-          <div class="fav-card">
-            {% if highlights.oldest_film.poster_url %}
-              <img src="{{ highlights.oldest_film.poster_url }}" alt="{{ highlights.oldest_film.title }}" title="{{ highlights.oldest_film.title }} ({{ highlights.oldest_film.release_year }})">
-            {% else %}
-              <div class="fav-placeholder" title="{{ highlights.oldest_film.title }} ({{ highlights.oldest_film.release_year }})">🎬</div>
-            {% endif %}
-            <p class="muted">Oldest film</p>
-          </div>
-        {% endif %}
-        {% if highlights.newest_film %}
-          <div class="fav-card">
-            {% if highlights.newest_film.poster_url %}
-              <img src="{{ highlights.newest_film.poster_url }}" alt="{{ highlights.newest_film.title }}" title="{{ highlights.newest_film.title }} ({{ highlights.newest_film.release_year }})">
-            {% else %}
-              <div class="fav-placeholder" title="{{ highlights.newest_film.title }} ({{ highlights.newest_film.release_year }})">🎬</div>
-            {% endif %}
-            <p class="muted">Newest film</p>
-          </div>
-        {% endif %}
-        {% if highlights.highest_rated %}
-          <div class="fav-card">
-            {% if highlights.highest_rated.movie.poster_url %}
-              <img src="{{ highlights.highest_rated.movie.poster_url }}" alt="{{ highlights.highest_rated.title }}" title="{{ highlights.highest_rated.title }} ({{ highlights.highest_rated.year }})">
-            {% else %}
-              <div class="fav-placeholder" title="{{ highlights.highest_rated.title }} ({{ highlights.highest_rated.year }})">🎬</div>
-            {% endif %}
-            <p class="muted">Highest rated</p>
-            <p class="muted">{{ highlights.highest_rated.rating|floatformat:1 }} ★</p>
-          </div>
-        {% endif %}
-        {% if highlights.lowest_rated %}
-          <div class="fav-card">
-            {% if highlights.lowest_rated.movie.poster_url %}
-              <img src="{{ highlights.lowest_rated.movie.poster_url }}" alt="{{ highlights.lowest_rated.title }}" title="{{ highlights.lowest_rated.title }} ({{ highlights.lowest_rated.year }})">
-            {% else %}
-              <div class="fav-placeholder" title="{{ highlights.lowest_rated.title }} ({{ highlights.lowest_rated.year }})">🎬</div>
-            {% endif %}
-            <p class="muted">Lowest rated</p>
-            <p class="muted">{{ highlights.lowest_rated.rating|floatformat:1 }} ★</p>
-          </div>
-        {% endif %}
-        {% if highlights.most_watched_film %}
-          <div class="fav-card">
-            <div class="fav-placeholder" title="{{ highlights.most_watched_film.title }} ({{ highlights.most_watched_film.year }})">🎬</div>
-            <p class="muted">Most watched</p>
-            <p class="muted">Watched {{ highlights.most_watched_film.watch_count }}×</p>
-          </div>
-        {% endif %}
+        {% endfor %}
       </div>
     </div>
   {% endif %}
-  {% endcomment %}
 
   <div class="card">
     <h3>Rating distribution</h3>

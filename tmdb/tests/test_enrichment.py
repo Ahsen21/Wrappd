@@ -46,6 +46,7 @@ class EnrichImportSessionTests(TestCase):
                 'runtime': 180,
                 'overview': 'A film.',
                 'vote_average': 8.2,
+                'vote_count': 9500,
                 'original_title': 'Oppenheimer',
                 'release_date': '2023-07-19',
                 'original_language': 'en',
@@ -61,6 +62,7 @@ class EnrichImportSessionTests(TestCase):
 
         movie = Movie.objects.get(tmdb_id=872585)
         self.assertEqual(movie.runtime_minutes, 180)
+        self.assertEqual(movie.vote_count, 9500)
         self.assertEqual(list(movie.directors.values_list('name', flat=True)), ['Christopher Nolan'])
         self.assertEqual(list(movie.genres.values_list('name', flat=True)), ['Drama'])
         self.assertEqual(Credit.objects.filter(movie=movie).count(), 1)
