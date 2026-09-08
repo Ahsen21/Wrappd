@@ -54,6 +54,20 @@ a { color: var(--accent-2); }
   gap: 1.5rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--border);
+  /* Sticky so the site's own nav (logo, Director's Cut/Double Feature, account)
+     stays reachable on long pages -- Director's Cut/Double Feature are themselves
+     long enough to have grown their own sticky .section-nav (see that class),
+     which now stacks directly under this one (its own `top` is this nav's
+     measured rendered height, ~60px at this padding/content, not a guess) rather
+     than fighting it for the same top: 0 spot. Higher z-index than .section-nav's
+     10 so this one visibly wins if a border/shadow ever makes them touch, and an
+     explicit background so page content scrolling underneath doesn't show
+     through -- unlike a static nav, a transparent sticky one lets whatever's
+     "behind" it (here, the content it's now stuck on top of) bleed through. */
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
 }
 
 .nav a { text-decoration: none; color: var(--text); font-weight: 600; }
@@ -383,13 +397,15 @@ a { color: var(--accent-2); }
   .grid--rating-avg .stat .value { font-size: 1.5rem; }
 }
 
-/* Sticks to the very top of the viewport while scrolling (the site's own .nav bar
-   above it is not sticky, so this is the first thing pinned once you scroll past it).
-   Solid background is required, not optional, for a sticky element -- otherwise
-   content scrolling underneath shows through. */
+/* Sticks directly under the site's own .nav bar while scrolling -- top: 60px, not
+   0, matching that nav's own measured rendered height at its current padding/
+   content, so the two stack cleanly instead of overlapping (see .nav's own
+   comment on why it's sticky too now). Solid background is required, not
+   optional, for a sticky element -- otherwise content scrolling underneath shows
+   through. */
 .section-nav {
   position: sticky;
-  top: 0;
+  top: 60px;
   z-index: 10;
   display: flex;
   gap: 1.5rem;
@@ -426,10 +442,18 @@ h1, h2, h3, h4 { font-weight: 700; }
 h2#movie-stats, h2#watching-stats {
   font-size: 1.5rem;
   margin: 1rem 0 0.25rem;
-  /* Without this, clicking a .section-nav-link jumps the heading to align flush
-     with the viewport top -- directly behind the sticky nav bar sitting at the
-     same position, hiding it right after the jump. */
-  scroll-margin-top: 4rem;
+}
+/* Every .section-nav-link's jump target -- the h2 dividers above (Director's Cut's
+   coarser "Movie Stats"/"Watching Stats" break, still kept as a visual marker
+   alongside the finer-grained nav) plus each grouped jump-nav's own target card on
+   both pages (see dashboard.html/compare.html). Without this, clicking a link
+   jumps its target to align flush with the viewport top -- directly behind the
+   two stacked sticky bars now sitting there (the site's own .nav plus
+   .section-nav, ~112px combined at their current measured heights), hiding it
+   right after the jump. 120px, not an even 7rem, to leave a hair of breathing
+   room past that measured total rather than landing flush against it. */
+h2#movie-stats, h2#watching-stats, .jump-target {
+  scroll-margin-top: 120px;
 }
 h2#watching-stats {
   margin-top: 3rem;

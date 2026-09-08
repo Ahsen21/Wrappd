@@ -30,7 +30,14 @@
     </div>
   </div>
 
-  <div class="card">
+  <nav class="section-nav">
+    <a href="#ratings" class="section-nav-link active" data-section="ratings">Ratings</a>
+    <a href="#whos-seen-what" class="section-nav-link" data-section="whos-seen-what">Who's Seen What</a>
+    <a href="#people-genres" class="section-nav-link" data-section="people-genres">People &amp; Genres</a>
+    <a href="#watching-together" class="section-nav-link" data-section="watching-together">Watching Together</a>
+  </nav>
+
+  <div class="card jump-target" id="ratings">
     <h3>Rating distributions</h3>
     <div class="grid grid--rating-avg">
       <div class="stat">
@@ -93,7 +100,7 @@
     {% endif %}
   </div>
 
-  <div class="two-col">
+  <div class="two-col jump-target" id="whos-seen-what">
     <div class="card">
       <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
       {% if top_unseen_a %}
@@ -159,7 +166,7 @@
     </div>
   </div> -->
 
-  <div class="card">
+  <div class="card jump-target" id="people-genres">
     <h3>Favorite directors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
@@ -279,7 +286,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card jump-target" id="watching-together">
     <h3>Watchlist matches</h3>
     <p class="muted">Sorted by your combined preferences, including favorite genres and directors.</p>
     {% if watchlist_matches_total > watchlist_matches|length %}
@@ -395,6 +402,41 @@
 
   {{ chart_data|json_script:"chart-data" }}
   <script>
+    // Highlights whichever jump-nav group is currently in view in the sticky nav --
+    // mirrored exactly from dashboard.html's own copy (see that file for the full
+    // reasoning on the mid-viewport observer band and the click-vs-scrollend race).
+    (function () {
+      const sectionLinks = document.querySelectorAll('.section-nav-link');
+      const sections = [...sectionLinks].map(function (link) { return document.getElementById(link.dataset.section); });
+
+      function activate(id) {
+        sectionLinks.forEach(function (link) { link.classList.toggle('active', link.dataset.section === id); });
+      }
+
+      const observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) activate(entry.target.id);
+        });
+      }, { rootMargin: '-45% 0px -50% 0px' });
+      sections.forEach(function (section) { if (section) observer.observe(section); });
+
+      let reconnectTimer = null;
+      sectionLinks.forEach(function (link) {
+        link.addEventListener('click', function () {
+          activate(link.dataset.section);
+          observer.disconnect();
+          clearTimeout(reconnectTimer);
+          const reconnect = function () {
+            window.removeEventListener('scrollend', reconnect);
+            clearTimeout(reconnectTimer);
+            sections.forEach(function (section) { if (section) observer.observe(section); });
+          };
+          window.addEventListener('scrollend', reconnect, { once: true });
+          reconnectTimer = setTimeout(reconnect, 1000);
+        });
+      });
+    })();
+
     // Generic toggle-group/view-panel wiring, mirrored from dashboard.html -- lets a
     // card swap between markup panels (e.g. Favorite directors' Side-by-side/Shared)
     // purely via data attributes, no per-feature JS needed.
