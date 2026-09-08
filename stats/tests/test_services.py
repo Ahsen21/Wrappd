@@ -1650,6 +1650,83 @@ class SharedPeopleTests(TestCase):
         self.assertEqual(len(context['shared_actors']), 12)
 
 
+class GenreAgreementTests(TestCase):
+    """_genre_averages/_genre_agreement -- per-genre rating comparison between the
+    two sessions, exercised via build_compare_context's 'genre_agreement' key."""
+
+    def _rate_genre(self, session, genre_name, ratings, tmdb_id_start):
+        for i, rating in enumerate(ratings):
+            movie = _make_movie(tmdb_id_start + i, f'{genre_name} {tmdb_id_start + i}', 2020, 100, genre_name)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/{tmdb_id_start + i}',
+                title=movie.title, year=2020, rating=Decimal(str(rating)), movie=movie,
+            )
+
+    def test_genre_needs_min_count_in_both_sessions(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        self._rate_genre(session_a, 'Horror', [4.0, 4.5], 3000)
+        # Session B only rates 1 Horror film -- below MIN_COUNT_FOR_AVERAGE (2).
+        self._rate_genre(session_b, 'Horror', [3.0], 3010)
+
+        context = build_compare_context(session_a, session_b)
+        self.assertNotIn('Horror', [row['genre'] for row in context['genre_agreement']])
+
+    def test_gap_computed_and_sorted_ascending(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        # Drama: both average 4.0 -- 0.0 gap, most agreement.
+        self._rate_genre(session_a, 'Drama', [4.0, 4.0], 3100)
+        self._rate_genre(session_b, 'Drama', [4.0, 4.0], 3110)
+        # Horror: A averages 3.0, B averages 5.0 -- 2.0 gap, biggest disagreement.
+        self._rate_genre(session_a, 'Horror', [3.0, 3.0], 3200)
+        self._rate_genre(session_b, 'Horror', [5.0, 5.0], 3210)
+
+        context = build_compare_context(session_a, session_b)
+        genres = [row['genre'] for row in context['genre_agreement']]
+        self.assertEqual(genres, ['Drama', 'Horror'])
+        drama_row = context['genre_agreement'][0]
+        self.assertAlmostEqual(drama_row['gap'], 0.0)
+        horror_row = context['genre_agreement'][1]
+        self.assertAlmostEqual(horror_row['gap'], 2.0)
+        self.assertAlmostEqual(horror_row['avg_a'], 3.0)
+        self.assertAlmostEqual(horror_row['avg_b'], 5.0)
+
+    def test_genre_only_one_session_has_rated_is_excluded(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        self._rate_genre(session_a, 'Western', [4.0, 4.5], 3300)
+        # Session B has never rated a Western.
+
+        context = build_compare_context(session_a, session_b)
+        self.assertNotIn('Western', [row['genre'] for row in context['genre_agreement']])
+
+    def test_excludes_shorts_when_toggled(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for i, rating in enumerate([4.0, 4.5]):
+            movie = Movie.objects.create(
+                tmdb_id=3400 + i, title=f'Short {i}', release_year=2020, runtime_minutes=30,
+            )
+            genre, _ = Genre.objects.get_or_create(tmdb_id=hash('Music') % 10_000, defaults={'name': 'Music'})
+            movie.genres.add(genre)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/{3400 + i}', title=movie.title,
+                year=2020, rating=Decimal(str(rating)), movie=movie,
+            )
+        self._rate_genre(session_b, 'Music', [3.0, 3.5], 3410)
+
+        context = build_compare_context(session_a, session_b, exclude_shorts=True)
+        self.assertNotIn('Music', [row['genre'] for row in context['genre_agreement']])
+        context = build_compare_context(session_a, session_b, exclude_shorts=False)
+        self.assertIn('Music', [row['genre'] for row in context['genre_agreement']])
+
+    def test_empty_when_no_shared_genres(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        self.assertEqual(build_compare_context(session_a, session_b)['genre_agreement'], [])
+
+
 class TopPeopleTests(TestCase):
     """Each session's own top 10 favorite directors/actors (the 'Side by side' view),
     independent of the other session -- same MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR

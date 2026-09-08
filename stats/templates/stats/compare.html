@@ -286,6 +286,19 @@
     </div>
   </div>
 
+  <div class="card">
+    <h3>Genre Comparison</h3>
+    {% if genre_agreement %}
+      <div class="toggle-group" data-chart-toggle="genreAgreement">
+        <button type="button" class="toggle-btn active" data-view="most">Most agreed</button>
+        <button type="button" class="toggle-btn" data-view="least">Least agreed</button>
+      </div>
+      <div class="h-chart h-chart--tall"><canvas id="genreAgreementChart"></canvas></div>
+    {% else %}
+      <p class="empty-state">Not enough shared genres rated yet</p>
+    {% endif %}
+  </div>
+
   <div class="card jump-target" id="watching-together">
     <h3>Watchlist matches</h3>
     <p class="muted">Sorted by your combined preferences, including favorite genres and directors.</p>
@@ -551,6 +564,75 @@
         ratingCurveChart.update();
       });
     });
+
+    // Horizontal grouped bar -- genres on the y-axis (indexAxis: 'y', same
+    // orientation as Director's Cut's own genres chart, since a genre name reads
+    // better as a category label than a rotated/truncated x-axis tick), two
+    // datasets per genre (same blue/orange grouped-bar shape as ratingCurveChart
+    // just above, not a single dataset like the genres chart it borrows its
+    // orientation from -- this is fundamentally a two-person comparison, not a
+    // single count). x-axis capped at 5 -- the real ceiling of the rating scale,
+    // not whatever range the data happens to span, so a bar's length is always
+    // directly comparable to "how full is this out of 5 stars" at a glance.
+    // Most/Least agreed toggle: chartData.genre_agreement.most and .least are two
+    // separate server-computed {labels, data_a, data_b} sets (see build_compare_context),
+    // not one array re-sliced client-side -- swapping to 'least' replaces both the
+    // labels and the data in one go, same "reassign then .update()" shape as
+    // ratingCurveChart's toggle above, just swapping a whole view instead of
+    // recomputing one from the other.
+    if (document.getElementById('genreAgreementChart')) {
+      const genreAgreementChart = new Chart(document.getElementById('genreAgreementChart'), {
+        type: 'bar',
+        data: {
+          labels: chartData.genre_agreement.most.labels,
+          datasets: [
+            {
+              label: chartData.genre_agreement.label_a,
+              data: chartData.genre_agreement.most.data_a,
+              backgroundColor: '#40bcf4',
+              hoverBackgroundColor: lighten('#40bcf4', 40),
+              borderRadius: 4,
+            },
+            {
+              label: chartData.genre_agreement.label_b,
+              data: chartData.genre_agreement.most.data_b,
+              backgroundColor: '#ff8000',
+              hoverBackgroundColor: lighten('#ff8000', 40),
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          maintainAspectRatio: false,
+          scales: {
+            x: { grid: { color: gridColor }, beginAtZero: true, max: 5 },
+            y: { grid: { display: false }, ticks: { autoSkip: false } },
+          },
+          plugins: {
+            legend: { display: true },
+            tooltip: {
+              callbacks: {
+                label: function (context) { return context.dataset.label + ': ' + context.parsed.x.toFixed(1) + '★'; },
+              },
+            },
+          },
+        },
+      });
+
+      document.querySelectorAll('[data-chart-toggle="genreAgreement"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="genreAgreement"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const view = btn.dataset.view === 'least' ? 'least' : 'most';
+          const picked = chartData.genre_agreement[view];
+          genreAgreementChart.data.labels = picked.labels;
+          genreAgreementChart.data.datasets[0].data = picked.data_a;
+          genreAgreementChart.data.datasets[1].data = picked.data_b;
+          genreAgreementChart.update();
+        });
+      });
+    }
 
     // Person filmography modal -- click a director/actor's name (.person-trigger,
     // wired up in Favorite Directors/Actors' Side-by-side tables) to fetch and show
