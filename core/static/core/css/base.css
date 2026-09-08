@@ -504,6 +504,12 @@ h2#watching-stats {
 .h-chart { position: relative; height: 340px; }
 .h-chart canvas { height: 100% !important; }
 
+/* Genre Agreement packs two grouped bars per row (person A + B) instead of the
+   other .h-chart charts' one bar per row, so the same 340px leaves TOP_N (10)
+   genres' worth of bar pairs feeling cramped -- taller so each pair still has
+   room to read clearly. */
+.h-chart--tall { height: 460px; }
+
 /* Viewing calendar's day-of-week chart -- without a fixed height + maintainAspectRatio:
    false (set alongside this in the dashboard's own script), Chart.js falls back to its
    own default 2:1 aspect ratio against the card's full width, rendering much taller than

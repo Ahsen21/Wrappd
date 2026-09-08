@@ -321,6 +321,46 @@ def _actor_averages(import_session, min_count, exclude_shorts=False):
     }
 
 
+def _genre_averages(import_session, exclude_shorts=False) -> dict:
+    """{genre_name: (avg, count)} for genres this session has rated at least
+    MIN_COUNT_FOR_AVERAGE films in. Same shape as _director_averages/_actor_averages
+    minus the profile_url/tmdb_id (a genre isn't a person, nothing to link to a
+    filmography modal) -- feeds _genre_agreement below."""
+    rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        rated = exclude_short_entries(rated)
+    rows = (
+        rated.filter(movie__genres__isnull=False)
+        .values('movie__genres__name')
+        .annotate(avg=Avg('rating'), count=Count('id'))
+    )
+    return {
+        row['movie__genres__name']: (float(row['avg']), row['count'])
+        for row in rows if row['count'] >= MIN_COUNT_FOR_AVERAGE
+    }
+
+
+def _genre_agreement(stats_a, stats_b) -> list:
+    """Genres both sessions have a real average for (see _genre_averages), sorted
+    by the absolute gap between their averages ascending -- genres you agree on
+    lead the list, genres you clash over trail it. Genre name is the tiebreak for
+    an exact-tie gap (e.g. two genres both at a 0.0 gap), same "why a real
+    tiebreak matters" reasoning as this file's other set-derived sorts (see
+    biggest_disagreements_all's own comment in build_compare_context) -- shared
+    is a set intersection, so its iteration order is affected by Python's
+    per-process string hash randomization."""
+    shared = set(stats_a) & set(stats_b)
+    rows = [
+        {
+            'genre': genre, 'avg_a': stats_a[genre][0], 'avg_b': stats_b[genre][0],
+            'gap': abs(stats_a[genre][0] - stats_b[genre][0]),
+        }
+        for genre in shared
+    ]
+    rows.sort(key=lambda r: (r['gap'], r['genre']))
+    return rows
+
+
 # Watchlist matches' best-fit ranking: the same per-signal preference model as
 # Director's Cut's own watchlist recommender (_watchlist_recommendations in
 # dashboard.py) -- each person's baseline average plus a weighted SUM of confidence-
@@ -979,6 +1019,20 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     top_actors_a = _top_people(actor_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
     top_actors_b = _top_people(actor_stats_b, cap=GRID_DISPLAY_CAP_NARROW)
 
+    # Capped to TOP_N same as this file's other top-N lists (only_a/b_films,
+    # same_day_logs). _genre_agreement itself sorts gap-ascending (agreement first,
+    # see its own docstring) -- genre_agreement is that order's front TOP_N, the
+    # genres you agree on most, and is also the card's default/empty-state list.
+    # genre_agreement_least is the same rows re-sorted gap-descending (worst clashes
+    # first) before the same TOP_N cap, for the card's "Least agreed" toggle view --
+    # re-sorting the already-computed rows rather than re-querying, since both views
+    # share the same underlying set of shared, evidenced genres.
+    genre_agreement_all = _genre_agreement(
+        _genre_averages(session_a, exclude_shorts), _genre_averages(session_b, exclude_shorts),
+    )
+    genre_agreement = genre_agreement_all[:TOP_N]
+    genre_agreement_least = sorted(genre_agreement_all, key=lambda r: (-r['gap'], r['genre']))[:TOP_N]
+
     # One bulk lookup spanning every film list on the page rather than a query per
     # list. Resolves onto shared_films (and therefore biggest_disagreements/
     # same_rating too, since they're built via sorted() on the same dict objects),
@@ -1045,6 +1099,7 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'top_directors_b': top_directors_b,
         'top_actors_a': top_actors_a,
         'top_actors_b': top_actors_b,
+        'genre_agreement': genre_agreement,
         'watchlist_matches': watchlist_matches_ranked,
         'watchlist_matches_total': len(watchlist_eligible),
         # TOP_N, not GRID_DISPLAY_CAP -- same_day_logs renders as a flex-wrap flow of
@@ -1077,6 +1132,32 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
                 # raw volume.
                 'count_a': curve_a['count'],
                 'count_b': curve_b['count'],
+                'label_a': session_a.display_name or 'Person A',
+                'label_b': session_b.display_name or 'Person B',
+            },
+            # Same {labels, data_a, data_b} shape as rating_curve above, feeding a
+            # horizontal grouped bar chart (indexAxis: 'y', matching Director's
+            # Cut's own genres chart's orientation) rather than rating_curve's
+            # vertical one -- genre names read better as a Y-axis list than
+            # rotated/truncated X-axis labels. Two pre-built views, 'most' (default)
+            # and 'least', rather than one array the client re-slices -- unlike
+            # rating_curve's Percent toggle (a cheap client-side division of the same
+            # counts), most-vs-least agreed are two different genre subsets in two
+            # different orders, so both are sent ready-to-render and the toggle just
+            # swaps which one the chart is showing. Each is already capped to TOP_N
+            # and sorted by _genre_agreement/build_compare_context's own re-sort
+            # (most: agreement first; least: worst clashes first).
+            'genre_agreement': {
+                'most': {
+                    'labels': [row['genre'] for row in genre_agreement],
+                    'data_a': [row['avg_a'] for row in genre_agreement],
+                    'data_b': [row['avg_b'] for row in genre_agreement],
+                },
+                'least': {
+                    'labels': [row['genre'] for row in genre_agreement_least],
+                    'data_a': [row['avg_a'] for row in genre_agreement_least],
+                    'data_b': [row['avg_b'] for row in genre_agreement_least],
+                },
                 'label_a': session_a.display_name or 'Person A',
                 'label_b': session_b.display_name or 'Person B',
             },
