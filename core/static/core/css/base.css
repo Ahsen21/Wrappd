@@ -1013,6 +1013,86 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   }
 }
 
+/* Double Feature's "compare overview" card -- a second, more detailed stats
+   block placed below the existing .hero for now (not a replacement for it; the
+   two currently coexist while this new layout is being tried out), reworking
+   every stat the hero already has plus the two new per-person "# films" counts,
+   into a top-to-bottom story: each person's own numbers, then how their
+   libraries overlap, then how aligned their ratings are, then the single
+   Compatibility number those alignment signals roll up into.
+   Top row reuses .two-col/.two-col--divided verbatim (same divider as Favorite
+   directors/actors' own "Side by side" grids) rather than a new split
+   implementation. */
+/* .hero's own margin-bottom (1.5rem, for spacing a normal single hero off of
+   .section-nav below it) is dead weight here on top of this card's own already-
+   generous 3rem vertical padding -- .compare-overview-alignment is this hero's
+   last row, so its bottom is already the padding-box, not flush content; the
+   extra margin just doubled up on top of that. */
+.compare-overview-hero { margin-bottom: 0; }
+.compare-overview-section {
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.compare-overview-name {
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 0.75rem;
+}
+/* Each overlap column pairs a "how many" count with the related rated-higher
+   count (Only A's watched-count above Only A's rated-higher-count, etc.) --
+   stacked in their own flex column so the 3-column grid around them stays a
+   single row of stat pairs, not 6 independent grid items that could reflow out
+   of their intended groups. */
+.compare-overview-pair { display: flex; flex-direction: column; gap: 0.75rem; }
+/* Forced to 3 (Only A / Both / Only B) and 3 again (Watched in common / Rating
+   agreement / Per-film rating gap) at every width, same "short numbers read
+   better side by side than stacked" reasoning as .grid--calendar-stats' own
+   comment -- these are single numbers/pairs of numbers, not multi-line poster
+   cards, so even 3 across a phone width stays legible. */
+.compare-overview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+@media (max-width: 480px) {
+  .compare-overview-grid { gap: 0.5rem; }
+  .compare-overview-grid .stat .value { font-size: 1.5rem; }
+}
+/* Overall alignment's own row -- a radial gauge (SVG ring, geometry matched by
+   ALIGNMENT_GAUGE_RADIUS/_CIRCUMFERENCE in compare.py) standing in for the plain
+   .stat .value number every other row here uses, with a plain-language sentence
+   (alignment_blurb) next to it instead of just the .stat .label caption -- the
+   one number this whole card builds up to gets more visual weight and an actual
+   explanation of what it means, not just a bigger font. Wraps to stacked/centered
+   on narrow widths, same breakpoint as .two-col's own collapse, since there's no
+   room for gauge-plus-paragraph side by side once the card itself has narrowed
+   that far. */
+.compare-overview-alignment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.75rem;
+  flex-wrap: wrap;
+  text-align: center;
+}
+.alignment-gauge { flex-shrink: 0; }
+.alignment-gauge-text { fill: var(--text); font-size: 30px; font-weight: 700; }
+/* Same quiet-caption look as .stat .label/.hero-favs-label (color/letter-spacing/
+   uppercase/size) -- not that compound selector itself, since this sits in
+   .alignment-gauge, not a .stat. */
+.alignment-gauge-label {
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  margin: 0.6rem 0 0;
+}
+/* Same muted color as the gauge's own label -- the sentence is context/caption
+   around the two clauses, not headline text, so only alignment-highlight (the
+   actual "what does this mean" content) gets full-brightness accent color. */
+.alignment-blurb {  line-height: 1.5; max-width: 320px; margin: 0; text-align: left; color: var(--muted); }
+.alignment-highlight { color: var(--accent); font-weight: 600; }
+@media (max-width: 700px) {
+  .alignment-blurb { text-align: center; }
+}
+
 /* minmax(0, 1fr), not plain 1fr -- the chart canvases inside each card have an
    intrinsic content width, and grid items default to min-width:auto, which stops a
    plain 1fr track from ever shrinking below that content size (overflows instead

@@ -1421,6 +1421,29 @@ class BuildCompareContextTests(TestCase):
         self.assertEqual(context['only_a_count'], 1)
         self.assertEqual(context['only_b_count'], 0)
         self.assertEqual(context['overlap_pct'], round(2 / 3 * 100, 1))
+        # watched_count is shared_count + only_*_count -- A has both shared films
+        # plus their one unique one (2 + 1 = 3); B has just the two shared ones.
+        self.assertEqual(context['watched_count_a'], 3)
+        self.assertEqual(context['watched_count_b'], 2)
+
+    def test_watched_csv_only_film_still_counts(self):
+        # A film marked watched (watched.csv) but never dated (diary.csv) or rated
+        # (ratings.csv) -- a common real pattern (an old, pre-diary watch) -- used to
+        # fall through _film_map entirely, silently undercounting shared/only counts
+        # relative to Director's Cut's own "films watched" total for the same
+        # session. B watches the exact same film the same way, so it's shared.
+        WatchedEntry.objects.create(
+            import_session=self.session_a, letterboxd_uri='https://boxd.it/watchedonly-a',
+            title='Watched Only', year=2018,
+        )
+        WatchedEntry.objects.create(
+            import_session=self.session_b, letterboxd_uri='https://boxd.it/watchedonly-b',
+            title='Watched Only', year=2018,
+        )
+        context = build_compare_context(self.session_a, self.session_b)
+        self.assertEqual(context['shared_count'], 3)
+        self.assertEqual(context['watched_count_a'], 4)
+        self.assertEqual(context['watched_count_b'], 3)
 
     def test_rated_higher_counts(self):
         # Both shared films ('Shared Close': A 4.0/B 4.5, 'Shared Far': A 1.0/B 5.0)
@@ -1494,6 +1517,83 @@ class BuildCompareContextTests(TestCase):
         context = build_compare_context(session_a, session_b)
         self.assertIsNone(context['agreement_pct'])
         self.assertIsNone(context['compatibility_pct'])
+        self.assertIsNone(context['alignment_blurb'])
+        # Full offset draws none of the ring -- an empty gauge, not a stale/partial
+        # one, when there's no score behind it yet.
+        from stats.services.compare import ALIGNMENT_GAUGE_CIRCUMFERENCE
+        self.assertEqual(context['compatibility_gauge_offset'], ALIGNMENT_GAUGE_CIRCUMFERENCE)
+
+
+class AlignmentBlurbTests(TestCase):
+    """_alignment_blurb -- the {overlap_clause, connector, agreement_clause}
+    pieces behind the hero's Overall alignment row, built from two
+    independently-tiered clauses (overlap_pct, agreement_pct). 'but' fires only
+    when exactly one of the two tiers is the bottom tier (ordinal 0) and the
+    other isn't; every other combination (including both at the bottom tier)
+    gets 'and'. Returned as separate pieces (not one joined string) so the
+    template can highlight the two clauses independently of the connector --
+    see the function's own docstring for why. Pure function, no DB fixture
+    needed."""
+
+    def test_none_when_agreement_pct_is_none(self):
+        from stats.services.compare import _alignment_blurb
+
+        self.assertIsNone(_alignment_blurb(50, None))
+
+    def test_bottom_tier_vs_higher_tier_contrasts_with_but(self):
+        from stats.services.compare import _alignment_blurb
+
+        # Real values from a live pair: 14.3% overlap (bottom tier, ordinal 0),
+        # 62.9% agreement (ordinal 2, since it's at/above the 60 breakpoint) --
+        # exactly one of the two is the bottom tier, so "but".
+        blurb = _alignment_blurb(14.3, 62.9)
+        self.assertEqual(blurb, {
+            'overlap_clause': "rarely overlap in what you've watched",
+            'connector': 'but',
+            'agreement_clause': 'usually agree on them',
+        })
+
+    def test_high_overlap_low_agreement_contrasts_with_but(self):
+        from stats.services.compare import _alignment_blurb
+
+        blurb = _alignment_blurb(80, 20)
+        self.assertEqual(blurb['connector'], 'but')
+        self.assertEqual(blurb['overlap_clause'], 'watch almost the exact same things')
+        self.assertEqual(blurb['agreement_clause'], 'rate them pretty differently')
+
+    def test_both_high_reinforces_with_and(self):
+        from stats.services.compare import _alignment_blurb
+
+        blurb = _alignment_blurb(80, 90)
+        self.assertEqual(blurb['connector'], 'and')
+
+    def test_both_bottom_tier_reinforces_with_and(self):
+        # Rock-bottom on both isn't a contrast -- "but" is reserved for exactly
+        # one of the two being the bottom tier, not either of them.
+        from stats.services.compare import _alignment_blurb
+
+        blurb = _alignment_blurb(12, 25)
+        self.assertEqual(blurb['connector'], 'and')
+
+    def test_mismatched_non_bottom_tiers_still_reinforces_with_and(self):
+        # ordinal 1 vs ordinal 2 -- a real mismatch by the old "low half/high
+        # half" rule, but neither is the bottom tier, so this now gets "and".
+        from stats.services.compare import _alignment_blurb
+
+        blurb = _alignment_blurb(30, 70)
+        self.assertEqual(blurb['overlap_clause'], "have some overlap in what you've watched")
+        self.assertEqual(blurb['agreement_clause'], 'usually agree on them')
+        self.assertEqual(blurb['connector'], 'and')
+
+    def test_tier_boundaries_are_exclusive_on_the_low_side(self):
+        # A value exactly on a breakpoint belongs to the *next* (higher) tier --
+        # _tier's `pct < breakpoint` check, not `<=`.
+        from stats.services.compare import _alignment_blurb
+
+        at_boundary = _alignment_blurb(20, 50)
+        just_below = _alignment_blurb(19.9, 50)
+        self.assertEqual(at_boundary['overlap_clause'], "have some overlap in what you've watched")
+        self.assertEqual(just_below['overlap_clause'], "rarely overlap in what you've watched")
 
 
 class SharedPeopleTests(TestCase):
