@@ -30,6 +30,12 @@ GRID_DISPLAY_CAP_NARROW = 12
 # shape: 2 rows of 6 on desktop (4 rows of 3 on mobile), full-width like
 # GRID_DISPLAY_CAP's grids but a different column count/cap than any of them.
 SHARED_PEOPLE_GRID_CAP = 12
+# Same day logs -- its own cap and its own shape, not any of the above: 4 rows of 3
+# on desktop, unwound to 6 rows of 2 on mobile (see .day-grid in base.css) rather
+# than SHARED_PEOPLE_GRID_CAP's 2-rows-of-6-desktop/4-rows-of-3-mobile shape, since a
+# day card (a date label plus two small poster columns) is far wider per item than a
+# person avatar -- fewer, taller columns fit it better at both breakpoints.
+SAME_DAY_LOGS_GRID_CAP = 12
 # Qualifying bar for _top_unseen_by_other -- "X loved it, Y hasn't seen it" needs to
 # stay a genuine "loved it" claim, not just whatever happens to be the highest-rated
 # film left after excluding what the other person's seen.
@@ -160,6 +166,61 @@ def _same_day_logs(session_a, session_b, exclude_shorts=False) -> dict:
     logs.sort(key=lambda r: r['date'], reverse=True)
     exact_matches.sort(key=lambda r: r['date'], reverse=True)
     return {'logs': logs, 'exact_matches': exact_matches}
+
+
+def _same_day_heatmap(logs, exact_matches) -> dict:
+    """Per-day shared-log state bucketed by year, for the calendar-heatmap view of
+    Same day logs -- the two-session counterpart to Director's Cut's own
+    _viewing_heatmap (that one buckets a single session's watch counts; this
+    buckets whether two sessions' calendars overlapped instead). Categorical, not
+    volume-based -- state is 2 on a date with at least one exact match (see
+    _same_day_logs' own docstring for what makes a match "exact"), 1 on a date
+    that's shared but not exact; there's no "how many films" gradient here the way
+    _viewing_heatmap has, so the grid's coloring is a lookup, not a bucketed ratio.
+    films_a/films_b are row['films_a']/row['films_b'] themselves (title/year/
+    movie_id dicts), not copies or pre-joined display strings -- the same objects
+    same_day_films_a/_b flatten elsewhere in build_compare_context, so running
+    _resolve_posters over those flat lists also mutates poster_url onto these same
+    dicts, and the cell's click-through popup gets real posters for free. Takes
+    logs/exact_matches directly rather than calling _same_day_logs itself, so the
+    caller (build_compare_context) can reuse the same uncapped lists it already
+    computed for the card's other views instead of querying twice."""
+    exact_dates = {row['date'] for row in exact_matches}
+    by_year = defaultdict(dict)
+    for row in logs:
+        date = row['date']
+        by_year[date.year][date.isoformat()] = {
+            'state': 2 if date in exact_dates else 1,
+            'films_a': row['films_a'],
+            'films_b': row['films_b'],
+        }
+
+    # Oldest -> newest, matching _viewing_heatmap's own ordering exactly -- see that
+    # function's comment for why (a left-to-right year toggle, default_year taken
+    # from the end of the list).
+    years = sorted(by_year.keys())
+    return {
+        'years': years,
+        'default_year': years[-1] if years else None,
+        'data': {str(year): cells for year, cells in by_year.items()},
+    }
+
+
+def _resolve_same_day_ratings(map_a, map_b, films_a, films_b):
+    """Mutates each film dict in films_a/films_b (the flattened same_day_films_a/_b
+    -- the same objects _same_day_heatmap's nested films_a/films_b already
+    reference, not copies) to add 'rating', that session's own rating for the film
+    if they rated it. Same "single pass over the already-built objects" shape as
+    _resolve_posters, keyed against map_a/map_b (build_compare_context's own
+    _film_map results) rather than a fresh query -- feeds the day-detail popup's
+    star rating; a film logged but never rated shows no rating there, same as
+    everywhere else on the site treats an unrated film."""
+    for f in films_a:
+        entry = map_a.get((f['title'], f['year']))
+        f['rating'] = entry['rating'] if entry else None
+    for f in films_b:
+        entry = map_b.get((f['title'], f['year']))
+        f['rating'] = entry['rating'] if entry else None
 
 
 def _top_unseen_by_other(import_session, other_watched_keys, exclude_shorts=False):
@@ -989,11 +1050,13 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     same_day = _same_day_logs(session_a, session_b, exclude_shorts)
     same_day_logs_all = same_day['logs']
     same_day_exact_matches_all = same_day['exact_matches']
+    same_day_heatmap = _same_day_heatmap(same_day_logs_all, same_day_exact_matches_all)
     # Flattened views over the same nested film dicts inside same_day_logs_all --
     # _resolve_posters mutates dicts in place, so resolving through these flat lists
     # still resolves onto the nested per-date films_a/films_b lists too.
     same_day_films_a = [f for entry in same_day_logs_all for f in entry['films_a']]
     same_day_films_b = [f for entry in same_day_logs_all for f in entry['films_b']]
+    _resolve_same_day_ratings(map_a, map_b, same_day_films_a, same_day_films_b)
 
     top_unseen_a_all = _top_unseen_by_other(session_a, keys_b, exclude_shorts)
     top_unseen_b_all = _top_unseen_by_other(session_b, keys_a, exclude_shorts)
@@ -1102,16 +1165,21 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'genre_agreement': genre_agreement,
         'watchlist_matches': watchlist_matches_ranked,
         'watchlist_matches_total': len(watchlist_eligible),
-        # TOP_N, not GRID_DISPLAY_CAP -- same_day_logs renders as a flex-wrap flow of
-        # variable-width day cards (each sized to how many films that date has), not
-        # a fixed-column poster grid, so the "2 rows of 8" reasoning behind
-        # GRID_DISPLAY_CAP doesn't apply here.
-        'same_day_logs': same_day_logs_all[:TOP_N],
+        # SAME_DAY_LOGS_GRID_CAP, not GRID_DISPLAY_CAP -- same_day_logs renders as
+        # its own fixed-column grid (4x3 desktop, 6x2 mobile -- see that constant's
+        # own comment), not the site-wide .favs--eight poster grid, so the "2 rows of
+        # 8" reasoning behind GRID_DISPLAY_CAP doesn't apply here.
+        'same_day_logs': same_day_logs_all[:SAME_DAY_LOGS_GRID_CAP],
         'same_day_logs_total': len(same_day_logs_all),
+        # Top-level, not just inside chart_data below -- same_day_heatmap.years
+        # drives the server-rendered year-toggle buttons (Django can't reach into
+        # chart_data, which only exists client-side via json_script), the same
+        # "in both places" split Director's Cut's own calendar.heatmap uses.
+        'same_day_heatmap': same_day_heatmap,
         # GRID_DISPLAY_CAP here, unlike same_day_logs just above -- Exact matches
         # renders as the same fixed .favs--eight poster grid as Same rating/
         # Watchlist matches/Most different ratings, so it gets their cap, not
-        # same_day_logs' TOP_N.
+        # same_day_logs' SAME_DAY_LOGS_GRID_CAP.
         'same_day_exact_matches': same_day_exact_matches_all[:GRID_DISPLAY_CAP],
         'same_day_exact_matches_total': len(same_day_exact_matches_all),
         'top_unseen_a': top_unseen_a_all[:GRID_DISPLAY_CAP_NARROW],
@@ -1158,6 +1226,24 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
                     'data_a': [row['avg_a'] for row in genre_agreement_least],
                     'data_b': [row['avg_b'] for row in genre_agreement_least],
                 },
+                'label_a': session_a.display_name or 'Person A',
+                'label_b': session_b.display_name or 'Person B',
+            },
+            # Same {years, default_year, data: {year: {...}}} shape as Director's
+            # Cut's own chartData.heatmap, laid out by the exact same client-side
+            # script (see same_day_heatmap's own comment in compare.html) -- only
+            # each cell's payload differs: a count there, a {state, films_a,
+            # films_b} here, since this heatmap is categorical (shared/exact), not
+            # volume-based. films_a/films_b are full film dicts (title/year/
+            # movie_id/poster_url/rating, resolved above) by the time this is
+            # built, not display strings -- the day-detail popup that opens on a
+            # cell click renders real posters and that session's own star rating
+            # from them. label_a/label_b added here rather than inside
+            # _same_day_heatmap itself, which only sees logs/exact_matches and has
+            # no session to name -- same split as
+            # genre_agreement above.
+            'same_day_heatmap': {
+                **same_day_heatmap,
                 'label_a': session_a.display_name or 'Person A',
                 'label_b': session_b.display_name or 'Person B',
             },

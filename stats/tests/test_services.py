@@ -1937,8 +1937,8 @@ class SameDayLogsTests(TestCase):
     def test_exact_matches_capped_at_grid_display_cap_not_top_n(self):
         # Exact matches renders as the same .favs--eight poster grid as Same
         # rating/Watchlist matches (GRID_DISPLAY_CAP=16), not same_day_logs' own
-        # TOP_N=10 -- they're two different caps on the same build_compare_context
-        # call, easy to accidentally cross-wire.
+        # SAME_DAY_LOGS_GRID_CAP=12 -- they're two different caps on the same
+        # build_compare_context call, easy to accidentally cross-wire.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         for i in range(17):
@@ -1977,7 +1977,7 @@ class SameDayLogsTests(TestCase):
     def test_capped_but_total_stays_accurate(self):
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(11):
+        for i in range(13):
             date = f'2024-01-{i + 1:02d}'
             DiaryEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/a{i}', title=f'A Film {i}', year=2020,
@@ -1988,8 +1988,8 @@ class SameDayLogsTests(TestCase):
                 watched_date=date,
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['same_day_logs']), 10)
-        self.assertEqual(context['same_day_logs_total'], 11)
+        self.assertEqual(len(context['same_day_logs']), 12)
+        self.assertEqual(context['same_day_logs_total'], 13)
 
     def test_sorted_most_recent_first(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -2021,6 +2021,105 @@ class SameDayLogsTests(TestCase):
         )
         context = build_compare_context(session_a, session_b)
         self.assertEqual(context['same_day_logs'], [])
+
+
+class SameDayHeatmapTests(TestCase):
+    """_same_day_heatmap -- per-day shared-log state bucketed by year, feeding the
+    calendar-heatmap view of Same day logs. state=2 on an exact-match date, state=1
+    on a shared-but-not-exact date; films_a/films_b are the real film dicts (not
+    display strings), so the day-detail popup can render posters from them."""
+
+    def test_state_2_on_exact_match_state_1_otherwise(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/e1a', title='Same Film', year=2020,
+            watched_date='2024-03-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/e1b', title='Same Film', year=2020,
+            watched_date='2024-03-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/e2a', title='A Film', year=2021,
+            watched_date='2024-04-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/e2b', title='B Film', year=2021,
+            watched_date='2024-04-01',
+        )
+        context = build_compare_context(session_a, session_b)
+        cells = context['same_day_heatmap']['data']['2024']
+        self.assertEqual(cells['2024-03-01']['state'], 2)
+        self.assertEqual(cells['2024-04-01']['state'], 1)
+
+    def test_films_are_real_dicts_not_display_strings(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/f1a', title='A Film', year=2020,
+            watched_date='2024-01-01',
+        )
+        DiaryEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/f1b', title='B Film', year=2021,
+            watched_date='2024-01-01',
+        )
+        context = build_compare_context(session_a, session_b)
+        cell = context['same_day_heatmap']['data']['2024']['2024-01-01']
+        self.assertEqual([f['title'] for f in cell['films_a']], ['A Film'])
+        self.assertEqual([f['title'] for f in cell['films_b']], ['B Film'])
+        self.assertIn('poster_url', cell['films_a'][0])
+        self.assertIn('movie_id', cell['films_a'][0])
+        # Neither session rated either film in this fixture -- rating stays None
+        # rather than missing entirely, same as _film_map's own unrated rows.
+        self.assertIsNone(cell['films_a'][0]['rating'])
+        self.assertIsNone(cell['films_b'][0]['rating'])
+
+    def test_films_carry_each_sessions_own_rating(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/r1a', title='Rated Film', year=2020,
+            watched_date='2024-01-01',
+        )
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/r1a-rate', title='Rated Film', year=2020,
+            rating=Decimal('4.5'),
+        )
+        # Sam logged it too but never rated it -- their side should stay None even
+        # though Alex's side has a real rating for the exact same film.
+        DiaryEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/r1b', title='Rated Film', year=2020,
+            watched_date='2024-01-01',
+        )
+        context = build_compare_context(session_a, session_b)
+        cell = context['same_day_heatmap']['data']['2024']['2024-01-01']
+        self.assertEqual(cell['films_a'][0]['rating'], Decimal('4.5'))
+        self.assertIsNone(cell['films_b'][0]['rating'])
+
+    def test_years_sorted_ascending_default_is_most_recent(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        for date in ['2023-01-01', '2025-01-01', '2024-01-01']:
+            DiaryEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/y-a-{date}', title='Film', year=2020,
+                watched_date=date,
+            )
+            DiaryEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/y-b-{date}', title='Film', year=2020,
+                watched_date=date,
+            )
+        heatmap = build_compare_context(session_a, session_b)['same_day_heatmap']
+        self.assertEqual(heatmap['years'], [2023, 2024, 2025])
+        self.assertEqual(heatmap['default_year'], 2025)
+
+    def test_empty_when_no_shared_days(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        heatmap = build_compare_context(session_a, session_b)['same_day_heatmap']
+        self.assertEqual(heatmap['years'], [])
+        self.assertIsNone(heatmap['default_year'])
+        self.assertEqual(heatmap['data'], {})
 
 
 class RatingInsightsTests(TestCase):
