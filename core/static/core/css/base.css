@@ -548,6 +548,32 @@ h2#watching-stats {
 .heatmap-cell[data-level="4"], .heatmap-legend-swatch[data-level="4"] { background: var(--accent); }
 .heatmap-legend { display: flex; align-items: center; gap: 6px; margin-top: 0.75rem; font-size: 0.7rem; color: var(--muted); }
 .heatmap-legend-swatch { width: 11px; height: 11px; border-radius: 2px; }
+/* Same day logs' calendar heatmap -- reuses every structural rule above
+   (.heatmap-wrap/.heatmap-months/.heatmap-grid/.heatmap-cell/.heatmap-tip
+   verbatim -- every cell, including empty ones, still hovers/focuses to a
+   .heatmap-tip showing its date; only the click-through popup is state-gated),
+   only recoloring cells: this one is categorical (no shared day / same day /
+   exact match), not a volume-bucketed ramp, so data-state gets its own 3-color
+   scale instead of data-level's 5-step one, scoped to .heatmap-grid--same-day so
+   it can't touch the viewing calendar's own colors. Blue for "same day" reuses
+   this page's existing a/b-adjacent accent-2, green (var(--accent)) for "exact
+   match" matches the volume heatmap's own top tier and the star/accent treatment
+   already used elsewhere on this page for exact matches. Only states 1/2 get a
+   pointer cursor -- a state-0 cell hovers/focuses like any other, but has no
+   click handler and nothing to open. */
+.heatmap-grid--same-day .heatmap-cell[data-state="0"] { background: var(--border); }
+.heatmap-grid--same-day .heatmap-cell[data-state="1"] { background: var(--accent-2); cursor: pointer; }
+.heatmap-grid--same-day .heatmap-cell[data-state="2"] { background: var(--accent); cursor: pointer; }
+/* Discrete categories, not a "Less...More" gradient -- each swatch needs its own
+   label right next to it, so legend-pair groups a swatch+label tighter (5px) than
+   the 14px gap between pairs, instead of .heatmap-legend's flat 6px-everywhere
+   gap (fine for a bare row of gradient swatches, too tight once every swatch has
+   trailing text). */
+.heatmap-legend--same-day { gap: 14px; }
+.heatmap-legend--same-day .legend-pair { display: inline-flex; align-items: center; gap: 5px; }
+.heatmap-legend-swatch[data-state="0"] { background: var(--border); }
+.heatmap-legend-swatch[data-state="1"] { background: var(--accent-2); }
+.heatmap-legend-swatch[data-state="2"] { background: var(--accent); }
 /* position:fixed, positioned via JS against the hovered/focused cell's own
    getBoundingClientRect() (viewport coordinates), not position:absolute against
    .heatmap-wrap -- that wrap has overflow-x:auto, and setting only one overflow
@@ -1046,8 +1072,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 /* Sized well beyond the base 28x42 -- .film-thumb is only used by Same day logs now
    (every other film list on this page moved to the .fav-card poster grid), which
    wanted bigger posters specifically to fill the dead space a lone thumbnail left in
-   its column once the title text next to it was dropped. */
-.compare-page .film-thumb, .compare-page .film-thumb-placeholder { width: 50px; height: 75px; }
+   its column once the title text next to it was dropped. Bumped again to 60x90 --
+   the day-grid's fixed-column cards (see .day-card) have the room now that width
+   isn't content-driven, so a bigger poster reads better than the extra whitespace. */
+.compare-page .film-thumb, .compare-page .film-thumb-placeholder { width: 60px; height: 90px; }
 /* "X loved it, Y hasn't seen it" and Favorite directors' "Side by side" grids both
    sit in a half-width .two-col card, not the full-width card the site's shared
    .favs--eight grid (Same rating, Watchlist matches, etc.) uses -- 3 rows of 4
@@ -1091,21 +1119,33 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   }
 }
 
-/* Same day logs -- replaces a Date/A/B table (mostly empty column width on days with
-   just one film each) with a flow of day cards, each only as wide as its own content
-   needs. flex-wrap, not grid -- grid's auto-fill tracks stretch every card to the
-   same track width regardless of content (a 1-film day and a 4-film day would render
-   identically wide), which defeats the point; flex items size to content by default
-   and just wrap to a new row when a row fills up. */
+/* Same day logs -- a flow of day cards, one per shared logging day. Originally
+   sized to content (a 1-film day narrower than a 4-film day) inside a bordered box
+   per card; that made the row jagged -- card width visibly jumping around drew more
+   attention to the unevenness than a plain content-sized flex-wrap would have on its
+   own. No border/padding box either -- whitespace separates cards now, not a drawn
+   outline. Extra posters beyond what a column comfortably fits wrap within the card
+   (day-card-films > div is already flex-wrap) rather than widening it.
+   Fixed column count, same flex-basis-calc technique as .favs--six above (not real
+   CSS grid, for the same "content can still determine a card's own height" reason
+   that pattern already established) -- 3 columns on desktop (4 rows of
+   SAME_DAY_LOGS_GRID_CAP=12 in compare.py), 2 columns on mobile at the same 700px
+   breakpoint .favs--six uses (6 rows of the same 12) -- both shapes fill the cap
+   exactly, no sparse partial row at either width. */
 /* center, not flex-start -- flex-start left-packs each row and dumps all the
    leftover width as a single gap on the right, which reads as uneven since the last
    (partial) row looks nothing like the others; centering balances every row instead. */
-.day-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.25rem; }
+.day-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem 1.25rem; }
 .day-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.9rem;
+  flex: 0 0 calc((100% - 2 * 1.25rem) / 3);
+  max-width: calc((100% - 2 * 1.25rem) / 3);
   text-align: center;
+}
+@media (max-width: 700px) {
+  .day-card {
+    flex: 0 0 calc((100% - 1 * 1.25rem) / 2);
+    max-width: calc((100% - 1 * 1.25rem) / 2);
+  }
 }
 .day-card-date { margin: 0 0 0.75rem; font-weight: 700; }
 .day-card-films { display: flex; justify-content: center; align-items: flex-start; gap: 1rem; }
@@ -1281,6 +1321,39 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   .modal-film-grid { grid-template-columns: repeat(3, 1fr); }
 }
 .modal-loading, .modal-empty, .modal-error { color: var(--muted); padding: 1rem 0; text-align: center; }
+/* Same day logs' day-detail popup (opened from a heatmap cell click) -- two
+   sections side by side, one per person, instead of the plain single-column
+   .modal-body/.modal-film-grid every other modal use gets. h4 carries the
+   a-color/b-color distinction on its own (colored name, no poster outline --
+   unlike the day-card grid's own .day-card-films outlines, two side-by-side
+   sections already make "whose films are these" obvious from position alone, the
+   same reasoning .day-card-films' own comment gives for needing an outline when
+   posters instead sit stacked in one column). Stacks to one column under 480px,
+   matching .modal-film-grid's own phone breakpoint just above -- two 2-column
+   grids side by side would otherwise squeeze each poster to a sliver on a narrow
+   phone. Divider is the exact same recipe as Favorite directors/actors' own
+   .two-col--divided (centered ::before pseudo-element, not a border on the
+   second column, so it bisects the gap exactly regardless of the gap's own
+   width) -- not a literal reuse of that class, since its 700px breakpoint is
+   tuned for a full-width page card, not this fixed-max-560px modal; shown/hidden
+   at the same 480px point this component itself stacks at. */
+.modal-body--same-day { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+@media (min-width: 481px) {
+  .modal-body--same-day::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--border);
+  }
+}
+@media (max-width: 480px) {
+  .modal-body--same-day { grid-template-columns: 1fr; }
+}
+.modal-body--same-day h4 { margin: 0 0 0.75rem; font-size: 0.85rem; }
+.modal-body--same-day .modal-film-grid { grid-template-columns: repeat(2, 1fr); }
 /* Wraps just the name text next to a person-thumb, not the whole row -- the
    thumbnail stays non-interactive. Inherits the surrounding table/card font instead
    of looking like a generic <button>. */

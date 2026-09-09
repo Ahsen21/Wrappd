@@ -321,7 +321,7 @@
   <div class="card">
     <h3>Same day logs</h3>
     <p class="muted">Days you both logged a film (not necessarily the same one).</p>
-    <div class="toggle-group" data-toggle-group>
+    <!-- <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="all">All</button>
       <button type="button" class="toggle-btn" data-view="exact">Exact matches</button>
     </div>
@@ -330,9 +330,9 @@
         <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
         <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
       </div>
-      <!-- {% if same_day_logs_total > same_day_logs|length %}
+      {% if same_day_logs_total > same_day_logs|length %}
         <p class="muted caption">Showing {{ same_day_logs|length }} of {{ same_day_logs_total|intcomma }}.</p>
-      {% endif %} -->
+      {% endif %}
       {% if same_day_logs %}
         <div class="day-grid">
           {% for row in same_day_logs %}
@@ -373,7 +373,31 @@
       {% else %}
         <p class="empty-state">No exact matches yet</p>
       {% endif %}
-    </div>
+    </div> -->
+
+    {% if same_day_heatmap.years %}
+      <h4>Activity</h4>
+      {% if same_day_heatmap.years|length > 1 %}
+        <div class="toggle-group" data-chart-toggle="sameDayHeatmapYear">
+          {% for year in same_day_heatmap.years %}
+            <button
+              type="button" class="toggle-btn{% if year == same_day_heatmap.default_year %} active{% endif %}"
+              data-year="{{ year }}"
+            >{{ year }}</button>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="heatmap-wrap">
+        <div class="heatmap-months" id="sameDayHeatmapMonths"></div>
+        <div class="heatmap-grid heatmap-grid--same-day" id="sameDayHeatmapGrid"></div>
+        <div class="heatmap-tip" id="sameDayHeatmapTip" hidden></div>
+      </div>
+      <div class="heatmap-legend heatmap-legend--same-day">
+        <span class="legend-pair"><span class="heatmap-legend-swatch" data-state="0"></span>No shared day</span>
+        <span class="legend-pair"><span class="heatmap-legend-swatch" data-state="1"></span>Same day</span>
+        <span class="legend-pair"><span class="heatmap-legend-swatch" data-state="2"></span>Exact match</span>
+      </div>
+    {% endif %}
   </div>
 
   {% comment %}
@@ -410,6 +434,16 @@
         <button type="button" class="modal-close" id="personModalClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="personModalBody"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="sameDayModalBackdrop" hidden>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="sameDayModalTitle">
+      <div class="modal-header">
+        <h3 id="sameDayModalTitle"></h3>
+        <button type="button" class="modal-close" id="sameDayModalClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body modal-body--same-day" id="sameDayModalBody"></div>
     </div>
   </div>
 
@@ -633,6 +667,207 @@
         });
       });
     }
+
+    // Same day logs' calendar heatmap -- same GitHub-contribution-style grid,
+    // cell-sizing, and tooltip-positioning logic as Director's Cut's own viewing
+    // heatmap (dashboard.html's heatmap script), copied rather than shared since
+    // the two pages don't share a JS module -- recolored categorically (no shared
+    // day / same day / exact match, via data-state) instead of volume-bucketed.
+    // Hovering (or focusing) any cell shows just its date, same lightweight
+    // .heatmap-tip as the viewing heatmap's own count tooltip -- the detail (which
+    // films) moved to a click-triggered popup instead of living in the tooltip
+    // text, since a poster grid needs a real modal, not a text bubble. Clicking
+    // (or Enter/Space-ing) a day that has films opens that popup -- own modal
+    // (#sameDayModalBackdrop), not a reuse of the person-filmography one below,
+    // same "each feature owns its state" split this file already keeps between
+    // e.g. the ratingCurve/genreAgreement toggles.
+    (function () {
+      const gridEl = document.getElementById('sameDayHeatmapGrid');
+      const monthsEl = document.getElementById('sameDayHeatmapMonths');
+      const tipEl = document.getElementById('sameDayHeatmapTip');
+      const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
+      if (!gridEl || !chartData.same_day_heatmap) return;
+
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const labelA = chartData.same_day_heatmap.label_a;
+      const labelB = chartData.same_day_heatmap.label_b;
+
+      // Manual YYYY-MM-DD formatting, not toISOString() -- see the same comment on
+      // the viewing heatmap's own isoDate() for why (a UTC conversion shifts local
+      // midnight to the previous day in any timezone behind UTC).
+      function isoDate(d) {
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return d.getFullYear() + '-' + month + '-' + day;
+      }
+
+      function hideTip() { tipEl.hidden = true; }
+
+      function showTip(cell, text) {
+        tipEl.textContent = text;
+        tipEl.hidden = false;
+        const margin = 8;
+        const cellRect = cell.getBoundingClientRect();
+        let left = cellRect.left;
+        const maxLeft = window.innerWidth - margin - tipEl.offsetWidth;
+        if (left > maxLeft) left = maxLeft;
+        if (left < margin) left = margin;
+        let top = cellRect.top - tipEl.offsetHeight - 6;
+        if (top < margin) top = cellRect.bottom + 6;
+        tipEl.style.left = left + 'px';
+        tipEl.style.top = top + 'px';
+      }
+
+      const modalBackdrop = document.getElementById('sameDayModalBackdrop');
+      const modalTitle = document.getElementById('sameDayModalTitle');
+      const modalBody = document.getElementById('sameDayModalBody');
+      const modalClose = document.getElementById('sameDayModalClose');
+      let lastTrigger = null;
+
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      function openModal() {
+        modalBackdrop.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeModal() {
+        modalBackdrop.hidden = true;
+        document.body.style.overflow = '';
+        if (lastTrigger) lastTrigger.focus();
+      }
+
+      // colorClass names the section (a-color/b-color, same text-color utility
+      // the rest of the page uses) -- side-by-side position is what tells the two
+      // sections apart here, not a poster outline, since (unlike the day-card
+      // grid's single stacked column) each side already gets its own labeled
+      // half of the modal. Caption is that session's own star rating, same
+      // "blank if never rated" convention the person-filmography modal's own
+      // renderFilms uses, not the film's title -- the hover tooltip already
+      // covers title/year, same as every other poster on this page.
+      function filmSection(name, films, colorClass) {
+        const heading = '<h4 class="' + colorClass + '">' + escapeHtml(name) + '</h4>';
+        if (!films.length) {
+          return '<div>' + heading + '<p class="modal-empty">Nothing logged</p></div>';
+        }
+        const cards = films.map(function (film) {
+          const tooltip = escapeHtml(film.title + (film.year ? ' (' + film.year + ')' : ''));
+          const poster = film.poster_url
+            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
+            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
+          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
+          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
+        }).join('');
+        // Wrapped in one div, not returned as two sibling strings -- .modal-body--
+        // same-day is itself a 2-column grid, so two bare top-level elements per
+        // section (heading, then grid) would auto-place into alternating columns
+        // instead of stacking within the same one, scattering user 1's heading and
+        // user 2's posters into the same column.
+        return '<div>' + heading + '<div class="modal-film-grid">' + cards + '</div></div>';
+      }
+
+      function openDay(cell, dateLabel, entry) {
+        lastTrigger = cell;
+        modalTitle.textContent = dateLabel;
+        modalBody.innerHTML =
+          filmSection(labelA, entry.films_a, 'a-color') + filmSection(labelB, entry.films_b, 'b-color');
+        openModal();
+      }
+
+      function renderYear(year) {
+        gridEl.innerHTML = '';
+        monthsEl.innerHTML = '';
+        hideTip();
+
+        const cells = chartData.same_day_heatmap.data[String(year)] || {};
+
+        const startOfYear = new Date(year, 0, 1);
+        const startOffset = startOfYear.getDay();
+        const daysInYear = Math.round((new Date(year + 1, 0, 1) - startOfYear) / 86400000);
+        const weekCount = Math.floor((startOffset + daysInYear - 1) / 7) + 1;
+
+        const gap = 3;
+        const rawSize = (wrapEl.clientWidth - (weekCount - 1) * gap) / weekCount;
+        const cellSize = Math.max(11, Math.floor(rawSize));
+        const columns = 'repeat(' + weekCount + ', ' + cellSize + 'px)';
+        gridEl.style.gridTemplateColumns = columns;
+        gridEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
+        monthsEl.style.gridTemplateColumns = columns;
+
+        let dayIndex = startOffset;
+        let lastMonth = -1;
+
+        for (
+          let d = new Date(year, 0, 1);
+          d.getFullYear() === year;
+          d.setDate(d.getDate() + 1), dayIndex += 1
+        ) {
+          const row = d.getDay();
+          const col = Math.floor(dayIndex / 7);
+
+          if (d.getMonth() !== lastMonth) {
+            lastMonth = d.getMonth();
+            const label = document.createElement('div');
+            label.className = 'heatmap-month-label';
+            label.textContent = monthNames[lastMonth];
+            label.style.gridColumn = String(col + 1);
+            monthsEl.appendChild(label);
+          }
+
+          const iso = isoDate(d);
+          const entry = cells[iso];
+          const state = entry ? entry.state : 0;
+          const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+          const cell = document.createElement('div');
+          cell.className = 'heatmap-cell';
+          cell.dataset.state = String(state);
+          cell.style.gridRow = String(row + 1);
+          cell.style.gridColumn = String(col + 1);
+
+          cell.tabIndex = 0;
+          cell.addEventListener('mouseenter', function () { showTip(cell, dateLabel); });
+          cell.addEventListener('mouseleave', hideTip);
+          cell.addEventListener('focus', function () { showTip(cell, dateLabel); });
+          cell.addEventListener('blur', hideTip);
+
+          if (entry) {
+            const filmCount = entry.films_a.length + entry.films_b.length;
+            cell.setAttribute(
+              'aria-label',
+              filmCount + ' shared film' + (filmCount === 1 ? '' : 's') + ' — ' + dateLabel + ' — press Enter to view',
+            );
+            cell.addEventListener('click', function () { openDay(cell, dateLabel, entry); });
+            cell.addEventListener('keydown', function (e) {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDay(cell, dateLabel, entry); }
+            });
+          } else {
+            cell.setAttribute('aria-label', 'No shared log — ' + dateLabel);
+          }
+          gridEl.appendChild(cell);
+        }
+      }
+
+      renderYear(chartData.same_day_heatmap.default_year);
+
+      document.querySelectorAll('[data-chart-toggle="sameDayHeatmapYear"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="sameDayHeatmapYear"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          renderYear(Number(btn.dataset.year));
+        });
+      });
+
+      modalClose.addEventListener('click', closeModal);
+      modalBackdrop.addEventListener('click', function (e) { if (e.target === modalBackdrop) closeModal(); });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !modalBackdrop.hidden) closeModal();
+      });
+    })();
 
     // Person filmography modal -- click a director/actor's name (.person-trigger,
     // wired up in Favorite Directors/Actors' Side-by-side tables) to fetch and show
