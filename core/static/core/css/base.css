@@ -729,22 +729,45 @@ h2#watching-stats {
 }
 
 /* For any grid of people rather than films -- headshots shrunk within their column
-   (a full-width circular-ish headshot looks odd blown up to a poster's 2:3 box) and
-   2 lines' height reserved for the name below it regardless of whether it actually
-   wraps, whether that name is plain text (Most rewatched directors) or a clickable
-   .person-trigger (Favorite Directors/Actors) -- without the reservation, a 1-line
-   name ("Sam Raimi") leaves less space above the next line than a 2-line one, so
-   that line lands at a different height card to card instead of aligning across the
-   row. Named for the name, specifically (.fav-name), rather than matched by DOM
-   position (e.g. p:first-of-type) -- Favorite Directors/Actors' rating/count line is
-   two separate <p>s, not one, so a position-based selector would just as easily grab
-   the wrong paragraph the moment that markup changes shape. Not tied to any one
-   column count (unlike .favs--eight) since it layers onto any grid of people. */
+   and made actually circular (aspect-ratio 1/1 + border-radius 50%, overriding
+   .fav-card img/.fav-placeholder's own 2:3 poster box -- border-radius:50% alone
+   on a 2:3 box draws an ellipse, not a circle; it needs a square box to round
+   into a true circle) -- a full-width rectangular headshot looks odd blown up to
+   a poster's 2:3 box, and every other person photo across the site (.person-thumb)
+   is already circular, so this brings Favorite Directors/Actors and Most
+   rewatched directors in line with that rather than being the one rectangular
+   exception. 2 lines' height reserved for the name below it regardless of whether
+   it actually wraps, whether that name is plain text (Most rewatched directors)
+   or a clickable .person-trigger (Favorite Directors/Actors) -- without the
+   reservation, a 1-line name ("Sam Raimi") leaves less space above the next line
+   than a 2-line one, so that line lands at a different height card to card
+   instead of aligning across the row. Named for the name, specifically
+   (.fav-name), rather than matched by DOM position (e.g. p:first-of-type) --
+   Favorite Directors/Actors' rating/count line is two separate <p>s, not one, so
+   a position-based selector would just as easily grab the wrong paragraph the
+   moment that markup changes shape. Not tied to any one column count (unlike
+   .favs--eight) since it layers onto any grid of people. */
 .favs--headshots .fav-card img,
 .favs--headshots .fav-card .fav-placeholder {
-  width: 75%;
+  width: 85%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
   margin: 0 auto;
 }
+/* TMDB's profile photos are natively 2:3 (same portrait shape as a movie
+   poster), so cropping one down to the 1:1 square above means losing a third
+   of the original image's height either way -- object-fit's default center
+   crop takes that equally off the top and bottom, which undershoots a lot of
+   real profile photos: a professional headshot typically frames the face in
+   the upper half of that 2:3 shot (room for shoulders/chest below), so a
+   dead-center crop both clips into the hairline and leaves the bottom of the
+   circle mostly empty shoulder/chest. Biasing the crop window upward (showing
+   more of the photo's top, less of its bottom) landed noticeably better across
+   a real sample of directors/actors without measurably hurting the photos that
+   were already well-framed at dead center -- not a fix for every photo (framing
+   still varies shot to shot, and there's no face-detection data available from
+   TMDB to do this per-image), just a better-on-average default than 50/50. */
+.favs--headshots .fav-card img { object-position: 50% 30%; }
 .favs--headshots .fav-card .fav-name,
 .favs--headshots .fav-card .person-trigger {
   min-height: 44px;
@@ -1023,12 +1046,19 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-/* Director/actor tiles only -- the exact same narrower, centered headshot
-   treatment Favorite Directors/Actors already use (.favs--headshots), just
-   applied per-card here instead of per-container, since this grid mixes
-   headshots with film posters and icon placeholders in the same row rather than
-   being all-headshots the way that grid is. */
-.fav-card--headshot img, .fav-card--headshot .fav-placeholder { width: 75%; margin: 0 auto; }
+/* Director/actor tiles only -- the exact same narrower, centered, circular
+   headshot treatment Favorite Directors/Actors already use (.favs--headshots,
+   see its own comment for why aspect-ratio/border-radius/object-position need
+   to move together), just applied per-card here instead of per-container,
+   since this grid mixes headshots with film posters and icon placeholders in
+   the same row rather than being all-headshots the way that grid is. */
+.fav-card--headshot img, .fav-card--headshot .fav-placeholder {
+  width: 75%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  margin: 0 auto;
+}
+.fav-card--headshot img { object-position: 50% 30%; }
 
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
@@ -1167,6 +1197,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   object-fit: cover;
   flex-shrink: 0;
 }
+/* Same upward crop bias as .favs--headshots' own img rule, and for the same
+   reason -- this crops the same natively-2:3 TMDB profile photos down to a
+   square, and a dead-center crop undershoots the face on a lot of them. */
+.person-thumb { object-position: 50% 30%; }
 .film-thumb, .film-thumb-placeholder {
   width: 28px;
   height: 42px;

@@ -386,7 +386,7 @@
 
   <div class="card jump-target" id="watching-together">
     <h3>Watchlist matches</h3>
-    <p class="muted">Sorted by your combined preferences, including favorite genres and directors.</p>
+    <p class="muted">Sorted by your combined preferences.</p>
     {% if watchlist_matches_total > watchlist_matches|length %}
       <p class="muted caption">Showing {{ watchlist_matches|length }} of {{ watchlist_matches_total|intcomma }}.</p>
     {% endif %}
@@ -406,6 +406,12 @@
   <div class="card">
     <h3>Same day logs</h3>
     <p class="muted">Days you both logged a film (not necessarily the same one).</p>
+    {% if same_day_logs_total %}
+      <div class="grid grid--rating-avg">
+        <div class="stat"><div class="value">{{ same_day_logs_total|intcomma }}</div><div class="label">Shared days</div></div>
+        <div class="stat"><div class="value">{{ same_day_exact_matches_total|intcomma }}</div><div class="label">Exact matches</div></div>
+      </div>
+    {% endif %}
     <!-- <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="all">All</button>
       <button type="button" class="toggle-btn" data-view="exact">Exact matches</button>
