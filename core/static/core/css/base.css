@@ -15,7 +15,23 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+/* overflow-x here too, not just on body below -- body's own overflow-x doesn't
+   reliably constrain the actual viewport/scrolling box on its own (that's html's
+   job as the root element), so without this the safety net on body alone still
+   left position:fixed;inset:0 elements (.modal-backdrop) sizing against an
+   inflated layout viewport whenever something overflowed. See body's own
+   comment for the fuller "why" (a fixed-width tooltip centered under a narrow
+   mobile column, the .modal-backdrop symptom this causes, etc).
+   clip, not hidden -- both suppress horizontal overflow the same way, but
+   `hidden`/`auto`/`scroll` on just one axis forces the CSS overflow spec's
+   "the other axis computes to auto instead of visible" rule to kick in even
+   though overflow-y here was never touched; that turned html/body into an
+   actual distinct scroll container, which broke position:sticky for .nav/
+   .section-nav on mobile entirely (they scrolled away instead of sticking --
+   found the hard way after the hidden version shipped). `clip` is explicitly
+   exempted from that pairing rule, so overflow-y stays visible and sticky
+   positioning keeps resolving against the real viewport as normal. */
+html { scroll-behavior: smooth; overflow-x: clip; }
 /* Every font-size/padding/margin/gap in this file is a rem value (the one exception,
    .sr-only's -1px clip-hiding trick, isn't visible spacing) -- so scaling the root
    font-size is a single change that proportionally shrinks all of them together on
@@ -44,6 +60,13 @@ body {
   color: var(--text);
   font-family: "Sora", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
+  /* Belt-and-suspenders alongside html's own overflow-x: clip above -- see
+     that rule's comment for why both are needed, and why clip specifically
+     (not hidden) matters for keeping position:sticky working on mobile.
+     Nothing on this site should ever need the page itself to scroll
+     sideways; anything that legitimately can overflow its own box already
+     gets its own scroll container (.heatmap-wrap, .section-nav). */
+  overflow-x: clip;
 }
 
 a { color: var(--accent-2); }
@@ -597,6 +620,24 @@ h2#watching-stats {
   pointer-events: none;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 20;
+}
+/* Tap-to-show poster tooltip (decorative posters, touch devices only -- see the
+   JS that creates/positions this in both pages' script blocks) -- identical
+   look to .heatmap-tip above, not a shared class, since the two are unrelated
+   features that happen to want the same floating-dark-box treatment; kept
+   separate so either can change its own look later without affecting the
+   other. */
+.poster-tip {
+  position: fixed;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 120;
 }
 
 .toggle-group {
@@ -1408,29 +1449,25 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    unlike the day-card grid's own .day-card-films outlines, two side-by-side
    sections already make "whose films are these" obvious from position alone, the
    same reasoning .day-card-films' own comment gives for needing an outline when
-   posters instead sit stacked in one column). Stacks to one column under 480px,
-   matching .modal-film-grid's own phone breakpoint just above -- two 2-column
-   grids side by side would otherwise squeeze each poster to a sliver on a narrow
-   phone. Divider is the exact same recipe as Favorite directors/actors' own
-   .two-col--divided (centered ::before pseudo-element, not a border on the
-   second column, so it bisects the gap exactly regardless of the gap's own
-   width) -- not a literal reuse of that class, since its 700px breakpoint is
-   tuned for a full-width page card, not this fixed-max-560px modal; shown/hidden
-   at the same 480px point this component itself stacks at. */
+   posters instead sit stacked in one column). Always two 2-column grids side by
+   side (a 2x2 each), deliberately not stacking to one column on a narrow phone
+   the way .modal-film-grid's own phone breakpoint above does -- keeping the
+   side-by-side shape consistent at every width mattered more here than avoiding
+   the narrower poster columns that come with it on a small screen. Divider is
+   the exact same recipe as Favorite directors/actors' own .two-col--divided
+   (centered ::before pseudo-element, not a border on the second column, so it
+   bisects the gap exactly regardless of the gap's own width) -- not a literal
+   reuse of that class, since its 700px breakpoint stacks single-column, which
+   this deliberately never does; shown unconditionally instead. */
 .modal-body--same-day { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-@media (min-width: 481px) {
-  .modal-body--same-day::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 1px;
-    background: var(--border);
-  }
-}
-@media (max-width: 480px) {
-  .modal-body--same-day { grid-template-columns: 1fr; }
+.modal-body--same-day::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
 }
 .modal-body--same-day h4 { margin: 0 0 0.75rem; font-size: 0.85rem; }
 .modal-body--same-day .modal-film-grid { grid-template-columns: repeat(2, 1fr); }
