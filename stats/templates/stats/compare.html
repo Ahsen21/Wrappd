@@ -4,7 +4,7 @@
 {% block content %}
 <div class="compare-page">
 
-  <div class="hero">
+  <!-- <div class="hero">
     <div class="hero-top-row">
       <p class="hero-eyebrow">Double Feature</p>
       <a
@@ -28,6 +28,91 @@
       <div class="stat"><div class="value">{{ agreement_pct|floatformat:0|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Rating agreement <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of films you've both rated where your ratings landed within half a star of each other.</span></span></span></div></div>
       <div class="stat"><div class="value">{{ compatibility_pct|floatformat:0|default:"—" }}{% if compatibility_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Compatibility <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average of Watched in common and Rating agreement, representing how much you watch the same things and how similarly you feel about them.</span></span></span></div></div>
     </div>
+  </div> -->
+
+  {% comment %}
+  Trying out a reworked version of the hero's own stats below it, not yet
+  replacing it -- both are shown for now while this layout is being decided.
+  Reuses .hero itself (not .card) for the same gradient background/padding, and
+  duplicates the eyebrow/toggle row + h1 from the hero above -- this is meant to
+  stand on its own as a full alternate hero, not read as a bare stats appendix
+  under the real one.
+  {% endcomment %}
+  <div class="hero compare-overview-hero">
+    <div class="hero-top-row">
+      <p class="hero-eyebrow">Double Feature</p>
+      <a
+        href="{% if exclude_shorts %}{{ request.path }}{% else %}?shorts=exclude{% endif %}"
+        class="shorts-toggle{% if exclude_shorts %} shorts-toggle--on{% endif %}"
+        role="switch" aria-checked="{% if exclude_shorts %}true{% else %}false{% endif %}"
+        title="{% if exclude_shorts %}Showing films 60+ min only -- click to include shorts{% else %}Click to exclude short films (under 60 min) from every stat on this page{% endif %}"
+      >
+        Exclude shorts
+        <span class="shorts-toggle-track"><span class="shorts-toggle-thumb"></span></span>
+      </a>
+    </div>
+    <h1>{{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}</h1>
+
+    <div class="two-col two-col--divided compare-overview-section">
+      <div>
+        <p class="compare-overview-name a-color">{{ session_a.display_name|default:"Person A" }}</p>
+        <div class="grid grid--rating-avg">
+          <div class="stat"><div class="value a-color">{{ watched_count_a|intcomma }}</div><div class="label"># films</div></div>
+          <div class="stat"><div class="value a-color">{% if avg_rating_a %}{{ avg_rating_a|floatformat:2 }} ★{% else %}—{% endif %}</div><div class="label">avg rating</div></div>
+        </div>
+      </div>
+      <div>
+        <p class="compare-overview-name b-color">{{ session_b.display_name|default:"Person B" }}</p>
+        <div class="grid grid--rating-avg">
+          <div class="stat"><div class="value b-color">{{ watched_count_b|intcomma }}</div><div class="label"># films</div></div>
+          <div class="stat"><div class="value b-color">{% if avg_rating_b %}{{ avg_rating_b|floatformat:2 }} ★{% else %}—{% endif %}</div><div class="label">avg rating</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="compare-overview-grid compare-overview-section">
+      <div class="compare-overview-pair">
+        <div class="stat"><div class="value a-color">{{ only_a_count|intcomma }}</div><div class="label">Only {{ session_a.display_name|default:"Person A" }}</div></div>
+        <div class="stat"><div class="value a-color">{{ rated_higher_a_count|intcomma }}</div><div class="label">{{ session_a.display_name|default:"Person A" }} rated higher</div></div>
+      </div>
+      <div class="compare-overview-pair">
+        <div class="stat"><div class="value">{{ shared_count|intcomma }}</div><div class="label">Both watched</div></div>
+        <div class="stat"><div class="value">{{ same_rating_total|intcomma }}</div><div class="label">Same rating</div></div>
+      </div>
+      <div class="compare-overview-pair">
+        <div class="stat"><div class="value b-color">{{ only_b_count|intcomma }}</div><div class="label">Only {{ session_b.display_name|default:"Person B" }}</div></div>
+        <div class="stat"><div class="value b-color">{{ rated_higher_b_count|intcomma }}</div><div class="label">{{ session_b.display_name|default:"Person B" }} rated higher</div></div>
+      </div>
+    </div>
+
+    <div class="compare-overview-grid compare-overview-section">
+      <div class="stat"><div class="value">{{ overlap_pct|floatformat:0|default:"—" }}%</div><div class="label"><span class="th-with-tip">Watched in common <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of every film either of you has watched that you've both watched.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ agreement_pct|floatformat:0|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Rating agreement <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of films you've both rated where your ratings landed within half a star of each other.</span></span></span></div></div>
+      <div class="stat"><div class="value">{{ avg_delta|floatformat:2|default:"—" }}</div><div class="label"><span class="th-with-tip">Per-film rating gap <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average difference between your ratings on films you've both rated</span></span></span></div></div>
+    </div>
+
+    {% if compatibility_pct is not None %}
+      <div class="compare-overview-alignment">
+        <div class="alignment-gauge">
+          <svg width="150" height="150" viewBox="0 0 150 150" role="img" aria-label="{{ compatibility_pct|floatformat:0 }}% overall alignment">
+            <circle cx="75" cy="75" r="60" fill="none" stroke="var(--border)" stroke-width="12"></circle>
+            <circle
+              cx="75" cy="75" r="60" fill="none" stroke="var(--accent)" stroke-width="12" stroke-linecap="round"
+              stroke-dasharray="376.99" stroke-dashoffset="{{ compatibility_gauge_offset }}"
+              transform="rotate(-90 75 75)"
+            ></circle>
+            <text x="75" y="86" text-anchor="middle" class="alignment-gauge-text">{{ compatibility_pct|floatformat:0 }}%</text>
+          </svg>
+          <p class="alignment-gauge-label"><span class="th-with-tip">Overall alignment <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average of Watched in common and Rating agreement, representing how much you watch the same things and how similarly you feel about them.</span></span></span></p>
+        </div>
+        <p class="alignment-blurb">
+          You <span class="alignment-highlight">{{ alignment_blurb.overlap_clause }}</span>,
+          {{ alignment_blurb.connector }} <span class="alignment-highlight">{{ alignment_blurb.agreement_clause }}</span>.
+        </p>
+      </div>
+    {% else %}
+      <div class="stat"><div class="value">—</div><div class="label"><span class="th-with-tip">Overall alignment <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average of Watched in common and Rating agreement, representing how much you watch the same things and how similarly you feel about them.</span></span></span></div></div>
+    {% endif %}
   </div>
 
   <nav class="section-nav">
@@ -39,7 +124,7 @@
 
   <div class="card jump-target" id="ratings">
     <h3>Rating distributions</h3>
-    <div class="grid grid--rating-avg">
+    <!-- <div class="grid grid--rating-avg">
       <div class="stat">
         <div class="value a-color">{% if avg_rating_a %}{{ avg_rating_a|floatformat:2 }} ★{% else %}—{% endif %}</div>
         <div class="label">{{ session_a.display_name|default:"Person A" }}'s avg rating</div>
@@ -48,12 +133,12 @@
         <div class="value b-color">{% if avg_rating_b %}{{ avg_rating_b|floatformat:2 }} ★{% else %}—{% endif %}</div>
         <div class="label">{{ session_b.display_name|default:"Person B" }}'s avg rating</div>
       </div>
-    </div>
+    </div> -->
     <div class="toggle-group" data-chart-toggle="ratingCurve">
       <button type="button" class="toggle-btn active" data-view="count">Films</button>
       <button type="button" class="toggle-btn" data-view="percent">Percent</button>
     </div>
-    <p class="muted caption"><i>Percent shows each rating as a share of that person's own rated films, useful for comparing rating tendencies when one of you has watched a lot more than the other.</i></p>
+    <!-- <p class="muted caption"><i>Percent shows each rating as a share of that person's own rated films, useful for comparing rating tendencies when one of you has watched a lot more than the other.</i></p> -->
     <canvas id="ratingCurveChart"></canvas>
   </div>
 
@@ -108,7 +193,7 @@
           {% for film in top_unseen_a %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-              <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
+              <!-- <p class="muted">{{ film.rating|floatformat:1 }} ★</p> -->
             </div>
           {% endfor %}
         </div>
@@ -123,7 +208,7 @@
           {% for film in top_unseen_b %}
             <div class="fav-card">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-              <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
+              <!-- <p class="muted">{{ film.rating|floatformat:1 }} ★</p> -->
             </div>
           {% endfor %}
         </div>

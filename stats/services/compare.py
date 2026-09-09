@@ -10,12 +10,18 @@ from itertools import groupby
 
 from django.db.models import Avg, Count, Min
 
-from imports.models import DiaryEntry, RatingEntry, WatchlistEntry
+from imports.models import DiaryEntry, RatingEntry, WatchedEntry, WatchlistEntry
 from stats.services.filters import SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short_entries, exclude_tv_shows
 from tmdb.models import Credit, Movie
 
 AGREEMENT_THRESHOLD = Decimal('0.5')
 TOP_N = 10
+# Radius of the Overall alignment gauge's ring in compare.html (r="60" on a 150x150
+# SVG, cx/cy 75) -- the circumference here is that ring's stroke-dasharray, kept as
+# one computed value rather than a second hardcoded 377-ish constant in the
+# template, so the two can't quietly drift apart if the ring's radius ever changes.
+ALIGNMENT_GAUGE_RADIUS = 60
+ALIGNMENT_GAUGE_CIRCUMFERENCE = round(2 * math.pi * ALIGNMENT_GAUGE_RADIUS, 2)
 # Same rating and Watchlist matches render as a fixed-width poster grid (see the
 # site-wide .favs--eight in base.css), not a table -- capped at 2 full rows of 8 (16)
 # rather than TOP_N's 10, since 10 left an awkward sparse second row of 2.
@@ -73,13 +79,21 @@ RATING_BUCKETS = [Decimal(v) for v in ('0.5', '1.0', '1.5', '2.0', '2.5', '3.0',
 
 def _film_map(import_session, exclude_shorts=False):
     """One row per (title, year) for this session, combining the authoritative rating
-    (ratings.csv) with the movie FK / title fallback from diary.csv.
+    (ratings.csv) with the movie FK / title fallback from diary.csv, then topped up
+    with watched.csv (WatchedEntry) -- the actual authoritative superset of "did this
+    person watch this film at all", same definition dashboard.py's own
+    _films_watched_total uses. A film marked watched but never dated or rated (an old
+    pre-diary watch, commonly) previously fell through this map entirely, silently
+    undercounting every stat derived from it on this page (shared/only-A/only-B
+    counts, "X hasn't seen it" claims, and so on) relative to Director's Cut's own
+    watched-film total for the same session.
 
     Keyed by (title, year), not letterboxd_uri: Letterboxd's "Letterboxd URI" column is
     a per-log-entry short link, not a stable per-film id -- the same film gets a
-    *different* boxd.it code in diary.csv than in ratings.csv. (title, year) is the
-    same key TMDB matching already uses (see tmdb/services/enrichment.py), so this
-    keeps film identity consistent across the whole app.
+    *different* boxd.it code in diary.csv than in ratings.csv (and again in
+    watched.csv). (title, year) is the same key TMDB matching already uses (see
+    tmdb/services/enrichment.py), so this keeps film identity consistent across the
+    whole app.
 
     exclude_shorts drops any row whose resolved movie has a confirmed runtime under
     SHORT_FILM_MAX_RUNTIME_MINUTES -- the include/exclude shorts toggle on this
@@ -89,9 +103,11 @@ def _film_map(import_session, exclude_shorts=False):
 
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
     diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    watched = exclude_tv_shows(WatchedEntry.objects.filter(import_session=import_session))
     if exclude_shorts:
         rated = exclude_short_entries(rated)
         diary = exclude_short_entries(diary)
+        watched = exclude_short_entries(watched)
 
     for r in rated.select_related('movie'):
         films[(r.title, r.year)] = {'title': r.title, 'year': r.year, 'rating': r.rating, 'movie_id': r.movie_id}
@@ -103,6 +119,16 @@ def _film_map(import_session, exclude_shorts=False):
             entry['movie_id'] = d.movie_id
         if entry.get('rating') is None and d.rating is not None:
             entry['rating'] = d.rating
+
+    # No date, no rating to contribute -- just fills in the movie_id when the film
+    # is genuinely new to the map, and otherwise only shows up here at all (an
+    # unrated, undated "yes I've seen this"), same fallback role watched.csv plays
+    # in _films_watched_total.
+    for w in watched.select_related('movie'):
+        key = (w.title, w.year)
+        entry = films.setdefault(key, {'title': w.title, 'year': w.year, 'rating': None, 'movie_id': None})
+        if w.movie_id and not entry.get('movie_id'):
+            entry['movie_id'] = w.movie_id
 
     return films
 
@@ -972,6 +998,58 @@ def _top_genres(import_session, limit=5, exclude_shorts=False):
     )
 
 
+def _alignment_blurb(overlap_pct, agreement_pct):
+    """{'overlap_clause', 'connector', 'agreement_clause'} -- the pieces of one
+    plain-language sentence translating overlap_pct/agreement_pct into words, for
+    the hero's Overall alignment row. Returned as separate pieces rather than one
+    joined string so the template can highlight the two clauses (the actual
+    "what does this mean" content) differently from the connector/punctuation
+    around them, without reaching for mark_safe/|safe on server-built HTML.
+
+    Each stat is bucketed into its own tier independently (not derived from the
+    blended compatibility_pct), since a low-overlap/high-agreement pair and a
+    high-overlap/low-agreement pair are both real, different stories that one
+    blended number can't tell apart on its own. The two clauses are joined with
+    'but' only when exactly one of the two tiers is the bottom tier (ordinal 0)
+    and the other isn't -- e.g. "rarely overlap... but usually agree on them" is
+    a genuine contrast worth flagging, but two merely-mediocre tiers (ordinal 1
+    vs ordinal 2, say) don't read as one, so they still get 'and'; both at the
+    bottom tier is also 'and' (rock-bottom on both isn't a contrast either).
+    Returns None when agreement_pct itself is None (no shared rated films yet),
+    the same gate compatibility_pct's own None already reflects -- nothing to
+    describe yet."""
+    if agreement_pct is None:
+        return None
+
+    def _tier(pct, breakpoints, clauses):
+        for ordinal, (breakpoint, clause) in enumerate(zip(breakpoints, clauses)):
+            if pct < breakpoint:
+                return ordinal, clause
+        return len(clauses) - 1, clauses[-1]
+
+    overlap_ordinal, overlap_clause = _tier(
+        overlap_pct, [20, 45, 70],
+        [
+            "rarely overlap in what you've watched",
+            "have some overlap in what you've watched",
+            "watch a lot of the same things",
+            "watch almost the exact same things",
+        ],
+    )
+    agreement_ordinal, agreement_clause = _tier(
+        agreement_pct, [40, 60, 85],
+        [
+            'rate them pretty differently',
+            'sometimes agree on them',
+            'usually agree on them',
+            'rate them almost identically',
+        ],
+    )
+    same_side = (overlap_ordinal >= 1) == (agreement_ordinal >= 1)
+    connector = 'and' if same_side else 'but'
+    return {'overlap_clause': overlap_clause, 'connector': connector, 'agreement_clause': agreement_clause}
+
+
 def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     map_a = _film_map(session_a, exclude_shorts)
     map_b = _film_map(session_b, exclude_shorts)
@@ -1130,6 +1208,16 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     # "compatibility" score that ignores taste entirely isn't really answering the
     # question it claims to.
     compatibility_pct = round((overlap_pct + agreement_pct) / 2, 1) if agreement_pct is not None else None
+    # SVG stroke-dashoffset for the Overall alignment ring -- 0 offset draws the
+    # full circumference (a full ring), the full circumference as offset draws
+    # none of it, so this is just that scale run in reverse against the percent.
+    # Falls back to a full offset (empty ring) when there's no score to show,
+    # matching compatibility_pct's own None.
+    compatibility_gauge_offset = (
+        round(ALIGNMENT_GAUGE_CIRCUMFERENCE * (1 - compatibility_pct / 100), 2)
+        if compatibility_pct is not None else ALIGNMENT_GAUGE_CIRCUMFERENCE
+    )
+    alignment_blurb = _alignment_blurb(overlap_pct, agreement_pct)
 
     return {
         'session_a': session_a,
@@ -1138,11 +1226,20 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'shared_count': len(shared_keys),
         'only_a_count': len(only_a_keys),
         'only_b_count': len(only_b_keys),
+        # Every distinct (title, year) either session has a rating or diary
+        # entry for -- shared_keys + only_a_keys/only_b_keys is the same set
+        # partitioned three ways, so watched_count_a always equals
+        # shared_count + only_a_count (and likewise for b). For the hero's new
+        # "# films" stat, not previously surfaced anywhere on this page.
+        'watched_count_a': len(keys_a),
+        'watched_count_b': len(keys_b),
         'rated_higher_a_count': rated_higher_a_count,
         'rated_higher_b_count': rated_higher_b_count,
         'overlap_pct': overlap_pct,
         'agreement_pct': agreement_pct,
         'compatibility_pct': compatibility_pct,
+        'compatibility_gauge_offset': compatibility_gauge_offset,
+        'alignment_blurb': alignment_blurb,
         'avg_delta': (
             round(float(sum(rated_deltas) / len(rated_deltas)), 1)
             if len(rated_deltas) >= MIN_COUNT_FOR_AVERAGE
