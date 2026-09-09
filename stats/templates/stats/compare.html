@@ -792,11 +792,19 @@
         tipEl.textContent = text;
         tipEl.hidden = false;
         const margin = 8;
+        // Clamped against the card's own wrap, not window.innerWidth -- .heatmap-
+        // wrap sits well inside the card's own padding on a narrow phone (the card
+        // itself is inset from the page edge too), so a tip clamped only to the
+        // true viewport could still render past the card's own right edge, hanging
+        // off the dark card background into the page's outer margin even though
+        // it's technically still on-screen.
+        const wrapRect = wrapEl.getBoundingClientRect();
         const cellRect = cell.getBoundingClientRect();
         let left = cellRect.left;
-        const maxLeft = window.innerWidth - margin - tipEl.offsetWidth;
+        const minLeft = wrapRect.left + margin;
+        const maxLeft = wrapRect.right - margin - tipEl.offsetWidth;
         if (left > maxLeft) left = maxLeft;
-        if (left < margin) left = margin;
+        if (left < minLeft) left = minLeft;
         let top = cellRect.top - tipEl.offsetHeight - 6;
         if (top < margin) top = cellRect.bottom + 6;
         tipEl.style.left = left + 'px';
@@ -1036,6 +1044,68 @@
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && !backdrop.hidden) closeModal();
       });
+    })();
+
+    // Tap-to-show poster tooltips -- touch has no hover, so every poster's title
+    // attribute (already there for the desktop hover tooltip) is otherwise
+    // unreachable on a phone. Only for genuinely decorative posters (no click
+    // handler of their own): .fav-card:has(.person-trigger) cards already do
+    // something real on tap (open the filmography modal, matches the hover
+    // affordance those get in base.css) and would just fight a tooltip for the
+    // same tap. hover:none, not a width check -- this is about input capability
+    // (no cursor to hover with), not screen size, and matches how a touch-capable
+    // desktop/tablet should behave the same as a phone here.
+    // Delegated to one document-level listener rather than wiring each poster --
+    // both modals inject their own poster grids after page load (fetch/innerHTML),
+    // so a per-element listener would miss those; delegation covers them for free.
+    (function () {
+      if (!window.matchMedia('(hover: none)').matches) return;
+
+      const tipEl = document.createElement('div');
+      tipEl.className = 'poster-tip';
+      tipEl.hidden = true;
+      document.body.appendChild(tipEl);
+      let activeTarget = null;
+
+      function hideTip() {
+        tipEl.hidden = true;
+        activeTarget = null;
+      }
+
+      // Clamped against the poster's own card/modal panel, not window.innerWidth
+      // -- same reasoning as the same-day heatmap's own showTip fix just above:
+      // a card sits inset from the page edge, so clamping only to the viewport
+      // can still let the tip hang off the card's own visible edge.
+      function showTip(el, text) {
+        tipEl.textContent = text;
+        tipEl.hidden = false;
+        activeTarget = el;
+        const margin = 8;
+        const bounds = (el.closest('.modal-panel') || el.closest('.card') || document.body).getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        let left = elRect.left;
+        const minLeft = bounds.left + margin;
+        const maxLeft = bounds.right - margin - tipEl.offsetWidth;
+        if (left > maxLeft) left = maxLeft;
+        if (left < minLeft) left = minLeft;
+        let top = elRect.top - tipEl.offsetHeight - 6;
+        if (top < margin) top = elRect.bottom + 6;
+        tipEl.style.left = left + 'px';
+        tipEl.style.top = top + 'px';
+      }
+
+      document.addEventListener('click', function (e) {
+        const poster = e.target.closest('.fav-card img, .fav-card .fav-placeholder, .film-thumb, .film-thumb-placeholder');
+        if (poster && !poster.closest('.fav-card:has(.person-trigger)')) {
+          const text = poster.getAttribute('title');
+          if (!text) return;
+          if (activeTarget === poster) { hideTip(); return; }
+          showTip(poster, text);
+          return;
+        }
+        hideTip();
+      });
+      window.addEventListener('scroll', hideTip, { passive: true, capture: true });
     })();
   </script>
 </div>
