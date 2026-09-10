@@ -13,6 +13,7 @@ urlpatterns = [
     # guarding against for this app.)
     path('dashboard/<str:username>/', views.dashboard_by_username, name='dashboard_by_username'),
     path('dashboard/<uuid:session_id>/person/<int:tmdb_id>/', views.person_filmography, name='person_filmography'),
+    path('dashboard/<uuid:session_id>/insight-films/', views.insight_films, name='insight_films'),
     path('compare/<uuid:session_a>/<uuid:session_b>/', views.compare, name='compare'),
     # A single path segment containing "-vs-", not two segments joined by "/" like
     # the uuid route above -- different enough in shape that there's no ordering

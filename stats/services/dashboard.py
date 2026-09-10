@@ -11,10 +11,12 @@ Three data sources are used deliberately:
     (genre/director/actor/country/language/release year) -- see _watched_movies.
 """
 
+import hashlib
 import math
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
+from itertools import combinations
 
 from django.db.models import Avg, Count, Max, Min, Q, Sum
 from django.db.models.functions import ExtractWeekDay, ExtractYear, TruncMonth
@@ -23,12 +25,39 @@ from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry,
 from stats.services.filters import (
     SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short_entries, exclude_short_movies, exclude_tv_shows,
 )
-from tmdb.models import Credit, Movie, Person
+from tmdb.models import Credit, Movie
 
 WEEKDAY_NAMES = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thursday', 6: 'Friday', 7: 'Saturday'}
 # TMDB's production_countries gives full formal names -- shortened to their common
 # abbreviations for chart labels, which get cramped in the narrow three-across layout.
 COUNTRY_NAME_OVERRIDES = {'United States of America': 'USA', 'United Kingdom': 'UK'}
+# How many flags render in the Countries/Languages explored insight tiles' flag
+# cluster (see _countries_explored_insight/_languages_explored_insight) -- the
+# top N most-watched countries/languages by film count, not every one they've
+# ever seen a single film from. A cluster of 30+ tiny flags would be
+# illegible, not more informative.
+FLAG_CLUSTER_SIZE = 4
+# Language name (as stored on Movie.original_language, see tmdb/services/
+# enrichment.py's _resolve_language_name) -> a representative ISO 3166-1
+# alpha-2 country code, for the Languages explored insight tile's flag
+# cluster (see _languages_explored_insight). A language isn't a country, so
+# every mapping here is an approximation (picking the single most
+# internationally recognizable flag for that language, not "the" country it
+# belongs to) -- good enough for a decorative cluster of flags, not a claim
+# about where a film was actually made (that's what the Countries tile is
+# for). Deliberately not exhaustive: a language missing here just doesn't
+# contribute a flag to the cluster (see _flag_emoji's own "don't fabricate"
+# fallback), rather than guessing at one.
+LANGUAGE_FLAG_CODES = {
+    'English': 'GB', 'French': 'FR', 'Spanish': 'ES', 'German': 'DE', 'Italian': 'IT',
+    'Japanese': 'JP', 'Korean': 'KR', 'Mandarin': 'CN', 'Cantonese': 'HK', 'Hindi': 'IN',
+    'Russian': 'RU', 'Portuguese': 'PT', 'Swedish': 'SE', 'Danish': 'DK', 'Norwegian': 'NO',
+    'Dutch': 'NL', 'Arabic': 'SA', 'Turkish': 'TR', 'Polish': 'PL', 'Thai': 'TH',
+    'Finnish': 'FI', 'Greek': 'GR', 'Hebrew': 'IL', 'Hungarian': 'HU', 'Czech': 'CZ',
+    'Romanian': 'RO', 'Ukrainian': 'UA', 'Vietnamese': 'VN', 'Indonesian': 'ID',
+    'Tagalog': 'PH', 'Icelandic': 'IS', 'Persian': 'IR', 'Punjabi': 'IN', 'Tamil': 'IN',
+    'Bengali': 'BD', 'Serbian': 'RS', 'Croatian': 'HR', 'Bulgarian': 'BG', 'Slovak': 'SK',
+}
 TOP_N = 10
 # Most rewatched films/directors both render as a fixed poster grid (see .favs--eight
 # in base.css), not a table -- 2 rows of 8 (16) rather than TOP_N's 10, so the grid
@@ -55,6 +84,19 @@ MIN_COUNT_FOR_AVERAGE = 2
 # appearances before an actor's average is as meaningful as a director's.
 MIN_COUNT_FOR_FAVORITE_DIRECTOR = 3
 MIN_COUNT_FOR_FAVORITE_ACTOR = 4
+# The insight grid's runtime/decade tiles (_raw_axis_deltas, feeding
+# _rating_insights) need their own, stronger-than-MIN_COUNT_FOR_AVERAGE bars --
+# every rated film falls into exactly one runtime bucket and one decade, unlike
+# a director/genre/etc. that only some films share, so these two buckets fill up
+# fast and a low bar would make them the least meaningful, not the most
+# meaningful, tiles in the grid. Runtime's bar is the higher of the two: only 3
+# buckets total (see _runtime_bucket) means each one soaks up roughly a third of
+# a person's whole rated history, so it takes more evidence before a runtime
+# preference is distinguishable from "that's just most of what I watch" --
+# decade splits far more finely (one bucket per 10 years), so 10 is already a
+# real pattern there.
+MIN_COUNT_FOR_RUNTIME_INSIGHT = 20
+MIN_COUNT_FOR_DECADE_INSIGHT = 10
 # Separate from the two thresholds above on purpose -- this is the shrinkage strength
 # for the "True score" toggle (see _true_score), not the minimum count to qualify as
 # a favorite at all. Reusing MIN_COUNT_FOR_FAVORITE_* here (as an earlier version of
@@ -144,11 +186,24 @@ RECOMMENDATION_REASON_THRESHOLD = 0.15
 # watchlist) could flood the grid, crowding out otherwise-strong picks driven by
 # different signals entirely. See _watchlist_recommendations' greedy selection pass.
 PERSON_CREDIT_CAP = 2
-# A director-actor "collaboration" needs at least this many shared rated films to
-# be a pattern, not a coincidence -- most pairs that appear together at all only do
-# so in exactly one film, so this is deliberately low, not MIN_COUNT_FOR_FAVORITE_
-# DIRECTOR/_ACTOR's higher single-person bar. See _favorite_pairing_insight.
-MIN_COUNT_FOR_PAIRING = 2
+# A two-person "collaboration" (director+actor or actor+actor) needs at least
+# this many shared rated films to be a pattern, not a coincidence -- most pairs
+# that appear together at all only do so in exactly one or two films, so this is
+# still well below MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR's higher single-person
+# bar. Shared by both _favorite_pairing_insight (director+actor) and
+# _favorite_actor_duo_insight (actor+actor) -- one pairing bar, not two, since
+# the underlying question ("is this a real recurring pattern, not a fluke") is
+# identical either way.
+MIN_COUNT_FOR_PAIRING = 3
+# A genre *pair* (see _favorite_genre_combo_insight) needs its own, higher bar
+# than MIN_COUNT_FOR_PAIRING -- two specific people appearing together is
+# genuinely rare, but two genres appearing together is not (most films carry
+# 2-3 genres at once, so a common combo like Action+Adventure can rack up
+# shared films fast without that meaning anything about taste). This needs to
+# be well above what two co-occurring genres would rack up by pure genre-tagging
+# frequency alone, so the pair that wins is really the person's favorite blend,
+# not just TMDB's most-assigned genre pairing.
+MIN_COUNT_FOR_GENRE_COMBO = 8
 # A film's TMDB vote_count has to sit at or below this before it's genuinely
 # obscure enough to call a "hidden gem" -- vote counts scale enormously by a
 # film's prominence (a real blockbuster sits in the tens of thousands even at the
@@ -156,16 +211,6 @@ MIN_COUNT_FOR_PAIRING = 2
 # favorite still has, say, 15,000 votes would get it mislabeled as hidden. See
 # _hidden_gem_insight.
 HIDDEN_GEM_MAX_VOTE_COUNT = 1000
-# A percentage-based pattern insight (the liked-vs-rated correlation) needs more
-# evidence than a plain average to not be noise -- MIN_COUNT_FOR_AVERAGE's 2 is far
-# too thin. See _liked_vs_rated_insight.
-MIN_COUNT_FOR_PATTERN_INSIGHT = 5
-# How far apart the like-rate among a person's 4★+ films and everything else has
-# to be before it's worth calling out -- as either closely tracking their ratings
-# (>= LIKE_RATE_CLOSE_GAP) or barely tracking them (<= LIKE_RATE_DECOUPLED_GAP). A
-# gap in between isn't distinctive enough either way. See _liked_vs_rated_insight.
-LIKE_RATE_CLOSE_GAP = 0.4
-LIKE_RATE_DECOUPLED_GAP = 0.15
 
 
 def _avg_or_none(values) -> float | None:
@@ -181,6 +226,26 @@ def _tmdb_image_url(path: str, size: str) -> str:
     instance -- Movie.poster_url/Person.profile_url are proper model properties, but
     those only help when a query returns real instances, not dict rows."""
     return f'https://image.tmdb.org/t/p/{size}{path}' if path else ''
+
+
+def _flag_emoji(country_code: str) -> str:
+    """Two-letter ISO 3166-1 alpha-2 code -> its Unicode flag emoji (e.g. 'US' ->
+    the US flag), for the Countries/Languages explored insight tiles' flag cluster
+    (see _countries_explored_insight/_languages_explored_insight). No image
+    asset involved -- a flag emoji is just two "Regional Indicator Symbol"
+    codepoints, each one a fixed offset from the plain ASCII letter, so pairing
+    two of them is all Unicode itself requires to render a flag; every
+    reasonably current platform already has the glyphs.
+
+    Returns '' for anything that isn't exactly two ASCII letters, rather than
+    emitting mojibake -- Country.code is normally a clean ISO code, but this
+    stays defensive since not every codebase-wide "country" is guaranteed to
+    resolve to one (and a caller might pass an unmapped LANGUAGE_FLAG_CODES
+    lookup's default '' straight through)."""
+    code = country_code.upper()
+    if len(code) != 2 or not code.isalpha():
+        return ''
+    return ''.join(chr(0x1F1E6 + ord(letter) - ord('A')) for letter in code)
 
 
 def _rounded_or_unrated(avg_rating):
@@ -409,7 +474,7 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
         watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating, axis_deltas,
         taste['generosity_score'], taste['rated_and_enriched_count'],
     )
-    insights = _dashboard_insights(diary, rated, avg_rating, actor_rating_lists, director_ratings, import_session)
+    insights = _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total)
     # First favorite with a resolved poster, used as the header banner's backdrop --
     # not necessarily favorites[0] itself, since an earlier favorite might not have
     # resolved to a Movie (and therefore have no poster) while a later one did.
@@ -1096,20 +1161,20 @@ def _watchlist_recommendations(
     return selected
 
 
-def _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings) -> dict:
-    """{'director': {...}, 'actor': {...}, 'decade': {...}, 'runtime': {...}} --
-    plain, unadjusted average-rating deltas from avg_rating, for the 4 axes
-    _rating_insights actually shows (see that function's own comment on why only
-    those 4). Deliberately NOT _all_axis_deltas' confidence-shrunk, peak-blended,
-    rarity-scaled numbers -- those exist to make a *scoring* decision
-    (_watchlist_recommendations) robust to thin evidence, at the cost of producing
-    a number you can't sanity-check by eye against the person's own raw average
-    shown elsewhere on the dashboard (Favorite Directors/Actors, "Highest rated").
-    This card is meant to be checkable against those, so it reports the real
-    average, not an adjusted one -- backed by the same minimum-evidence gates
-    those other raw-average displays already use (MIN_COUNT_FOR_FAVORITE_DIRECTOR/
-    _ACTOR, MIN_COUNT_FOR_AVERAGE) so a single-film fluke still can't dominate a
-    slot, it just isn't reshaped by shrinkage/peak-blend/rarity on top of that.
+def _raw_axis_deltas(rated, avg_rating) -> dict:
+    """{'decade': {...}, 'runtime': {...}} -- plain, unadjusted average-rating
+    deltas from avg_rating, for the 2 axes _rating_insights actually shows (see
+    that function's own comment on why only those 2 -- director/actor used to be
+    here too, before Favorite Directors/Actors' own cards made a third copy of
+    that signal redundant). Deliberately NOT _all_axis_deltas' confidence-shrunk,
+    peak-blended, rarity-scaled numbers -- those exist to make a *scoring*
+    decision (_watchlist_recommendations) robust to thin evidence, at the cost of
+    producing a number you can't sanity-check by eye. This card is meant to be
+    checkable, so it reports the real average, not an adjusted one -- backed by
+    MIN_COUNT_FOR_RUNTIME_INSIGHT/_DECADE_INSIGHT (see either constant's own
+    comment for why they're stricter than the general MIN_COUNT_FOR_AVERAGE) so a
+    thin sample still can't dominate a slot, it just isn't reshaped by shrinkage/
+    peak-blend/rarity on top of that.
 
     Returns {} if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films
     -- no baseline to compute a delta against)."""
@@ -1117,24 +1182,13 @@ def _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings) ->
         return {}
     avg_rating = float(avg_rating)
 
-    director_deltas = {
-        name: float(stats['avg_rating']) - avg_rating
-        for name, stats in director_ratings.items()
-        if stats['rating_count'] >= MIN_COUNT_FOR_FAVORITE_DIRECTOR
-    }
-    actor_deltas = {
-        name: sum(float(r) for r in ratings) / len(ratings) - avg_rating
-        for name, ratings in actor_rating_lists.items()
-        if len(ratings) >= MIN_COUNT_FOR_FAVORITE_ACTOR
-    }
-
     decade_ratings = defaultdict(list)
     for rating, year in rated.filter(movie__release_year__isnull=False).values_list('rating', 'movie__release_year'):
         decade_ratings[_decade_bucket(year)].append(float(rating))
     decade_deltas = {
         decade: sum(ratings) / len(ratings) - avg_rating
         for decade, ratings in decade_ratings.items()
-        if len(ratings) >= MIN_COUNT_FOR_AVERAGE
+        if len(ratings) >= MIN_COUNT_FOR_DECADE_INSIGHT
     }
 
     runtime_ratings = defaultdict(list)
@@ -1145,12 +1199,10 @@ def _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings) ->
     runtime_deltas = {
         bucket: sum(ratings) / len(ratings) - avg_rating
         for bucket, ratings in runtime_ratings.items()
-        if len(ratings) >= MIN_COUNT_FOR_AVERAGE
+        if len(ratings) >= MIN_COUNT_FOR_RUNTIME_INSIGHT
     }
 
-    return {
-        'director': director_deltas, 'actor': actor_deltas, 'decade': decade_deltas, 'runtime': runtime_deltas,
-    }
+    return {'decade': decade_deltas, 'runtime': runtime_deltas}
 
 
 # Shared by every _rating_insights slot (director/actor/decade/runtime) -- deliber-
@@ -1161,55 +1213,37 @@ def _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings) ->
 # enough to read in a grid tile rather than a full-width row.
 _DELTA_INSIGHT_TEXT = '{value} — {delta:+.1f}★ vs. avg'
 
-# Only 4 of the 7 axes _all_axis_deltas/_raw_axis_deltas compute get a slot in the
-# combined insight grid at all (see _PERSON_INSIGHT_SLOTS/_AXIS_INSIGHT_SLOTS
-# below) -- genre/country/language are excluded even though
-# _watchlist_recommendations still uses them, because this grid exists to say
-# something the rest of the dashboard doesn't: those three already have their own
-# "Highest rated" tab (_rating_by_genre_and_decade/_country/_language), showing the
-# exact same raw average this grid uses (see _raw_axis_deltas) -- a genre/country/
-# language tile would be a pure duplicate, not just a rephrase.
-#
-# Director/actor's positive slot IS now the same raw average as Favorite
-# Directors/Actors' own "Highest rated" tab, for the same reason -- what still
-# earns this axis its place here is the *negative* slot, which that tab (and its
-# "True score" variant) structurally can never show, being favorites-only and
-# capped to FAVORITE_PEOPLE_GRID_CAP. Decade and runtime have no dashboard tab of
-# their own at all, so both directions on those two are unconditionally new
-# information regardless.
+# Only 2 of the 7 axes _all_axis_deltas/_raw_axis_deltas compute get a slot in the
+# combined insight grid at all (see _AXIS_INSIGHT_SLOTS below) -- this grid exists
+# to say something the rest of the dashboard doesn't, and every other axis already
+# has a home of its own: genre/country/language have their own "Highest rated" tab
+# (_rating_by_genre_and_decade/_country/_language), showing the exact same raw
+# average this grid uses (see _raw_axis_deltas); director/actor have their own
+# Favorite Directors/Actors cards. A tile repeating any of those would be a pure
+# duplicate, not just a rephrase. Decade and runtime have no dashboard tab of their
+# own at all, so both are unconditionally new information here.
 
-# Icon shown next to an insight with no natural single photo (director/actor get a
-# real headshot when one resolves instead -- see _rating_insights) or when a photo
-# doesn't resolve. Not meant to be precise iconography, just a quick visual anchor
-# distinguishing one tile from the next.
-_AXIS_ICONS = {'director': '🎥', 'actor': '🎭', 'decade': '📅', 'runtime': '⏱️'}
+# Icon shown next to a decade/runtime insight when no representative film's
+# poster resolves (see _rating_insights/_best_film_per_bucket). Not meant to be
+# precise iconography, just a quick visual anchor distinguishing one tile from
+# the next.
+_AXIS_ICONS = {'decade': '📅', 'runtime': '⏱️'}
 
-# Small header title shown above each grid tile in _rating_insights -- director/
-# actor are always explicitly "Favorite"/"Least favorite" since _PERSON_INSIGHT_
-# SLOTS always asks for both directions on those two; decade/runtime get a
-# direction-aware title too even though _AXIS_INSIGHT_SLOTS only ever asks for
-# whichever single direction is stronger on those axes, so the title still says
-# which way it goes.
+# Small header title shown above each grid tile in _rating_insights --
+# decade/runtime get a direction-aware title even though _AXIS_INSIGHT_SLOTS
+# only ever asks for whichever single direction is stronger on those axes, so
+# the title still says which way it goes.
 _INSIGHT_LABELS = {
-    'director': {'positive': 'Favorite director', 'negative': 'Least favorite director'},
-    'actor': {'positive': 'Favorite actor', 'negative': 'Least favorite actor'},
     'decade': {'positive': 'Favorite decade', 'negative': 'Least favorite decade'},
     'runtime': {'positive': 'Favorite runtime', 'negative': 'Least favorite runtime'},
 }
 
-# The combined insight grid's first row -- favorite director, least favorite
-# director, favorite actor, least favorite actor. Director/actor are the most
-# personal, recognizable signals (a name, a face), so they lead the grid.
-_PERSON_INSIGHT_SLOTS = [
-    ('director', 'positive'), ('director', 'negative'),
-    ('actor', 'positive'), ('actor', 'negative'),
-]
-# Two of the grid's second row (the other two -- duo, hidden gem -- come from
-# _favorite_pairing_insight/_hidden_gem_insight, computed separately -- see
-# _dashboard_insights). 'either' means "whichever of positive/negative actually
-# clears the bar, picking the stronger one if both do" -- decade/runtime only get
-# one grid slot each, unlike director/actor's two, so there's no separate slot to
-# give the other direction.
+# The combined insight grid's second row (the other two -- duo, hidden gem --
+# come from _favorite_pairing_insight/_hidden_gem_insight, computed separately
+# -- see _dashboard_insights). 'either' means "whichever of positive/negative
+# actually clears the bar, picking the stronger one if both do" -- decade/
+# runtime only get one grid slot each, so there's no separate slot to give the
+# other direction.
 _AXIS_INSIGHT_SLOTS = [('runtime', 'either'), ('decade', 'either')]
 
 
@@ -1235,9 +1269,118 @@ def _strongest_axis_delta(deltas: dict, direction: str):
     return max(candidates, key=lambda c: abs(c[1]))
 
 
-def _rating_insights(axis_deltas: dict, slots: list) -> list:
+def _stable_hash(value) -> int:
+    """Deterministic hash of `value`, unlike Python's builtin hash() of a str/int
+    -- that one is salted with a random seed (PYTHONHASHSEED) picked fresh per
+    interpreter process, so the "same" input would hash differently after every
+    server restart/redeploy. This hashes a fixed string encoding via md5
+    instead, so the same input always produces the same output -- used for
+    _best_film_per_bucket's 'stable_random' tiebreak, where the whole point is a
+    pick that looks arbitrary but never changes."""
+    return int(hashlib.md5(str(value).encode('utf-8')).hexdigest(), 16)
+
+
+def _best_qualifying_pair(pair_ratings: dict, min_count: int, avg_rating: float):
+    """The single best-rated pair from a {pair_key: [ratings]} dict, or None if
+    nothing qualifies -- shared by every "two things that co-occur" insight in
+    this file (_favorite_pairing_insight, _favorite_actor_duo_insight,
+    _favorite_genre_combo_insight), which otherwise each reimplemented the
+    exact same "enough evidence, then clearly above average" selection.
+
+    A pair only qualifies with at least `min_count` shared rated films (a
+    caller-supplied bar -- MIN_COUNT_FOR_PAIRING for person pairs,
+    MIN_COUNT_FOR_GENRE_COMBO for genre pairs, since genre pairs occur far
+    more often and need a stronger bar to mean anything -- see that
+    constant's own comment). Among qualifying pairs, the highest average
+    wins, ties broken toward whichever pair shares more films (same "more
+    evidence wins a tie" convention _favorite_people already uses) -- and
+    even the winner is only returned if its average clears avg_rating +
+    RECOMMENDATION_REASON_THRESHOLD, same "don't fabricate a neutral
+    insight" bar as every other insight in this file.
+
+    Returns (best_pair, ratings, avg) or None."""
+    qualifying = {pair: ratings for pair, ratings in pair_ratings.items() if len(ratings) >= min_count}
+    if not qualifying:
+        return None
+    best_pair = max(
+        qualifying, key=lambda pair: (sum(qualifying[pair]) / len(qualifying[pair]), len(qualifying[pair])),
+    )
+    ratings = qualifying[best_pair]
+    avg = sum(ratings) / len(ratings)
+    if avg - avg_rating < RECOMMENDATION_REASON_THRESHOLD:
+        return None
+    return best_pair, ratings, avg
+
+
+def _duo_portrait(name_a: str, photo_a: str, name_b: str, photo_b: str) -> dict:
+    """Builds the 'duo' key for a two-person insight tile's two-circle
+    portrait -- shared by _favorite_pairing_insight and
+    _favorite_actor_duo_insight, the file's two person-pair duo insights."""
+    return {
+        'a': {'name': name_a, 'image': _tmdb_image_url(photo_a, 'w185') or None},
+        'b': {'name': name_b, 'image': _tmdb_image_url(photo_b, 'w185') or None},
+    }
+
+
+def _best_film_per_bucket(rated, field: str, bucket_fn, tie_break: str) -> dict:
+    """{bucket: {'title', 'year', 'movie_id'}} for the single highest-rated film
+    in each bucket a movie's `field` sorts into under `bucket_fn` (e.g.
+    field='release_year', bucket_fn=_decade_bucket) -- feeds the poster shown
+    for the runtime/decade insight tiles in _rating_insights, since those two
+    axes describe a pattern across many films rather than one single subject
+    the way a person would.
+
+    Ties (equal rating) break according to `tie_break`:
+      - 'runtime': toward the longer runtime -- a real, meaningful tiebreak for
+        the runtime axis itself (its whole tile is about runtime, so a tie
+        should favor more of it, not an arbitrary pick). A film with no runtime
+        data can't win a tie on that basis, so it falls back to alphabetical
+        title -- same fallback used when runtime also ties.
+      - 'stable_random': toward whichever film hashes lower under _stable_hash
+        -- looks arbitrary rather than systematically favoring, say, the
+        earliest release or the alphabetically first title, but is 100%
+        reproducible from one request to the next, so the same decade always
+        shows the same poster instead of it flipping on every reload or
+        deploy. Used for the decade axis, where neither runtime nor
+        alphabetical order has any natural connection to "which film best
+        represents this decade".
+
+    Only considers rated films with a resolved movie and a non-null `field` --
+    an unresolved film can't be bucketed or given a poster either way."""
+    best = {}
+    rows = rated.filter(movie__isnull=False, **{f'movie__{field}__isnull': False}).values_list(
+        'rating', 'title', 'year', 'movie_id', f'movie__{field}', 'movie__runtime_minutes',
+    )
+    for rating, title, year, movie_id, field_value, runtime_minutes in rows:
+        bucket = bucket_fn(field_value)
+        current = best.get(bucket)
+        candidate_hash = _stable_hash(movie_id)
+        if tie_break == 'runtime':
+            candidate_key = (rating, runtime_minutes if runtime_minutes is not None else -1)
+            current_key = (
+                (current['rating'], current['runtime_minutes'] if current['runtime_minutes'] is not None else -1)
+                if current else None
+            )
+            better = (
+                current is None or candidate_key > current_key
+                or (candidate_key == current_key and title < current['title'])
+            )
+        else:
+            better = (
+                current is None or rating > current['rating']
+                or (rating == current['rating'] and candidate_hash < current['hash'])
+            )
+        if better:
+            best[bucket] = {
+                'rating': rating, 'title': title, 'year': year, 'movie_id': movie_id,
+                'runtime_minutes': runtime_minutes, 'hash': candidate_hash,
+            }
+    return best
+
+
+def _rating_insights(axis_deltas: dict, slots: list, decade_best_films: dict = None, runtime_best_films: dict = None) -> list:
     """Plain-English, grid-tile-sized facts about what actually moves this
-    person's ratings -- e.g. "Denis Villeneuve — +0.6★ vs. avg" -- built from
+    person's ratings -- e.g. "1990s — +0.6★ vs. avg" -- built from
     _raw_axis_deltas' plain, unadjusted average-rating deltas (deliberately NOT
     _all_axis_deltas' confidence-shrunk/peak-blended/rarity-scaled numbers, which
     exist for _watchlist_recommendations' own scoring purposes -- see
@@ -1245,26 +1388,38 @@ def _rating_insights(axis_deltas: dict, slots: list) -> list:
     number instead). Returns [] if axis_deltas is {} (fewer than
     MIN_COUNT_FOR_AVERAGE rated films -- no baseline to compute a delta against).
 
-    `slots` is a list of (axis, direction) pairs -- _dashboard_insights calls this
-    twice, once with _PERSON_INSIGHT_SLOTS (director/actor, both directions) and
-    once with _AXIS_INSIGHT_SLOTS (decade/runtime, one direction each), since
-    those two groups land in different, non-adjacent positions in the combined
-    grid (see that function). Each slot's axis has to clear
-    RECOMMENDATION_REASON_THRESHOLD in the requested direction to produce a tile
-    at all (same "don't fabricate a neutral insight" principle as the rest of
-    this file) -- a shorter grid rather than a fabricated filler. Unlike an
-    earlier version of this function, the result is NOT sorted by |delta| -- slot
-    order is fixed by category (favorite director, least favorite director, ...),
-    not by which axis happens to have the single strongest number this time, so
-    the same kind of insight always lands in the same grid position from one
-    visit to the next."""
-    insights = []
+    `slots` is a list of (axis, direction) pairs -- currently always
+    _AXIS_INSIGHT_SLOTS (decade/runtime, one direction each; see that constant's
+    own comment). Each slot's axis has to clear RECOMMENDATION_REASON_THRESHOLD
+    in the requested direction to produce a tile at all (same "don't fabricate a
+    neutral insight" principle as the rest of this file) -- a shorter grid
+    rather than a fabricated filler. Unlike an earlier version of this function,
+    the result is NOT sorted by |delta| -- slot order is fixed by category
+    (runtime, then decade), not by which axis happens to have the single
+    strongest number this time, so the same kind of insight always lands in the
+    same grid position from one visit to the next.
+
+    decade_best_films/runtime_best_films (from _best_film_per_bucket) supply the
+    representative poster for a decade/runtime tile -- neither axis has one
+    single subject the way director/actor slots used to, so the poster shown is
+    "your highest-rated film from this bucket", not "the" film for it. Posters
+    resolved via one bulk Movie lookup rather than a query per tile."""
+    best_films_by_axis = {'decade': decade_best_films or {}, 'runtime': runtime_best_films or {}}
+    resolved = []
     for axis, direction in slots:
         best = _strongest_axis_delta(axis_deltas.get(axis, {}), direction)
         if best is None:
             continue
         value, delta = best
         actual_direction = 'positive' if delta > 0 else 'negative'
+        film = best_films_by_axis.get(axis, {}).get(value)
+        resolved.append((axis, value, delta, actual_direction, film))
+
+    movie_ids = {r[4]['movie_id'] for r in resolved if r[4] and r[4].get('movie_id')}
+    movies_by_id = Movie.objects.in_bulk(movie_ids)
+
+    insights = []
+    for axis, value, delta, actual_direction, film in resolved:
         insight = {
             'text': _DELTA_INSIGHT_TEXT.format(value=value, delta=delta),
             'label': _INSIGHT_LABELS[axis][actual_direction],
@@ -1272,16 +1427,19 @@ def _rating_insights(axis_deltas: dict, slots: list) -> list:
             'delta': delta,
             'icon': _AXIS_ICONS[axis],
             'image': None,
+            'image_title': None,
         }
-        # Only director/actor map onto one real, photographable person -- every
-        # other axis (decade, runtime) describes a pattern, not a single subject,
-        # so it keeps the icon above rather than standing in a representative film's
-        # poster as if it were the whole story. Falls back to the icon if this
-        # person isn't in our Person cache or TMDB never gave them a headshot.
-        if axis in ('director', 'actor'):
-            person = Person.objects.filter(name=value).first()
-            if person and person.profile_url:
-                insight['image'] = person.profile_url
+        # Both tiles click through to every rated film in the bucket (see
+        # _featured_card's 'drill' and build_insight_films). `value` is the
+        # decade label ("1990s") or the runtime bucket label ("90-150 min");
+        # build_insight_films turns either back into the matching filter.
+        if axis in ('decade', 'runtime'):
+            insight['drill'] = {'kind': axis, 'p1': value, 'p2': ''}
+        if film:
+            movie = movies_by_id.get(film['movie_id'])
+            if movie and movie.poster_url:
+                insight['image'] = movie.poster_url
+                insight['image_title'] = f"{film['title']} ({film['year']})"
         insights.append(insight)
     return insights
 
@@ -1297,12 +1455,18 @@ def _favorite_pairing_insight(rated, avg_rating) -> list:
 
     Raw average, not confidence-shrunk/peak-blended -- same "checkable against
     the real numbers" reasoning as _raw_axis_deltas. Only considers pairs sharing
-    at least MIN_COUNT_FOR_PAIRING rated films -- a single shared film is a
+    at least MIN_COUNT_FOR_PAIRING rated films -- fewer than that is a
     coincidence, not a collaboration pattern -- and only surfaces the single best
     one if its average clears avg_rating + RECOMMENDATION_REASON_THRESHOLD, same
     "don't fabricate a neutral insight" bar as every other insight in this file.
     Ties (equal average) break toward whichever pair shares more films, same
     "more evidence wins a tie" convention _favorite_people already uses.
+
+    The returned dict's 'duo' key carries each person's own headshot (resolved
+    from whichever film first paired them -- profile photos don't vary film to
+    film, so any occurrence works) for the two-circle portrait the insight grid
+    renders instead of a single poster/icon -- see _favorite_actor_duo_insight
+    for the same shape, just director+actor here instead of actor+actor.
 
     Returns [] if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films
     -- no baseline to compare against)."""
@@ -1319,42 +1483,213 @@ def _favorite_pairing_insight(rated, avg_rating) -> list:
     directors_by_movie = defaultdict(list)
     for entry in rated.select_related('movie').prefetch_related('movie__directors'):
         for director in entry.movie.directors.all():
-            directors_by_movie[entry.movie_id].append(director.name)
+            directors_by_movie[entry.movie_id].append((director.name, director.profile_path, director.tmdb_id))
 
     actors_by_movie = defaultdict(list)
-    for movie_id, name in (
+    for movie_id, name, profile_path, person_id in (
         Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
-        .values_list('movie_id', 'person__name')
+        .values_list('movie_id', 'person__name', 'person__profile_path', 'person_id')
     ):
-        actors_by_movie[movie_id].append(name)
+        actors_by_movie[movie_id].append((name, profile_path, person_id))
 
     pair_ratings = defaultdict(list)
+    # First-seen (photos, tmdb ids) for each (director, actor) key -- neither
+    # varies film to film, so which occurrence supplies them doesn't matter.
+    # The ids feed the tile's click-through modal (see _featured_card's 'drill').
+    pair_meta = {}
     for movie_id, rating in rated.values_list('movie_id', 'rating'):
-        for director_name in directors_by_movie.get(movie_id, []):
-            for actor_name in actors_by_movie.get(movie_id, []):
-                pair_ratings[(director_name, actor_name)].append(float(rating))
+        for director_name, director_photo, director_id in directors_by_movie.get(movie_id, []):
+            for actor_name, actor_photo, actor_id in actors_by_movie.get(movie_id, []):
+                key = (director_name, actor_name)
+                pair_ratings[key].append(float(rating))
+                pair_meta.setdefault(key, (director_photo, actor_photo, director_id, actor_id))
 
-    qualifying = {
-        pair: ratings for pair, ratings in pair_ratings.items() if len(ratings) >= MIN_COUNT_FOR_PAIRING
-    }
-    if not qualifying:
+    result = _best_qualifying_pair(pair_ratings, MIN_COUNT_FOR_PAIRING, avg_rating)
+    if result is None:
         return []
-
-    best_pair = max(
-        qualifying, key=lambda pair: (sum(qualifying[pair]) / len(qualifying[pair]), len(qualifying[pair])),
-    )
-    ratings = qualifying[best_pair]
-    avg = sum(ratings) / len(ratings)
-    if avg - avg_rating < RECOMMENDATION_REASON_THRESHOLD:
-        return []
+    best_pair, ratings, avg = result
 
     director_name, actor_name = best_pair
+    director_photo, actor_photo, director_id, actor_id = pair_meta[best_pair]
     return [{
         'text': f'{director_name} + {actor_name} — {len(ratings)} films, {avg:.1f}★',
         'label': 'Actor/director duo',
         'axis': 'pairing',
         'icon': '🤝',
         'image': None,
+        'image_title': None,
+        'duo': _duo_portrait(director_name, director_photo, actor_name, actor_photo),
+        'drill': {'kind': 'pairing', 'p1': director_id, 'p2': actor_id},
+    }]
+
+
+def _favorite_actor_duo_insight(rated, avg_rating) -> list:
+    """0 or 1 insight about this person's best-rated recurring on-screen actor
+    pairing -- e.g. "Timothée Chalamet + Zendaya — 3 films, 4.8★". Same shape and
+    reasoning as _favorite_pairing_insight (director+actor), just actor x actor
+    instead -- an "on-screen chemistry" fact distinct from that one, which pairs a
+    director with an actor rather than two actors with each other. One tile in
+    the combined insight grid (see _dashboard_insights).
+
+    Raw average, not confidence-shrunk/peak-blended -- same "checkable against
+    the real numbers" reasoning as _raw_axis_deltas. Only considers pairs sharing
+    at least MIN_COUNT_FOR_PAIRING rated films -- fewer than that is a
+    coincidence, not a recurring pairing -- and only surfaces the single best one
+    if its average clears avg_rating + RECOMMENDATION_REASON_THRESHOLD, same
+    "don't fabricate a neutral insight" bar as every other insight in this file.
+    Ties (equal average) break toward whichever pair shares more films, same
+    "more evidence wins a tie" convention _favorite_people already uses.
+
+    Pair key is a sorted tuple, not insertion order -- the same two actors can be
+    credited in either order film to film (billing order varies), and an
+    unsorted key would silently split one real pairing into two separate,
+    under-counted entries.
+
+    The returned dict's 'duo' key carries each actor's own headshot -- see
+    _favorite_pairing_insight's own comment on this same shape.
+
+    Returns [] if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated
+    films -- no baseline to compare against)."""
+    if avg_rating is None:
+        return []
+    avg_rating = float(avg_rating)
+
+    rated = rated.exclude(movie__isnull=True)
+    movie_ids = set(rated.values_list('movie_id', flat=True))
+    cameo_ids = _cameo_credit_ids(movie_ids)
+
+    actors_by_movie = defaultdict(list)
+    for movie_id, name, profile_path, person_id in (
+        Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
+        .values_list('movie_id', 'person__name', 'person__profile_path', 'person_id')
+    ):
+        actors_by_movie[movie_id].append((name, profile_path, person_id))
+
+    pair_ratings = defaultdict(list)
+    # First-seen (photo, tmdb id) per actor name -- see _favorite_pairing_insight's
+    # own pair_meta comment. The ids feed the tile's click-through modal.
+    pair_meta = {}
+    for movie_id, rating in rated.values_list('movie_id', 'rating'):
+        # dict.setdefault, not set() -- dedupes a movie's cast by name (a person
+        # can't appear twice in the same combinations() pass) while keeping each
+        # name's (photo, id) alongside it, then sorted() on the items still
+        # orders by name first, same as the plain-name sort this replaced.
+        unique_cast = {}
+        for name, photo, person_id in actors_by_movie.get(movie_id, []):
+            unique_cast.setdefault(name, (photo, person_id))
+        for (actor_a, (photo_a, id_a)), (actor_b, (photo_b, id_b)) in combinations(sorted(unique_cast.items()), 2):
+            key = (actor_a, actor_b)
+            pair_ratings[key].append(float(rating))
+            pair_meta.setdefault(key, (photo_a, photo_b, id_a, id_b))
+
+    result = _best_qualifying_pair(pair_ratings, MIN_COUNT_FOR_PAIRING, avg_rating)
+    if result is None:
+        return []
+    best_pair, ratings, avg = result
+
+    actor_a, actor_b = best_pair
+    photo_a, photo_b, id_a, id_b = pair_meta[best_pair]
+    return [{
+        'text': f'{actor_a} + {actor_b} — {len(ratings)} films, {avg:.1f}★',
+        'label': 'Actor duo',
+        'axis': 'actor_pairing',
+        'icon': '🎬',
+        'image': None,
+        'image_title': None,
+        'duo': _duo_portrait(actor_a, photo_a, actor_b, photo_b),
+        'drill': {'kind': 'actor_pairing', 'p1': id_a, 'p2': id_b},
+    }]
+
+
+def _favorite_genre_combo_insight(rated, avg_rating) -> list:
+    """0 or 1 insight about this person's best-rated recurring genre pairing --
+    e.g. "Sci-Fi + Comedy — 9 films, 4.7★". Same duo mechanic as
+    _favorite_pairing_insight/_favorite_actor_duo_insight, just genre x genre
+    instead of two people -- a "your favorite blend" fact distinct from the
+    Genres chart (_rating_by_genre_and_decade), which only ever reports a
+    single genre's own average, never how two genres perform together. One
+    tile in the combined insight grid (see _dashboard_insights).
+
+    Raw average, not confidence-shrunk/peak-blended -- same "checkable against
+    the real numbers" reasoning as _raw_axis_deltas. Only considers pairs
+    sharing at least MIN_COUNT_FOR_GENRE_COMBO rated films -- see that
+    constant's own comment for why genre pairs need a stronger bar than
+    MIN_COUNT_FOR_PAIRING's person-pair threshold -- and only surfaces the
+    single best one if its average clears avg_rating + RECOMMENDATION_REASON_
+    THRESHOLD, same "don't fabricate a neutral insight" bar as every other
+    insight in this file. Ties (equal average) break toward whichever pair
+    shares more films, same "more evidence wins a tie" convention
+    _favorite_people already uses.
+
+    Pair key is a sorted tuple, not genre-list order -- TMDB's own genre
+    ordering for a movie isn't stable across titles, and an unsorted key would
+    silently split one real pairing into two separate, under-counted entries.
+
+    Unlike the person-pair duos (a fact about two specific people, shown as
+    their two headshots), a genre combo isn't about two visualizable things --
+    it's shown instead via a single representative film: the highest-rated
+    film among the winning pair's own qualifying films, ties broken toward the
+    lower _stable_hash of its movie id (same "looks arbitrary, never changes
+    between requests" reasoning _best_film_per_bucket's own 'stable_random'
+    tiebreak uses, and for the same reason -- there's no runtime-style natural
+    secondary axis to break a genre-combo tie on).
+
+    Returns [] if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated
+    films -- no baseline to compare against)."""
+    if avg_rating is None:
+        return []
+    avg_rating = float(avg_rating)
+
+    rated = rated.exclude(movie__isnull=True)
+    genres_by_movie = defaultdict(list)
+    movie_info = {}
+    rows = rated.filter(movie__genres__isnull=False).values_list(
+        'movie_id', 'movie__genres__name', 'title', 'year', 'movie__poster_path',
+    )
+    for movie_id, genre_name, title, year, poster_path in rows:
+        genres_by_movie[movie_id].append(genre_name)
+        movie_info[movie_id] = (title, year, poster_path)
+
+    pair_ratings = defaultdict(list)
+    # Every film that qualifies a pair, kept alongside its rating so the
+    # winning pair's representative poster can be picked after the fact --
+    # see the docstring above for why "highest-rated, stable-hash tiebreak"
+    # rather than reusing _best_film_per_bucket directly (that function buckets
+    # by a single field; here the "bucket" is a fixed pair decided only after
+    # every candidate has already been seen).
+    pair_films = defaultdict(list)
+    for movie_id, rating in rated.values_list('movie_id', 'rating'):
+        genres = genres_by_movie.get(movie_id, [])
+        for genre_a, genre_b in combinations(sorted(set(genres)), 2):
+            key = (genre_a, genre_b)
+            pair_ratings[key].append(float(rating))
+            pair_films[key].append((float(rating), movie_id))
+
+    result = _best_qualifying_pair(pair_ratings, MIN_COUNT_FOR_GENRE_COMBO, avg_rating)
+    if result is None:
+        return []
+    best_pair, ratings, avg = result
+
+    best_film = None
+    for film_rating, movie_id in pair_films[best_pair]:
+        film_hash = _stable_hash(movie_id)
+        if (
+            best_film is None or film_rating > best_film['rating']
+            or (film_rating == best_film['rating'] and film_hash < best_film['hash'])
+        ):
+            title, year, poster_path = movie_info[movie_id]
+            best_film = {'rating': film_rating, 'title': title, 'year': year, 'poster_path': poster_path, 'hash': film_hash}
+    image = _tmdb_image_url(best_film['poster_path'], 'w342')
+
+    genre_a, genre_b = best_pair
+    return [{
+        'text': f'{genre_a} + {genre_b} — {len(ratings)} films, {avg:.1f}★',
+        'label': 'Genre combo',
+        'axis': 'genre_combo',
+        'icon': '🎨',
+        'image': image or None,
+        'image_title': f"{best_film['title']} ({best_film['year']})" if image else None,
+        'drill': {'kind': 'genre_combo', 'p1': genre_a, 'p2': genre_b},
     }]
 
 
@@ -1404,6 +1739,79 @@ def _hidden_gem_insight(rated, avg_rating) -> list:
         'axis': 'hidden_gem',
         'icon': '💎',
         'image': gem.movie.poster_url or None,
+        'image_title': f'{gem.movie.title} ({gem.year})' if gem.movie.poster_url else None,
+    }]
+
+
+def _countries_explored_insight(watched_movies) -> list:
+    """0 or 1 insight: how many distinct production countries this person's
+    watched films span -- e.g. "34 countries". A pure breadth/exploration
+    number, distinct from _films_by_country's per-country breakdown (that's
+    about which countries show up most, this is just "how many different ones
+    have you set foot in at all"). One tile in the combined insight grid (see
+    _dashboard_insights).
+
+    Renders in the insight grid's compact "by the numbers" strip (see
+    _dashboard_insights): a big count with a small row of real flag emoji
+    under it for the top FLAG_CLUSTER_SIZE most-watched countries (by distinct
+    film count) -- genuine data already on hand (Country.code, via
+    _flag_emoji), not a new asset. A country whose code doesn't resolve to a
+    flag just contributes none (see _flag_emoji's own defensiveness).
+
+    Uses watched_movies (every distinct film watched, logged or not -- see
+    _watched_movies), same base as _films_by_country, so a rewatch can't
+    inflate the count and an unlogged-but-watched film still counts.
+
+    No minimum-evidence gate, unlike most insights in this file -- a distinct
+    count IS the evidence; there's no "thin sample" version of "how many
+    countries have you seen films from" the way there is for an average.
+    Returns [] only if there's no country data at all yet (nothing enriched, or
+    nothing with a resolved country)."""
+    with_country = watched_movies.filter(countries__isnull=False)
+    count = with_country.values('countries').distinct().count()
+    if not count:
+        return []
+    top_countries = (
+        with_country.values('countries__code')
+        .annotate(film_count=Count('tmdb_id', distinct=True))
+        .order_by('-film_count')[:FLAG_CLUSTER_SIZE]
+    )
+    flags = [flag for row in top_countries if (flag := _flag_emoji(row['countries__code']))]
+    return [{
+        'label': 'Countries explored',
+        'value': str(count),
+        'flags': flags,
+    }]
+
+
+def _languages_explored_insight(watched_movies) -> list:
+    """0 or 1 insight: how many distinct original languages this person's
+    watched films span -- e.g. "12 languages". Same reasoning as
+    _countries_explored_insight, just the language axis instead -- see that
+    function's own comment for why there's no minimum-evidence gate here
+    either. One tile in the combined insight grid (see _dashboard_insights).
+
+    Same compact flag-cluster treatment as the Countries tile, via
+    LANGUAGE_FLAG_CODES' approximate language -> country mapping -- see that
+    constant's own comment on why it's necessarily approximate, and why an
+    unmapped language just contributes no flag rather than a guess."""
+    with_language = watched_movies.exclude(original_language='')
+    count = with_language.values('original_language').distinct().count()
+    if not count:
+        return []
+    top_languages = (
+        with_language.values('original_language')
+        .annotate(film_count=Count('tmdb_id', distinct=True))
+        .order_by('-film_count')[:FLAG_CLUSTER_SIZE]
+    )
+    flags = [
+        flag for row in top_languages
+        if (flag := _flag_emoji(LANGUAGE_FLAG_CODES.get(row['original_language'], '')))
+    ]
+    return [{
+        'label': 'Languages explored',
+        'value': str(count),
+        'flags': flags,
     }]
 
 
@@ -1438,7 +1846,8 @@ def _rewatch_drift_insights(diary) -> list:
             # the grouping key).
             movie_id = next((entry[2] for entry in entries if entry[2] is not None), None)
             drifts.append({
-                'title': title, 'first': first_rating, 'last': last_rating, 'drift': drift, 'movie_id': movie_id,
+                'title': title, 'year': year, 'first': first_rating, 'last': last_rating,
+                'drift': drift, 'movie_id': movie_id,
             })
 
     if not drifts:
@@ -1463,11 +1872,13 @@ def _rewatch_drift_insights(diary) -> list:
     insights = []
     for d, verb in selected:
         movie = posters.get(d['movie_id'])
+        has_poster = bool(movie and movie.poster_url)
         insights.append({
             'text': f"{d['title']}: {d['first']:.1f}★ → {d['last']:.1f}★",
             'label': labels[verb],
             'icon': '🔁',
-            'image': movie.poster_url if movie and movie.poster_url else None,
+            'image': movie.poster_url if has_poster else None,
+            'image_title': f"{d['title']} ({d['year']})" if has_poster else None,
         })
     return insights
 
@@ -1476,7 +1887,13 @@ def _rewatch_vs_first_watch_insight(diary) -> list:
     """0 or 1 insight comparing average rating on first-time watches vs. rewatches
     -- e.g. "+0.3★ vs. first watches". Requires MIN_COUNT_FOR_AVERAGE logged-
     rating diary entries on both sides, and only surfaces if the gap itself
-    clears RECOMMENDATION_REASON_THRESHOLD."""
+    clears RECOMMENDATION_REASON_THRESHOLD.
+
+    Renders in the insight grid's compact "by the numbers" strip (see
+    _dashboard_insights): the signed delta as the value, colored by direction
+    ('direction' -> --accent for a rewatch scoring higher, --danger for a
+    drop). The +/- sign and the color both carry the direction, so no arrow
+    glyph is needed in a cell this small."""
     first_watch = diary.filter(rewatch=False, rating__isnull=False).aggregate(avg=Avg('rating'), count=Count('id'))
     rewatch = diary.filter(rewatch=True, rating__isnull=False).aggregate(avg=Avg('rating'), count=Count('id'))
     if first_watch['count'] < MIN_COUNT_FOR_AVERAGE or rewatch['count'] < MIN_COUNT_FOR_AVERAGE:
@@ -1485,78 +1902,137 @@ def _rewatch_vs_first_watch_insight(diary) -> list:
     if abs(delta) < RECOMMENDATION_REASON_THRESHOLD:
         return []
     return [{
-        'text': f'{delta:+.1f}★ vs. first watches',
         'label': 'Rewatch score change',
-        'icon': '🔁', 'image': None,
+        # No +/- sign -- the trending arrow and the colour carry the direction.
+        'value': f'{abs(delta):.1f}★',
+        'note': 'vs. first watches',
+        'direction': 'up' if delta > 0 else 'down',
     }]
 
 
-def _liked_vs_rated_insight(rated, import_session) -> list:
-    """0 or 1 insight about how closely 'liked' (Letterboxd's heart) tracks star
-    rating -- e.g. "82% liked (4★+) vs 12% (rest)". Compares the like-rate among a
-    person's 4-star-and-up films to the like-rate among everything else; only
-    reported if that gap is clearly wide (>= LIKE_RATE_CLOSE_GAP) or clearly
-    narrow (<= LIKE_RATE_DECOUPLED_GAP) -- a gap in between isn't distinctive
-    enough to call out either way, though the tile text is the same regardless of
-    which threshold triggered it (the two percentages already say whichever of
-    those is true; a "closely tracks"/"barely tracks" framing sentence doesn't
-    fit a grid tile the way it did as its own full-width row). Requires
-    MIN_COUNT_FOR_PATTERN_INSIGHT rated films on both sides of the 4-star line, a
-    stricter bar than a plain average since a percentage from a handful of films
-    is noisy."""
-    liked_movie_ids = set(
-        LikedFilmEntry.objects.filter(import_session=import_session, movie__isnull=False)
-        .values_list('movie_id', flat=True)
-    )
-    high = list(rated.filter(movie__isnull=False, rating__gte=4).values_list('movie_id', flat=True))
-    low = list(rated.filter(movie__isnull=False, rating__lt=4).values_list('movie_id', flat=True))
-    if len(high) < MIN_COUNT_FOR_PATTERN_INSIGHT or len(low) < MIN_COUNT_FOR_PATTERN_INSIGHT:
-        return []
+def _like_percentage_insight(likes_count: int, films_watched_total: int) -> list:
+    """0 or 1 insight: what share of every film watched got a Letterboxd heart
+    -- e.g. "38% liked". Just likes_count / films_watched_total, the same two
+    numbers already shown as their own hero stats up top, so the tile agrees
+    with them exactly rather than deriving its own slightly different count.
 
-    high_like_rate = sum(1 for movie_id in high if movie_id in liked_movie_ids) / len(high)
-    low_like_rate = sum(1 for movie_id in low if movie_id in liked_movie_ids) / len(low)
-    gap = high_like_rate - low_like_rate
+    No minimum-evidence gate beyond needing at least one watched film -- it's a
+    plain ratio of two counts, not an average, so there's no thin-sample
+    version of it to guard against (see _countries_explored_insight for the
+    same reasoning). Returns [] only if nothing's been watched yet.
 
-    if not (gap >= LIKE_RATE_CLOSE_GAP or gap <= LIKE_RATE_DECOUPLED_GAP):
+    Renders in the number bar as a circular gauge filled to `pct` (see
+    _dashboard_insights / dashboard.html's .ib-gauge)."""
+    if not films_watched_total:
         return []
+    pct = round(likes_count / films_watched_total * 100)
     return [{
-        'text': f'{high_like_rate:.0%} liked (4★+) vs {low_like_rate:.0%} (rest)',
-        'label': 'Heart percent',
-        'icon': '❤️', 'image': None,
+        'label': 'Like percentage',
+        'value': f'{pct}%',
+        'pct': pct,
+        'note': 'of films watched',
     }]
 
 
-def _dashboard_insights(diary, rated, avg_rating, actor_rating_lists, director_ratings, import_session) -> list:
-    """The single, fixed-order insight grid combining every insight type this
-    file builds -- up to 12 tiles, 4 to a row:
+_STAT_SHORT_LABELS = {
+    'Countries explored': 'Countries', 'Languages explored': 'Languages',
+    'Like percentage': 'Like %', 'Rewatch score change': 'Rewatch Δ',
+}
 
-    Row 1: favorite director, least favorite director, favorite actor, least
-           favorite actor (_rating_insights with _PERSON_INSIGHT_SLOTS).
-    Row 2: favorite director-actor duo (_favorite_pairing_insight), hidden gem
-           (_hidden_gem_insight), favorite runtime, favorite decade
-           (_rating_insights with _AXIS_INSIGHT_SLOTS).
-    Row 3: biggest rewatch increase, biggest rewatch decrease
-           (_rewatch_drift_insights), rewatch vs. first-watch score change
-           (_rewatch_vs_first_watch_insight), heart-vs-rating percentage
-           (_liked_vs_rated_insight).
 
-    A hand-picked, fixed order -- not sorted by magnitude -- so the same kind of
-    insight always lands in the same grid position from one visit to the next;
-    see each individual function's own docstring for how its piece is computed
-    and gated. A slot with nothing that clears its own "worth reporting" bar is
-    skipped entirely, not filled with a placeholder -- the grid is just shorter
-    for that person (and earlier tiles shift up to fill the gap, same as any
-    other insight in this file), never a fabricated filler."""
-    raw_deltas = _raw_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings)
-    return (
-        _rating_insights(raw_deltas, _PERSON_INSIGHT_SLOTS)
-        + _favorite_pairing_insight(rated, avg_rating)
+def _featured_card(insight: dict) -> dict:
+    """One entry in the insight section's zone 1 (see _dashboard_insights) --
+    the insight's one-line text split into its value (names / genre pair /
+    decade / film title) and the trailing stat line, plus its poster or
+    two-headshot portrait.
+
+    rpartition, not partition -- split on the LAST separator, since a film
+    title can itself contain one ("Avatar: The Way of Water: 4.5★ → 5.0★" must
+    split to "Avatar: The Way of Water" + "4.5★ → 5.0★", not "Avatar" + the
+    rest)."""
+    value, sep, rest = insight['text'].rpartition(' — ')
+    if not sep:
+        value, _, rest = insight['text'].rpartition(': ')
+    return {
+        'label': insight['label'],
+        'value': value,
+        'stat': rest.replace(', ', ' · '),
+        'image': insight.get('image'),
+        'duo': insight.get('duo'),
+        # Present only for the duo / genre-combo / decade entries -- see
+        # build_insight_films. dict of {kind, ...ids/names} the template drops
+        # onto the entry as data-* attributes for the click-through modal.
+        'drill': insight.get('drill'),
+    }
+
+
+def _stat_card(stat: dict) -> dict:
+    """One cell in the insight section's zone 2 number bar -- a short label
+    (see _STAT_SHORT_LABELS) and the figure itself, rendered one of three
+    ways: the two "explored" counts as a plain number over a flag cluster, the
+    rewatch delta as a coloured number with a trending arrow, and the like
+    percentage as a circular gauge (`pct`)."""
+    card = {
+        'label': _STAT_SHORT_LABELS.get(stat['label'], stat['label']),
+        'value': stat['value'],
+        'direction': stat.get('direction'),
+        'pct': stat.get('pct'),
+    }
+    if 'flags' in stat:
+        more = int(stat['value']) - len(stat['flags'])
+        card['flags'] = stat['flags']
+        card['flags_more'] = f'+{more} more' if more > 0 else ''
+    else:
+        card['sub'] = stat.get('note', '')
+    return card
+
+
+def _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total) -> dict:
+    """The "Your rating insights" section, split into two visually distinct
+    zones (Favorite Directors/Actors already cover the director/actor signal on
+    their own cards, so this section doesn't repeat it):
+
+    'featured' -- up to 8 borderless entries, for the facts that have a real
+        image: favorite director-actor duo (_favorite_pairing_insight) and
+        favorite actor duo (_favorite_actor_duo_insight), both two headshots;
+        favorite genre combo (_favorite_genre_combo_insight), favorite runtime,
+        favorite decade (_rating_insights with _AXIS_INSIGHT_SLOTS), and hidden
+        gem (_hidden_gem_insight), each a representative film poster; biggest
+        rewatch increase and biggest rewatch decrease (_rewatch_drift_insights),
+        each the film whose rating moved most.
+    'stats' -- up to 4 cells in a "by the numbers" bar, for the facts that are
+        just a figure: countries explored (_countries_explored_insight),
+        languages explored (_languages_explored_insight), rewatch vs.
+        first-watch score change (_rewatch_vs_first_watch_insight), and like
+        percentage (_like_percentage_insight).
+
+    Each zone is a fixed order -- not sorted by magnitude -- so the same
+    insight always lands in the same spot from one visit to the next; see each
+    individual function's own docstring for how its piece is computed and
+    gated. A slot with nothing that clears its own "worth reporting" bar is
+    skipped entirely, not padded. The whole section is hidden only when BOTH
+    zones come back empty."""
+    raw_deltas = _raw_axis_deltas(rated, avg_rating)
+    decade_best_films = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
+    runtime_best_films = _best_film_per_bucket(rated, 'runtime_minutes', _runtime_bucket, tie_break='runtime')
+    featured = (
+        _favorite_pairing_insight(rated, avg_rating)
+        + _favorite_actor_duo_insight(rated, avg_rating)
+        + _favorite_genre_combo_insight(rated, avg_rating)
+        + _rating_insights(raw_deltas, _AXIS_INSIGHT_SLOTS, decade_best_films, runtime_best_films)
         + _hidden_gem_insight(rated, avg_rating)
-        + _rating_insights(raw_deltas, _AXIS_INSIGHT_SLOTS)
         + _rewatch_drift_insights(diary)
-        + _rewatch_vs_first_watch_insight(diary)
-        + _liked_vs_rated_insight(rated, import_session)
     )
+    stats = (
+        _countries_explored_insight(watched_movies)
+        + _languages_explored_insight(watched_movies)
+        + _rewatch_vs_first_watch_insight(diary)
+        + _like_percentage_insight(likes_count, films_watched_total)
+    )
+    return {
+        'featured': [_featured_card(insight) for insight in featured],
+        'stats': [_stat_card(stat) for stat in stats],
+    }
 
 
 def _rewatch_leaderboard(diary) -> dict:

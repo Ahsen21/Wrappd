@@ -6,6 +6,7 @@ from tmdb.models import Person
 
 from .services.compare import build_compare_context
 from .services.dashboard import build_dashboard_context
+from .services.insight_films import VALID_KINDS, build_insight_films
 from .services.person_filmography import build_person_filmography
 
 
@@ -55,6 +56,20 @@ def person_filmography(request, session_id, tmdb_id):
         return JsonResponse({'error': 'role must be "director" or "actor"'}, status=400)
     person = get_object_or_404(Person, pk=tmdb_id)
     return JsonResponse(build_person_filmography(import_session, person, role))
+
+
+def insight_films(request, session_id):
+    # Same JSON-for-a-modal shape as person_filmography above -- backs the
+    # click-through on the duo / genre-combo / decade insight tiles.
+    import_session = get_object_or_404(ImportSession, id=session_id)
+    kind = request.GET.get('kind')
+    if kind not in VALID_KINDS:
+        return JsonResponse({'error': f'kind must be one of {VALID_KINDS}'}, status=400)
+    try:
+        data = build_insight_films(import_session, kind, request.GET['p1'], request.GET.get('p2', ''))
+    except (KeyError, ValueError):
+        return JsonResponse({'error': 'bad or missing params'}, status=400)
+    return JsonResponse(data)
 
 
 def _render_compare(request, session_a_obj, session_b_obj):

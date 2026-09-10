@@ -2228,27 +2228,28 @@ class RatingInsightsTests(TestCase):
     against synthetic axis_deltas dicts (no DB fixture needed -- it's a pure
     function once the deltas exist) rather than through build_dashboard_context,
     matching this file's existing convention for _rarity_factor/_adaptive_weights.
-    Always passes _PERSON_INSIGHT_SLOTS and/or _AXIS_INSIGHT_SLOTS explicitly --
-    see _dashboard_insights for why the combined grid calls this twice with two
-    different slot lists rather than once with all 4 axes together."""
+    Always passes _AXIS_INSIGHT_SLOTS explicitly -- decade/runtime are the only
+    two axes this grid shows now (director/actor already have their own Favorite
+    Directors/Actors cards; see _dashboard_insights)."""
 
     def test_picks_strongest_positive_and_negative_per_axis_above_threshold(self):
         from stats.services.dashboard import (
-            RECOMMENDATION_REASON_THRESHOLD, _PERSON_INSIGHT_SLOTS, _rating_insights,
+            RECOMMENDATION_REASON_THRESHOLD, _AXIS_INSIGHT_SLOTS, _rating_insights,
         )
 
         axis_deltas = {
-            'director': {'Denis Villeneuve': 0.6, 'Shawn Levy': -0.5, 'Ron Howard': 0.02},
-            'actor': {},
+            'decade': {'1990s': 0.6},
+            'runtime': {'Under 90 min': -0.5, 'Over 150 min': 0.02},
         }
-        insights = _rating_insights(axis_deltas, _PERSON_INSIGHT_SLOTS)
+        insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
         texts = {i['text'] for i in insights}
-        self.assertTrue(any('Denis Villeneuve' in t for t in texts))
-        self.assertTrue(any('Shawn Levy' in t for t in texts))
-        # Ron Howard's delta doesn't clear RECOMMENDATION_REASON_THRESHOLD, so it's
-        # silently dropped rather than forcing a filler insight.
+        self.assertTrue(any('1990s' in t for t in texts))
+        self.assertTrue(any('Under 90 min' in t for t in texts))
+        # Over 150 min's delta doesn't clear RECOMMENDATION_REASON_THRESHOLD, and
+        # loses to Under 90 min's stronger |delta| under 'either' either way, so
+        # it's silently dropped rather than forcing a filler insight.
         self.assertLess(0.02, RECOMMENDATION_REASON_THRESHOLD)
-        self.assertFalse(any('Ron Howard' in t for t in texts))
+        self.assertFalse(any('Over 150 min' in t for t in texts))
 
     def test_genre_country_and_language_never_appear_even_if_present(self):
         """These 3 axes already have their own "Highest rated" tab elsewhere on the
@@ -2256,45 +2257,32 @@ class RatingInsightsTests(TestCase):
         something that tab doesn't have, so it deliberately never surfaces them,
         even if axis_deltas happens to carry them (e.g. because a caller reused
         the full _all_axis_deltas dict meant for _watchlist_recommendations)."""
-        from stats.services.dashboard import _PERSON_INSIGHT_SLOTS, _rating_insights
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
         axis_deltas = {
             'genre': {'Science Fiction': 0.9}, 'country': {'France': 0.9}, 'language': {'French': 0.9},
-            'director': {}, 'actor': {},
+            'decade': {}, 'runtime': {},
         }
-        self.assertEqual(_rating_insights(axis_deltas, _PERSON_INSIGHT_SLOTS), [])
+        self.assertEqual(_rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS), [])
 
     def test_axis_with_nothing_above_threshold_contributes_nothing(self):
-        from stats.services.dashboard import _PERSON_INSIGHT_SLOTS, _rating_insights
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
-        axis_deltas = {'director': {'Some Director': 0.05, 'Other Director': -0.03}, 'actor': {}}
-        self.assertEqual(_rating_insights(axis_deltas, _PERSON_INSIGHT_SLOTS), [])
+        axis_deltas = {'decade': {'1990s': 0.05, '1980s': -0.03}, 'runtime': {}}
+        self.assertEqual(_rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS), [])
 
     def test_fixed_display_order_regardless_of_magnitude(self):
-        """Slot order is a fixed category sequence (favorite director, least
-        favorite director, favorite actor, least favorite actor / decade,
-        runtime), not a sort by |delta| -- a weak director delta still leads a
-        stronger decade delta, because the category itself decides position."""
-        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _PERSON_INSIGHT_SLOTS, _rating_insights
+        """Slot order is a fixed category sequence (runtime, then decade), not a
+        sort by |delta| -- runtime's tile leads even when decade's delta is the
+        numerically bigger one, because the category itself decides position."""
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
         axis_deltas = {
-            'director': {'Weak Director': 0.16, 'Meh Director': -0.16},
-            'actor': {'Weak Actor': 0.16, 'Meh Actor': -0.16},
             'decade': {'2020s': 0.9},
-            'runtime': {'Over 150 min': -0.9},
+            'runtime': {'Over 150 min': -0.2},
         }
-        insights = (
-            _rating_insights(axis_deltas, _PERSON_INSIGHT_SLOTS)
-            + _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
-        )
-        self.assertEqual(
-            [(i['axis'], i['label']) for i in insights],
-            [
-                ('director', 'Favorite director'), ('director', 'Least favorite director'),
-                ('actor', 'Favorite actor'), ('actor', 'Least favorite actor'),
-                ('runtime', 'Least favorite runtime'), ('decade', 'Favorite decade'),
-            ],
-        )
+        insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
+        self.assertEqual([i['axis'] for i in insights], ['runtime', 'decade'])
 
     def test_decade_and_runtime_get_one_slot_for_whichever_direction_is_stronger(self):
         from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
@@ -2311,46 +2299,260 @@ class RatingInsightsTests(TestCase):
         self.assertIn('1990s', insights[0]['text'])
 
     def test_a_skipped_slot_shortens_the_grid_rather_than_leaving_a_gap(self):
-        from stats.services.dashboard import _PERSON_INSIGHT_SLOTS, _rating_insights
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
-        axis_deltas = {'director': {'Only Positive Director': 0.6}, 'actor': {}}
-        insights = _rating_insights(axis_deltas, _PERSON_INSIGHT_SLOTS)
+        axis_deltas = {'decade': {'1990s': 0.6}, 'runtime': {}}
+        insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
         self.assertEqual(len(insights), 1)
-        self.assertEqual(insights[0]['label'], 'Favorite director')
+        self.assertEqual(insights[0]['label'], 'Favorite decade')
 
     def test_empty_axis_deltas_returns_empty_list(self):
-        from stats.services.dashboard import _PERSON_INSIGHT_SLOTS, _rating_insights
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
-        self.assertEqual(_rating_insights({}, _PERSON_INSIGHT_SLOTS), [])
+        self.assertEqual(_rating_insights({}, _AXIS_INSIGHT_SLOTS), [])
 
     def test_build_dashboard_context_omits_insights_for_an_empty_session(self):
         session = ImportSession.objects.create(display_name='Alex')
-        self.assertEqual(build_dashboard_context(session)['insights'], [])
+        self.assertEqual(
+            build_dashboard_context(session)['insights'], {'featured': [], 'stats': []},
+        )
 
-    def test_director_and_actor_insights_use_a_headshot_when_one_resolves(self):
-        from stats.services.dashboard import _PERSON_INSIGHT_SLOTS, _rating_insights
+    def test_decade_and_runtime_use_a_poster_when_a_best_film_resolves(self):
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
-        director = Person.objects.create(tmdb_id=5001, name='Real Director', profile_path='/real.jpg')
-        Person.objects.create(tmdb_id=5002, name='No Photo Director', profile_path='')
-        axis_deltas = {
-            'actor': {},
-            'director': {'Real Director': 0.6, 'No Photo Director': -0.55, 'Unknown Person': 0.5},
-        }
-        insights = {i['text']: i for i in _rating_insights(axis_deltas, _PERSON_INSIGHT_SLOTS)}
-        real = next(i for t, i in insights.items() if 'Real Director' in t)
-        self.assertEqual(real['image'], director.profile_url)
-        no_photo = next(i for t, i in insights.items() if 'No Photo Director' in t)
-        self.assertIsNone(no_photo['image'])
-        self.assertEqual(no_photo['icon'], '🎥')
+        movie = Movie.objects.create(tmdb_id=6001, title='Real Poster Film', poster_path='/real.jpg')
+        axis_deltas = {'decade': {'1990s': 0.6}, 'runtime': {}}
+        decade_best_films = {'1990s': {'title': 'Real Poster Film', 'year': 1995, 'movie_id': movie.tmdb_id}}
+        insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS, decade_best_films=decade_best_films)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['image'], movie.poster_url)
+        self.assertEqual(insights[0]['image_title'], 'Real Poster Film (1995)')
 
-    def test_decade_insight_has_no_image_only_an_icon(self):
+    def test_decade_falls_back_to_icon_without_a_best_film(self):
         from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
         axis_deltas = {'decade': {'1990s': 0.6}, 'runtime': {}}
         insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
         self.assertEqual(len(insights), 1)
         self.assertIsNone(insights[0]['image'])
+        self.assertIsNone(insights[0]['image_title'])
         self.assertEqual(insights[0]['icon'], '📅')
+
+    def test_decade_falls_back_to_icon_when_best_film_has_no_poster(self):
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
+
+        movie = Movie.objects.create(tmdb_id=6002, title='No Poster Film', poster_path='')
+        axis_deltas = {'decade': {'1990s': 0.6}, 'runtime': {}}
+        decade_best_films = {'1990s': {'title': 'No Poster Film', 'year': 1995, 'movie_id': movie.tmdb_id}}
+        insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS, decade_best_films=decade_best_films)
+        self.assertIsNone(insights[0]['image'])
+        self.assertIsNone(insights[0]['image_title'])
+
+
+class BestQualifyingPairTests(TestCase):
+    """_best_qualifying_pair -- the shared "enough evidence, then clearly above
+    average" pair-selection logic behind _favorite_pairing_insight/
+    _favorite_actor_duo_insight/_favorite_genre_combo_insight."""
+
+    def test_picks_the_highest_average_among_qualifying_pairs(self):
+        from stats.services.dashboard import _best_qualifying_pair
+
+        pair_ratings = {
+            ('A', 'B'): [5.0, 5.0, 4.5],
+            ('C', 'D'): [3.0, 3.0, 3.0],
+        }
+        result = _best_qualifying_pair(pair_ratings, min_count=3, avg_rating=3.0)
+        self.assertIsNotNone(result)
+        best_pair, ratings, avg = result
+        self.assertEqual(best_pair, ('A', 'B'))
+        self.assertEqual(ratings, [5.0, 5.0, 4.5])
+        self.assertAlmostEqual(avg, 14.5 / 3)
+
+    def test_ties_break_toward_more_shared_films(self):
+        from stats.services.dashboard import _best_qualifying_pair
+
+        pair_ratings = {
+            ('Fewer', 'Films'): [5.0, 5.0, 5.0],
+            ('More', 'Films'): [5.0, 5.0, 5.0, 5.0],
+        }
+        best_pair, ratings, avg = _best_qualifying_pair(pair_ratings, min_count=3, avg_rating=3.0)
+        self.assertEqual(best_pair, ('More', 'Films'))
+
+    def test_pairs_below_min_count_are_excluded(self):
+        from stats.services.dashboard import _best_qualifying_pair
+
+        pair_ratings = {('A', 'B'): [5.0, 5.0]}
+        self.assertIsNone(_best_qualifying_pair(pair_ratings, min_count=3, avg_rating=3.0))
+
+    def test_returns_none_when_no_pairs_at_all(self):
+        from stats.services.dashboard import _best_qualifying_pair
+
+        self.assertIsNone(_best_qualifying_pair({}, min_count=3, avg_rating=3.0))
+
+    def test_returns_none_when_best_average_does_not_clear_the_threshold(self):
+        from stats.services.dashboard import RECOMMENDATION_REASON_THRESHOLD, _best_qualifying_pair
+
+        pair_ratings = {('A', 'B'): [3.0, 3.0, 3.0]}
+        avg_rating = 3.0 - RECOMMENDATION_REASON_THRESHOLD + 0.01
+        self.assertIsNone(_best_qualifying_pair(pair_ratings, min_count=3, avg_rating=avg_rating))
+
+
+class DuoPortraitTests(TestCase):
+    """_duo_portrait -- builds a two-person insight tile's 'duo' key, shared by
+    _favorite_pairing_insight and _favorite_actor_duo_insight."""
+
+    def test_builds_resolved_image_urls_for_both_people(self):
+        from stats.services.dashboard import _duo_portrait
+
+        duo = _duo_portrait('Director X', '/director.jpg', 'Actor Y', '/actor.jpg')
+        self.assertEqual(duo['a']['name'], 'Director X')
+        self.assertIn('/director.jpg', duo['a']['image'])
+        self.assertEqual(duo['b']['name'], 'Actor Y')
+        self.assertIn('/actor.jpg', duo['b']['image'])
+
+    def test_image_is_none_without_a_profile_path(self):
+        from stats.services.dashboard import _duo_portrait
+
+        duo = _duo_portrait('No Photo A', '', 'No Photo B', '')
+        self.assertIsNone(duo['a']['image'])
+        self.assertIsNone(duo['b']['image'])
+
+
+class BestFilmPerBucketTests(TestCase):
+    """_best_film_per_bucket -- the highest-rated film in each bucket a movie
+    field sorts into, feeding the poster shown for a decade/runtime insight
+    tile (see _rating_insights)."""
+
+    def test_picks_the_highest_rated_film_per_bucket(self):
+        from stats.services.dashboard import _best_film_per_bucket, _decade_bucket
+
+        session = ImportSession.objects.create(display_name='Alex')
+        low = Movie.objects.create(tmdb_id=6101, title='Lower Rated 90s', release_year=1995)
+        high = Movie.objects.create(tmdb_id=6102, title='Higher Rated 90s', release_year=1998)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/low', title=low.title, year=low.release_year,
+            movie=low, rating=Decimal('3.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/high', title=high.title,
+            year=high.release_year, movie=high, rating=Decimal('4.5'),
+        )
+        rated = RatingEntry.objects.filter(import_session=session)
+        best = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
+        self.assertEqual(best['1990s']['title'], 'Higher Rated 90s')
+        self.assertEqual(best['1990s']['movie_id'], high.tmdb_id)
+
+    def test_runtime_tie_break_favors_the_longer_film(self):
+        from stats.services.dashboard import _best_film_per_bucket, _runtime_bucket
+
+        session = ImportSession.objects.create(display_name='Alex')
+        short_film = Movie.objects.create(tmdb_id=6103, title='Aardvark', release_year=1995, runtime_minutes=60)
+        long_film = Movie.objects.create(tmdb_id=6104, title='Zebra', release_year=1996, runtime_minutes=85)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/short', title=short_film.title,
+            year=short_film.release_year, movie=short_film, rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/long', title=long_film.title,
+            year=long_film.release_year, movie=long_film, rating=Decimal('4.0'),
+        )
+        rated = RatingEntry.objects.filter(import_session=session)
+        best = _best_film_per_bucket(rated, 'runtime_minutes', _runtime_bucket, tie_break='runtime')
+        # Both are 'Under 90 min' and tied at 4.0 -- 'Aardvark' would win
+        # alphabetically, but the runtime tiebreak favors the longer film
+        # ('Zebra', 85 vs 60 minutes) instead.
+        self.assertEqual(best['Under 90 min']['title'], 'Zebra')
+
+    def test_runtime_tie_break_falls_back_to_title_when_runtime_is_also_tied(self):
+        from stats.services.dashboard import _best_film_per_bucket, _runtime_bucket
+
+        session = ImportSession.objects.create(display_name='Alex')
+        z_film = Movie.objects.create(tmdb_id=6105, title='Zebra', release_year=1995, runtime_minutes=80)
+        a_film = Movie.objects.create(tmdb_id=6106, title='Aardvark', release_year=1996, runtime_minutes=80)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/z', title=z_film.title,
+            year=z_film.release_year, movie=z_film, rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/a', title=a_film.title,
+            year=a_film.release_year, movie=a_film, rating=Decimal('4.0'),
+        )
+        rated = RatingEntry.objects.filter(import_session=session)
+        best = _best_film_per_bucket(rated, 'runtime_minutes', _runtime_bucket, tie_break='runtime')
+        self.assertEqual(best['Under 90 min']['title'], 'Aardvark')
+
+    def test_film_missing_runtime_loses_a_runtime_tie_break_to_one_with_runtime(self):
+        """Exercises tie_break='runtime' directly (independent of which axis
+        calls it in production) to confirm a film with no runtime data can't
+        win a rating tie against one that has it."""
+        from stats.services.dashboard import _best_film_per_bucket, _decade_bucket
+
+        session = ImportSession.objects.create(display_name='Alex')
+        no_runtime = Movie.objects.create(tmdb_id=6107, title='Aardvark', release_year=1995, runtime_minutes=None)
+        has_runtime = Movie.objects.create(tmdb_id=6108, title='Zebra', release_year=1996, runtime_minutes=90)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/none', title=no_runtime.title,
+            year=no_runtime.release_year, movie=no_runtime, rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/some', title=has_runtime.title,
+            year=has_runtime.release_year, movie=has_runtime, rating=Decimal('4.0'),
+        )
+        rated = RatingEntry.objects.filter(import_session=session)
+        best = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='runtime')
+        # 'Aardvark' would win alphabetically and has no runtime to compare --
+        # 'Zebra' wins the tie purely because it has runtime data at all.
+        self.assertEqual(best['1990s']['title'], 'Zebra')
+
+    def test_stable_random_tie_break_matches_the_lower_hashed_movie_id(self):
+        from stats.services.dashboard import _best_film_per_bucket, _decade_bucket, _stable_hash
+
+        session = ImportSession.objects.create(display_name='Alex')
+        film_a = Movie.objects.create(tmdb_id=6109, title='Film A', release_year=1995)
+        film_b = Movie.objects.create(tmdb_id=6110, title='Film B', release_year=1996)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/a', title=film_a.title,
+            year=film_a.release_year, movie=film_a, rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/b', title=film_b.title,
+            year=film_b.release_year, movie=film_b, rating=Decimal('4.0'),
+        )
+        rated = RatingEntry.objects.filter(import_session=session)
+        expected_winner = film_a if _stable_hash(film_a.tmdb_id) < _stable_hash(film_b.tmdb_id) else film_b
+        best = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
+        self.assertEqual(best['1990s']['title'], expected_winner.title)
+
+    def test_stable_random_tie_break_is_deterministic_across_calls(self):
+        """The whole point of 'stable_random' is that the same tie always
+        resolves to the same winner -- not a fresh coin-flip on every page load
+        -- so calling the function twice against identical data must agree."""
+        from stats.services.dashboard import _best_film_per_bucket, _decade_bucket
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(5):
+            movie = Movie.objects.create(tmdb_id=6120 + i, title=f'Tied Film {i}', release_year=1995)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/tied{i}', title=movie.title,
+                year=movie.release_year, movie=movie, rating=Decimal('4.0'),
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        first = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
+        second = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
+        self.assertEqual(first['1990s']['title'], second['1990s']['title'])
+
+    def test_unresolved_films_are_excluded(self):
+        from stats.services.dashboard import _best_film_per_bucket, _decade_bucket
+
+        session = ImportSession.objects.create(display_name='Alex')
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/unresolved', title='No Movie',
+            year=1995, movie=None, rating=Decimal('5.0'),
+        )
+        rated = RatingEntry.objects.filter(import_session=session)
+        self.assertEqual(
+            _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random'), {},
+        )
 
 
 class RawAxisDeltasTests(TestCase):
@@ -2361,70 +2563,57 @@ class RawAxisDeltasTests(TestCase):
     def test_returns_empty_dict_when_avg_rating_is_none(self):
         from stats.services.dashboard import _raw_axis_deltas
 
-        self.assertEqual(_raw_axis_deltas(RatingEntry.objects.none(), None, {}, {}), {})
+        self.assertEqual(_raw_axis_deltas(RatingEntry.objects.none(), None), {})
 
-    def test_director_delta_is_the_true_unshrunk_average_gap(self):
-        """A director with fewer films but a technically higher raw average beats
-        one with more films but a slightly lower raw average -- the opposite of
-        what the confidence-shrunk/peak-blended version would do, since there's no
-        shrinkage or peak-blending here at all, just avg - overall_avg."""
-        from stats.services.dashboard import _raw_axis_deltas
-
-        # avg_rating field mirrors what build_dashboard_context's director_ratings
-        # actually carries: {'rating_count': int, 'avg_rating': Decimal, ...}.
-        director_ratings = {
-            'More Evidence, Lower Avg': {'rating_count': 4, 'avg_rating': Decimal('4.875'), 'max_rating': Decimal('5.0')},
-            'Less Evidence, Higher Avg': {'rating_count': 3, 'avg_rating': Decimal('5.0'), 'max_rating': Decimal('5.0')},
-        }
-        result = _raw_axis_deltas(RatingEntry.objects.none(), Decimal('3.5'), {}, director_ratings)
-        self.assertAlmostEqual(result['director']['More Evidence, Lower Avg'], 4.875 - 3.5)
-        self.assertAlmostEqual(result['director']['Less Evidence, Higher Avg'], 5.0 - 3.5)
-        self.assertGreater(
-            result['director']['Less Evidence, Higher Avg'], result['director']['More Evidence, Lower Avg'],
-        )
-
-    def test_director_and_actor_still_require_minimum_evidence(self):
-        from stats.services.dashboard import (
-            MIN_COUNT_FOR_FAVORITE_ACTOR, MIN_COUNT_FOR_FAVORITE_DIRECTOR, _raw_axis_deltas,
-        )
-
-        director_ratings = {
-            'Thin Director': {
-                'rating_count': MIN_COUNT_FOR_FAVORITE_DIRECTOR - 1, 'avg_rating': Decimal('5.0'),
-                'max_rating': Decimal('5.0'),
-            },
-        }
-        actor_rating_lists = {'Thin Actor': [Decimal('5.0')] * (MIN_COUNT_FOR_FAVORITE_ACTOR - 1)}
-        result = _raw_axis_deltas(RatingEntry.objects.none(), Decimal('3.5'), actor_rating_lists, director_ratings)
-        self.assertEqual(result['director'], {})
-        self.assertEqual(result['actor'], {})
-
-    def test_decade_and_runtime_deltas_from_real_data(self):
-        from stats.services.dashboard import _raw_axis_deltas
+    def test_decade_requires_min_count_for_decade_insight(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_DECADE_INSIGHT, _raw_axis_deltas
 
         session = ImportSession.objects.create(display_name='Alex')
-        for i, (year, runtime, rating) in enumerate([
-            (1995, 100, Decimal('5.0')), (1996, 100, Decimal('5.0')),  # 1990s: avg 5.0
-            (2020, 200, Decimal('2.0')),  # 2020s: only 1 film, below MIN_COUNT_FOR_AVERAGE
-            (2010, 100, Decimal('3.0')), (2011, 100, Decimal('3.0')),  # baseline filler
-        ]):
-            movie = _make_movie(2000 + i, f'Film {i}', year, runtime, 'Drama')
+        entries = []
+        # 1990s: exactly the minimum, all 5.0 -- qualifies.
+        for i in range(MIN_COUNT_FOR_DECADE_INSIGHT):
+            entries.append((_make_movie(3000 + i, f'90s Film {i}', 1995, 100, 'Drama'), Decimal('5.0')))
+        # 2020s: one short of the minimum -- excluded.
+        for i in range(MIN_COUNT_FOR_DECADE_INSIGHT - 1):
+            entries.append((_make_movie(3100 + i, f'20s Film {i}', 2020, 100, 'Drama'), Decimal('2.0')))
+        for i, (movie, rating) in enumerate(entries):
             RatingEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/{i}', title=movie.title,
-                year=year, rating=rating, movie=movie,
+                year=movie.release_year, rating=rating, movie=movie,
             )
         rated = RatingEntry.objects.filter(import_session=session)
         overall_avg = float(rated.aggregate(avg=Avg('rating'))['avg'])
-        result = _raw_axis_deltas(rated, Decimal(str(overall_avg)), {}, {})
+        result = _raw_axis_deltas(rated, Decimal(str(overall_avg)))
         self.assertAlmostEqual(result['decade']['1990s'], 5.0 - overall_avg)
-        # 2020s had only 1 rated film -- below MIN_COUNT_FOR_AVERAGE, so excluded.
         self.assertNotIn('2020s', result['decade'])
+
+    def test_runtime_requires_min_count_for_runtime_insight(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_RUNTIME_INSIGHT, _raw_axis_deltas
+
+        session = ImportSession.objects.create(display_name='Alex')
+        entries = []
+        # Under 90 min: exactly the minimum, all 5.0 -- qualifies.
+        for i in range(MIN_COUNT_FOR_RUNTIME_INSIGHT):
+            entries.append((_make_movie(3200 + i, f'Short Film {i}', 2000, 80, 'Drama'), Decimal('5.0')))
+        # Over 150 min: one short of the minimum -- excluded.
+        for i in range(MIN_COUNT_FOR_RUNTIME_INSIGHT - 1):
+            entries.append((_make_movie(3300 + i, f'Long Film {i}', 2000, 180, 'Drama'), Decimal('2.0')))
+        for i, (movie, rating) in enumerate(entries):
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/{i}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        overall_avg = float(rated.aggregate(avg=Avg('rating'))['avg'])
+        result = _raw_axis_deltas(rated, Decimal(str(overall_avg)))
+        self.assertAlmostEqual(result['runtime']['Under 90 min'], 5.0 - overall_avg)
+        self.assertNotIn('Over 150 min', result['runtime'])
 
 
 class FavoritePairingInsightTests(TestCase):
     """_favorite_pairing_insight -- best-rated recurring director-actor
-    collaboration, appended as a 7th slot after _rating_insights' fixed 6 (see
-    build_dashboard_context's own wiring)."""
+    collaboration, one tile in the combined insight grid (see
+    _dashboard_insights' own wiring)."""
 
     def test_reports_the_best_recurring_pairing_above_threshold(self):
         from stats.services.dashboard import _favorite_pairing_insight
@@ -2452,6 +2641,64 @@ class FavoritePairingInsightTests(TestCase):
         self.assertIn('Favorite Director + Star Actor', insights[0]['text'])
         self.assertIn('3 films', insights[0]['text'])
         self.assertEqual(insights[0]['label'], 'Actor/director duo')
+
+    def test_duo_carries_each_persons_own_headshot(self):
+        from stats.services.dashboard import _favorite_pairing_insight
+
+        Person.objects.get_or_create(
+            tmdb_id=hash('Headshot Director') % 10_000,
+            defaults={'name': 'Headshot Director', 'profile_path': '/director.jpg'},
+        )
+        actor, _ = Person.objects.get_or_create(
+            tmdb_id=8010, defaults={'name': 'Headshot Actor', 'profile_path': '/actor.jpg'},
+        )
+        session = ImportSession.objects.create(display_name='Alex')
+        for i, r in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('4.5')]):
+            movie = _make_movie(4800 + i, f'Headshot Collab {i}', 2000 + i, 100, 'Drama', 'Headshot Director')
+            Credit.objects.create(movie=movie, person=actor, order=0)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/headshot{i}', title=movie.title,
+                year=movie.release_year, rating=r, movie=movie,
+            )
+        for i in range(10):
+            movie = _make_movie(4900 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_pairing_insight(rated, avg_rating)
+        duo = insights[0]['duo']
+        self.assertEqual(duo['a']['name'], 'Headshot Director')
+        self.assertIn('/director.jpg', duo['a']['image'])
+        self.assertEqual(duo['b']['name'], 'Headshot Actor')
+        self.assertIn('/actor.jpg', duo['b']['image'])
+
+    def test_duo_image_is_none_without_a_profile_path(self):
+        from stats.services.dashboard import _favorite_pairing_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        actor, _ = Person.objects.get_or_create(tmdb_id=8011, defaults={'name': 'No Photo Actor'})
+        for i, r in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('4.5')]):
+            movie = _make_movie(4950 + i, f'No Photo Collab {i}', 2000 + i, 100, 'Drama', 'No Photo Director')
+            Credit.objects.create(movie=movie, person=actor, order=0)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/nophoto{i}', title=movie.title,
+                year=movie.release_year, rating=r, movie=movie,
+            )
+        for i in range(10):
+            movie = _make_movie(5050 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_pairing_insight(rated, avg_rating)
+        duo = insights[0]['duo']
+        self.assertIsNone(duo['a']['image'])
+        self.assertIsNone(duo['b']['image'])
 
     def test_a_single_shared_film_does_not_count_as_a_collaboration(self):
         from stats.services.dashboard import _favorite_pairing_insight
@@ -2527,6 +2774,369 @@ class FavoritePairingInsightTests(TestCase):
         self.assertEqual(_favorite_pairing_insight(RatingEntry.objects.none(), None), [])
 
 
+class FavoriteActorDuoInsightTests(TestCase):
+    """_favorite_actor_duo_insight -- best-rated recurring on-screen actor
+    pairing, the actor x actor counterpart to _favorite_pairing_insight's
+    director x actor."""
+
+    def test_reports_the_best_recurring_pairing_above_threshold(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        actor_a, _ = Person.objects.get_or_create(tmdb_id=8500, defaults={'name': 'Star One'})
+        actor_b, _ = Person.objects.get_or_create(tmdb_id=8501, defaults={'name': 'Star Two'})
+        for i, r in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('4.5')]):
+            movie = _make_movie(4500 + i, f'Duo Film {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor_a, order=0)
+            Credit.objects.create(movie=movie, person=actor_b, order=1)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/duo{i}', title=movie.title,
+                year=movie.release_year, rating=r, movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4510 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        self.assertEqual(len(insights), 1)
+        self.assertIn('Star One', insights[0]['text'])
+        self.assertIn('Star Two', insights[0]['text'])
+        self.assertIn('3 films', insights[0]['text'])
+        self.assertEqual(insights[0]['label'], 'Actor duo')
+
+    def test_duo_carries_each_actors_own_headshot(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        actor_a, _ = Person.objects.get_or_create(
+            tmdb_id=8510, defaults={'name': 'Headshot One', 'profile_path': '/one.jpg'},
+        )
+        actor_b, _ = Person.objects.get_or_create(
+            tmdb_id=8511, defaults={'name': 'Headshot Two', 'profile_path': '/two.jpg'},
+        )
+        session = ImportSession.objects.create(display_name='Alex')
+        for i, r in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('4.5')]):
+            movie = _make_movie(4540 + i, f'Headshot Duo Film {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor_a, order=0)
+            Credit.objects.create(movie=movie, person=actor_b, order=1)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/hduo{i}', title=movie.title,
+                year=movie.release_year, rating=r, movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4550 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        duo = insights[0]['duo']
+        self.assertEqual(duo['a']['name'], 'Headshot One')
+        self.assertIn('/one.jpg', duo['a']['image'])
+        self.assertEqual(duo['b']['name'], 'Headshot Two')
+        self.assertIn('/two.jpg', duo['b']['image'])
+
+    def test_duo_image_is_none_without_a_profile_path(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        actor_a, _ = Person.objects.get_or_create(tmdb_id=8512, defaults={'name': 'No Photo One'})
+        actor_b, _ = Person.objects.get_or_create(tmdb_id=8513, defaults={'name': 'No Photo Two'})
+        session = ImportSession.objects.create(display_name='Alex')
+        for i, r in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('4.5')]):
+            movie = _make_movie(4560 + i, f'No Photo Duo Film {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor_a, order=0)
+            Credit.objects.create(movie=movie, person=actor_b, order=1)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/nphduo{i}', title=movie.title,
+                year=movie.release_year, rating=r, movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4570 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        duo = insights[0]['duo']
+        self.assertIsNone(duo['a']['image'])
+        self.assertIsNone(duo['b']['image'])
+
+    def test_pair_key_is_order_independent(self):
+        """Billing order can flip film to film -- the pair still has to count as
+        one recurring pairing, not two separate under-counted ones."""
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        actor_a, _ = Person.objects.get_or_create(tmdb_id=8502, defaults={'name': 'Alpha Actor'})
+        actor_b, _ = Person.objects.get_or_create(tmdb_id=8503, defaults={'name': 'Beta Actor'})
+        for i, (order_a, order_b) in enumerate([(0, 1), (1, 0), (0, 1)]):
+            movie = _make_movie(4520 + i, f'Flip Film {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor_a, order=order_a)
+            Credit.objects.create(movie=movie, person=actor_b, order=order_b)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/flip{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4530 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        self.assertEqual(len(insights), 1)
+        self.assertIn('3 films', insights[0]['text'])
+
+    def test_two_shared_films_do_not_count_as_a_pairing(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        actor_a, _ = Person.objects.get_or_create(tmdb_id=8504, defaults={'name': 'One Actor'})
+        actor_b, _ = Person.objects.get_or_create(tmdb_id=8505, defaults={'name': 'Other Actor'})
+        for i in range(2):
+            movie = _make_movie(4540 + i, f'Short Collab {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor_a, order=0)
+            Credit.objects.create(movie=movie, person=actor_b, order=1)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/short{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4550 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating), [])
+
+    def test_cameo_actors_are_excluded_from_pairing(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        lead, _ = Person.objects.get_or_create(tmdb_id=8506, defaults={'name': 'Lead Actor'})
+        cameo, _ = Person.objects.get_or_create(tmdb_id=8507, defaults={'name': 'Cameo Actor'})
+        for i in range(3):
+            movie = _make_movie(4560 + i, f'Cameo Duo {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=lead, order=0)
+            _cast_movie(movie, cameo, order=25, total_cast_size=40)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/cameoduo{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4570 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating), [])
+
+    def test_best_pairing_below_threshold_is_not_reported(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        actor_a, _ = Person.objects.get_or_create(tmdb_id=8508, defaults={'name': 'Mid Actor A'})
+        actor_b, _ = Person.objects.get_or_create(tmdb_id=8509, defaults={'name': 'Mid Actor B'})
+        for i in range(3):
+            movie = _make_movie(4580 + i, f'Mid Duo {i}', 2000 + i, 100, 'Drama')
+            Credit.objects.create(movie=movie, person=actor_a, order=0)
+            Credit.objects.create(movie=movie, person=actor_b, order=1)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/mid{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4590 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating), [])
+
+    def test_returns_empty_when_avg_rating_is_none(self):
+        from stats.services.dashboard import _favorite_actor_duo_insight
+
+        self.assertEqual(_favorite_actor_duo_insight(RatingEntry.objects.none(), None), [])
+
+
+class FavoriteGenreComboInsightTests(TestCase):
+    """_favorite_genre_combo_insight -- best-rated recurring genre pairing, the
+    genre x genre counterpart to _favorite_pairing_insight/
+    _favorite_actor_duo_insight's person-pair duos."""
+
+    def _combo_movie(self, tmdb_id, title, year, genre_a, genre_b):
+        movie = _make_movie(tmdb_id, title, year, 100, genre_a)
+        genre_b_obj, _ = Genre.objects.get_or_create(tmdb_id=hash(genre_b) % 10_000, defaults={'name': genre_b})
+        movie.genres.add(genre_b_obj)
+        return movie
+
+    def test_reports_the_best_recurring_genre_pair_above_threshold(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(MIN_COUNT_FOR_GENRE_COMBO):
+            movie = self._combo_movie(4600 + i, f'Combo Film {i}', 2000 + i, 'Sci-Fi', 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/combo{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4700 + i, f'Filler {i}', 2010, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_genre_combo_insight(rated, avg_rating)
+        self.assertEqual(len(insights), 1)
+        self.assertIn('Comedy', insights[0]['text'])
+        self.assertIn('Sci-Fi', insights[0]['text'])
+        self.assertIn(f'{MIN_COUNT_FOR_GENRE_COMBO} films', insights[0]['text'])
+        self.assertEqual(insights[0]['label'], 'Genre combo')
+
+    def test_representative_poster_is_the_highest_rated_film_in_the_combo(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(MIN_COUNT_FOR_GENRE_COMBO):
+            movie = self._combo_movie(4640 + i, f'Poster Combo {i}', 2000 + i, 'Sci-Fi', 'Comedy')
+            movie.poster_path = f'/poster{i}.jpg'
+            movie.save()
+            # One film in the combo stands out with a clearly higher rating.
+            rating = Decimal('5.0') if i == 3 else Decimal('4.0')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/poster{i}', title=movie.title,
+                year=movie.release_year, rating=rating, movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4750 + i, f'Filler {i}', 2010, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_genre_combo_insight(rated, avg_rating)
+        self.assertEqual(len(insights), 1)
+        self.assertIn('/poster3.jpg', insights[0]['image'])
+        self.assertEqual(insights[0]['image_title'], 'Poster Combo 3 (2003)')
+
+    def test_image_is_none_without_a_resolved_poster(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(MIN_COUNT_FOR_GENRE_COMBO):
+            movie = self._combo_movie(4660 + i, f'No Poster Combo {i}', 2000 + i, 'Horror', 'Romance')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/noposter{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4770 + i, f'Filler {i}', 2010, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_genre_combo_insight(rated, avg_rating)
+        self.assertIsNone(insights[0]['image'])
+        self.assertIsNone(insights[0]['image_title'])
+
+    def test_pair_key_is_order_independent(self):
+        """A movie's genre ordering from TMDB isn't guaranteed stable -- the pair
+        still has to count as one recurring combo, not two under-counted ones."""
+        from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        sci_fi, _ = Genre.objects.get_or_create(tmdb_id=hash('Sci-Fi') % 10_000, defaults={'name': 'Sci-Fi'})
+        comedy, _ = Genre.objects.get_or_create(tmdb_id=hash('Comedy') % 10_000, defaults={'name': 'Comedy'})
+        for i in range(MIN_COUNT_FOR_GENRE_COMBO):
+            movie = _make_movie(4610 + i, f'Flip Film {i}', 2000 + i, 100, 'Drama')
+            movie.genres.clear()
+            # Alternate which genre gets added first, to simulate unstable ordering.
+            if i % 2 == 0:
+                movie.genres.add(sci_fi, comedy)
+            else:
+                movie.genres.add(comedy, sci_fi)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/flip{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4710 + i, f'Filler {i}', 2010, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insights = _favorite_genre_combo_insight(rated, avg_rating)
+        self.assertEqual(len(insights), 1)
+        self.assertIn(f'{MIN_COUNT_FOR_GENRE_COMBO} films', insights[0]['text'])
+
+    def test_a_below_threshold_genre_pair_does_not_count_as_a_combo(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(MIN_COUNT_FOR_GENRE_COMBO - 1):
+            movie = self._combo_movie(4620 + i, f'Short Combo {i}', 2000 + i, 'Horror', 'Romance')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/short{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4720 + i, f'Filler {i}', 2010, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        self.assertEqual(_favorite_genre_combo_insight(rated, avg_rating), [])
+
+    def test_best_pairing_below_threshold_average_is_not_reported(self):
+        from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(MIN_COUNT_FOR_GENRE_COMBO):
+            movie = self._combo_movie(4630 + i, f'Mid Combo {i}', 2000 + i, 'Mystery', 'Thriller')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/mid{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        for i in range(10):
+            filler = _make_movie(4730 + i, f'Filler {i}', 2010, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=filler.title,
+                year=filler.release_year, rating=Decimal('3.0'), movie=filler,
+            )
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        self.assertEqual(_favorite_genre_combo_insight(rated, avg_rating), [])
+
+    def test_returns_empty_when_avg_rating_is_none(self):
+        from stats.services.dashboard import _favorite_genre_combo_insight
+
+        self.assertEqual(_favorite_genre_combo_insight(RatingEntry.objects.none(), None), [])
+
+
 class HiddenGemInsightTests(TestCase):
     """_hidden_gem_insight -- most obscure real favorite (high personal rating,
     low TMDB vote_count), appended after _favorite_pairing_insight's 7th slot."""
@@ -2596,10 +3206,143 @@ class HiddenGemInsightTests(TestCase):
         self.assertEqual(_hidden_gem_insight(RatingEntry.objects.none(), None), [])
 
 
+class CountriesAndLanguagesExploredInsightTests(TestCase):
+    """_countries_explored_insight / _languages_explored_insight -- pure breadth
+    counts of distinct production countries/original languages across watched
+    films, two cells in the insight section's "by the numbers" strip (see
+    _dashboard_insights). Unlike most insights in this file, these have no
+    minimum-evidence gate -- a distinct count is exact regardless of how many
+    films back it."""
+
+    def test_counts_distinct_countries_across_watched_movies(self):
+        from stats.services.dashboard import _countries_explored_insight
+
+        usa, _ = Country.objects.get_or_create(code='US', defaults={'name': 'United States of America'})
+        uk, _ = Country.objects.get_or_create(code='GB', defaults={'name': 'United Kingdom'})
+        japan, _ = Country.objects.get_or_create(code='JP', defaults={'name': 'Japan'})
+        m1 = Movie.objects.create(tmdb_id=7001, title='Film A', release_year=2000)
+        m1.countries.set([usa, uk])
+        m2 = Movie.objects.create(tmdb_id=7002, title='Film B', release_year=2001)
+        m2.countries.set([usa])
+        m3 = Movie.objects.create(tmdb_id=7003, title='Film C', release_year=2002)
+        m3.countries.set([japan])
+        Movie.objects.create(tmdb_id=7004, title='Film D', release_year=2003)  # no country data
+
+        watched_movies = Movie.objects.filter(tmdb_id__in=[7001, 7002, 7003, 7004])
+        insights = _countries_explored_insight(watched_movies)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['value'], '3')
+        self.assertEqual(insights[0]['label'], 'Countries explored')
+
+    def test_returns_empty_when_no_country_data(self):
+        from stats.services.dashboard import _countries_explored_insight
+
+        Movie.objects.create(tmdb_id=7020, title='No Country Film', release_year=2000)
+        watched_movies = Movie.objects.filter(tmdb_id=7020)
+        self.assertEqual(_countries_explored_insight(watched_movies), [])
+
+    def test_counts_distinct_languages_across_watched_movies(self):
+        from stats.services.dashboard import _languages_explored_insight
+
+        Movie.objects.create(tmdb_id=7030, title='Film A', release_year=2000, original_language='English')
+        Movie.objects.create(tmdb_id=7031, title='Film B', release_year=2001, original_language='English')
+        Movie.objects.create(tmdb_id=7032, title='Film C', release_year=2002, original_language='Japanese')
+        Movie.objects.create(tmdb_id=7033, title='Film D', release_year=2003)  # no language data
+
+        watched_movies = Movie.objects.filter(tmdb_id__in=[7030, 7031, 7032, 7033])
+        insights = _languages_explored_insight(watched_movies)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['value'], '2')
+        self.assertEqual(insights[0]['label'], 'Languages explored')
+
+    def test_returns_empty_when_no_language_data(self):
+        from stats.services.dashboard import _languages_explored_insight
+
+        Movie.objects.create(tmdb_id=7050, title='No Language Film', release_year=2000)
+        watched_movies = Movie.objects.filter(tmdb_id=7050)
+        self.assertEqual(_languages_explored_insight(watched_movies), [])
+
+    def test_flags_are_ranked_by_most_watched_country_first(self):
+        from stats.services.dashboard import _countries_explored_insight, _flag_emoji
+
+        usa, _ = Country.objects.get_or_create(code='US', defaults={'name': 'United States of America'})
+        japan, _ = Country.objects.get_or_create(code='JP', defaults={'name': 'Japan'})
+        # 3 US films, 1 Japanese film -- US should rank first in the cluster.
+        for i in range(3):
+            Movie.objects.create(tmdb_id=7060 + i, title=f'US Film {i}', release_year=2000).countries.set([usa])
+        Movie.objects.create(tmdb_id=7070, title='JP Film', release_year=2000).countries.set([japan])
+
+        watched_movies = Movie.objects.filter(tmdb_id__in=[7060, 7061, 7062, 7070])
+        insights = _countries_explored_insight(watched_movies)
+        self.assertEqual(insights[0]['flags'], [_flag_emoji('US'), _flag_emoji('JP')])
+
+    def test_flag_cluster_is_capped_at_flag_cluster_size(self):
+        from stats.services.dashboard import FLAG_CLUSTER_SIZE, _countries_explored_insight
+
+        codes = ['US', 'GB', 'JP', 'FR', 'DE', 'IN']
+        self.assertGreater(len(codes), FLAG_CLUSTER_SIZE)
+        movie_ids = []
+        for i, code in enumerate(codes):
+            country, _ = Country.objects.get_or_create(code=code, defaults={'name': code})
+            # Descending watch counts (more films for earlier codes) so ranking
+            # is unambiguous -- codes[0] should always make the cluster.
+            for j in range(len(codes) - i):
+                movie = Movie.objects.create(tmdb_id=7100 + i * 10 + j, title=f'{code} Film {j}', release_year=2000)
+                movie.countries.set([country])
+                movie_ids.append(movie.tmdb_id)
+
+        watched_movies = Movie.objects.filter(tmdb_id__in=movie_ids)
+        insights = _countries_explored_insight(watched_movies)
+        self.assertEqual(len(insights[0]['flags']), FLAG_CLUSTER_SIZE)
+
+    def test_language_flag_uses_the_mapped_country_code(self):
+        from stats.services.dashboard import _flag_emoji, _languages_explored_insight
+
+        Movie.objects.create(tmdb_id=7080, title='JP Film', release_year=2000, original_language='Japanese')
+        watched_movies = Movie.objects.filter(tmdb_id=7080)
+        insights = _languages_explored_insight(watched_movies)
+        self.assertEqual(insights[0]['flags'], [_flag_emoji('JP')])
+
+    def test_unmapped_language_contributes_no_flag_but_insight_still_fires(self):
+        from stats.services.dashboard import _languages_explored_insight
+
+        Movie.objects.create(
+            tmdb_id=7090, title='Unmapped Language Film', release_year=2000, original_language='Klingon',
+        )
+        watched_movies = Movie.objects.filter(tmdb_id=7090)
+        insights = _languages_explored_insight(watched_movies)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['value'], '1')
+        self.assertEqual(insights[0]['flags'], [])
+
+
+class FlagEmojiTests(TestCase):
+    """_flag_emoji -- ISO 3166-1 alpha-2 code -> Unicode flag emoji, feeding the
+    Countries/Languages explored insight tiles' flag cluster."""
+
+    def test_builds_a_flag_from_a_valid_two_letter_code(self):
+        from stats.services.dashboard import _flag_emoji
+
+        # Each letter is a fixed codepoint offset from 'A' -- U+1F1FA U+1F1F8.
+        self.assertEqual(_flag_emoji('US'), '\U0001F1FA\U0001F1F8')
+
+    def test_is_case_insensitive(self):
+        from stats.services.dashboard import _flag_emoji
+
+        self.assertEqual(_flag_emoji('us'), _flag_emoji('US'))
+
+    def test_returns_empty_string_for_invalid_input(self):
+        from stats.services.dashboard import _flag_emoji
+
+        self.assertEqual(_flag_emoji(''), '')
+        self.assertEqual(_flag_emoji('USA'), '')
+        self.assertEqual(_flag_emoji('1A'), '')
+
+
 class RatingPatternInsightsTests(TestCase):
     """"How you actually watch" -- behavioral pattern insights (rewatch drift,
-    rewatch vs. first-watch, liked-vs-rated correlation), distinct from
-    RatingInsightsTests' preference-axis deltas above."""
+    rewatch vs. first-watch, like percentage), distinct from RatingInsightsTests'
+    preference-axis deltas above."""
 
     def test_rewatch_drift_resolves_the_films_poster(self):
         from stats.services.dashboard import _rewatch_drift_insights
@@ -2705,7 +3448,28 @@ class RatingPatternInsightsTests(TestCase):
         insights = _rewatch_vs_first_watch_insight(diary)
         self.assertEqual(len(insights), 1)
         self.assertEqual(insights[0]['label'], 'Rewatch score change')
-        self.assertTrue(insights[0]['text'].startswith('+'))
+        self.assertEqual(insights[0]['value'], '1.0★')
+        self.assertEqual(insights[0]['direction'], 'up')
+
+    def test_rewatch_vs_first_watch_reports_down_direction_for_a_drop(self):
+        from stats.services.dashboard import _rewatch_vs_first_watch_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(3):
+            DiaryEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/fw{i}', title=f'First {i}', year=2000,
+                watched_date='2020-01-01', rating=Decimal('4.0'), rewatch=False,
+            )
+        for i in range(3):
+            DiaryEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}', title=f'Rewatch {i}', year=2000,
+                watched_date='2021-01-01', rating=Decimal('3.0'), rewatch=True,
+            )
+        diary = DiaryEntry.objects.filter(import_session=session)
+        insights = _rewatch_vs_first_watch_insight(diary)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['value'], '1.0★')
+        self.assertEqual(insights[0]['direction'], 'down')
 
     def test_rewatch_vs_first_watch_empty_with_too_little_data(self):
         from stats.services.dashboard import _rewatch_vs_first_watch_insight
@@ -2718,91 +3482,34 @@ class RatingPatternInsightsTests(TestCase):
         diary = DiaryEntry.objects.filter(import_session=session)
         self.assertEqual(_rewatch_vs_first_watch_insight(diary), [])
 
-    def test_liked_vs_rated_reports_close_tracking(self):
-        from stats.services.dashboard import _liked_vs_rated_insight
+    def test_like_percentage_is_likes_over_films_watched(self):
+        from stats.services.dashboard import _like_percentage_insight
 
-        session = ImportSession.objects.create(display_name='Alex')
-        for i in range(5):
-            movie = _make_movie(1000 + i, f'High {i}', 2000, 100, 'Drama')
-            RatingEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/high{i}', title=movie.title,
-                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
-            )
-            LikedFilmEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/high{i}', title=movie.title,
-                year=movie.release_year, movie=movie,
-            )
-        for i in range(5):
-            movie = _make_movie(1010 + i, f'Low {i}', 2000, 100, 'Drama')
-            RatingEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/low{i}', title=movie.title,
-                year=movie.release_year, rating=Decimal('2.5'), movie=movie,
-            )
-        rated = RatingEntry.objects.filter(import_session=session)
-        insights = _liked_vs_rated_insight(rated, session)
+        insights = _like_percentage_insight(likes_count=38, films_watched_total=100)
         self.assertEqual(len(insights), 1)
-        self.assertEqual(insights[0]['label'], 'Heart percent')
-        self.assertIn('100%', insights[0]['text'])
-        self.assertIn('0%', insights[0]['text'])
+        self.assertEqual(insights[0]['label'], 'Like percentage')
+        self.assertEqual(insights[0]['value'], '38%')
+        self.assertEqual(insights[0]['pct'], 38)
 
-    def test_liked_vs_rated_reports_decoupled(self):
-        from stats.services.dashboard import _liked_vs_rated_insight
+    def test_like_percentage_rounds_to_a_whole_number(self):
+        from stats.services.dashboard import _like_percentage_insight
 
-        session = ImportSession.objects.create(display_name='Alex')
-        for i in range(5):
-            movie = _make_movie(1100 + i, f'High {i}', 2000, 100, 'Drama')
-            RatingEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/high{i}', title=movie.title,
-                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
-            )
-            if i < 2:
-                LikedFilmEntry.objects.create(
-                    import_session=session, letterboxd_uri=f'https://boxd.it/high{i}', title=movie.title,
-                    year=movie.release_year, movie=movie,
-                )
-        for i in range(5):
-            movie = _make_movie(1110 + i, f'Low {i}', 2000, 100, 'Drama')
-            RatingEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/low{i}', title=movie.title,
-                year=movie.release_year, rating=Decimal('2.5'), movie=movie,
-            )
-            if i < 2:
-                LikedFilmEntry.objects.create(
-                    import_session=session, letterboxd_uri=f'https://boxd.it/low{i}', title=movie.title,
-                    year=movie.release_year, movie=movie,
-                )
-        rated = RatingEntry.objects.filter(import_session=session)
-        insights = _liked_vs_rated_insight(rated, session)
-        self.assertEqual(len(insights), 1)
-        self.assertEqual(insights[0]['label'], 'Heart percent')
-        self.assertIn('40%', insights[0]['text'])
+        insights = _like_percentage_insight(likes_count=1, films_watched_total=3)
+        self.assertEqual(insights[0]['value'], '33%')
 
-    def test_liked_vs_rated_empty_with_too_little_data(self):
-        from stats.services.dashboard import _liked_vs_rated_insight
+    def test_like_percentage_empty_when_nothing_watched(self):
+        from stats.services.dashboard import _like_percentage_insight
+
+        self.assertEqual(_like_percentage_insight(likes_count=0, films_watched_total=0), [])
+
+    def test_rewatch_drift_emits_increase_before_decrease(self):
+        """_rewatch_drift_insights returns the biggest upgrade first, then the
+        biggest downgrade -- the order the 'featured' zone relies on (see
+        _dashboard_insights). No genre-consistency insight exists at all
+        (dropped by request)."""
+        from stats.services.dashboard import _rewatch_drift_insights
 
         session = ImportSession.objects.create(display_name='Alex')
-        movie = _make_movie(1200, 'Only Film', 2000, 100, 'Drama')
-        RatingEntry.objects.create(
-            import_session=session, letterboxd_uri='https://boxd.it/only', title='Only Film', year=2000,
-            rating=Decimal('4.5'), movie=movie,
-        )
-        rated = RatingEntry.objects.filter(import_session=session)
-        self.assertEqual(_liked_vs_rated_insight(rated, session), [])
-
-    def test_fixed_order_upgrade_downgrade_rewatch_change_then_like_percentage(self):
-        """1. most increased on rewatch, 2. most decreased on rewatch, 3. rewatch
-        score change, 4. like percentage -- no genre-consistency insight at all
-        (dropped by request). These 3 functions are the last 4 slots of the
-        combined grid (_dashboard_insights), tested here concatenated directly
-        rather than through the full 12-slot orchestrator, matching this class's
-        existing per-function convention."""
-        from stats.services.dashboard import (
-            _liked_vs_rated_insight, _rewatch_drift_insights, _rewatch_vs_first_watch_insight,
-        )
-
-        session = ImportSession.objects.create(display_name='Alex')
-
-        # 1 & 2: a clear rewatch upgrade and a clear rewatch downgrade.
         DiaryEntry.objects.create(
             import_session=session, letterboxd_uri='https://boxd.it/u1', title='Up Film', year=2000,
             watched_date='2020-01-01', rating=Decimal('2.0'),
@@ -2819,74 +3526,42 @@ class RatingPatternInsightsTests(TestCase):
             import_session=session, letterboxd_uri='https://boxd.it/d2', title='Down Film', year=2001,
             watched_date='2022-01-01', rating=Decimal('1.0'), rewatch=True,
         )
-        # 3: enough first-watch/rewatch volume for a meaningful aggregate gap.
-        for i in range(3):
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/fw{i}', title=f'First {i}', year=2000,
-                watched_date='2020-01-01', rating=Decimal('3.0'), rewatch=False,
-            )
-        for i in range(3):
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}', title=f'Rewatch {i}', year=2000,
-                watched_date='2021-01-01', rating=Decimal('4.5'), rewatch=True,
-            )
-        # 4: enough rated/liked films on both sides of the 4-star line.
-        for i in range(5):
-            movie = _make_movie(3000 + i, f'High {i}', 2000, 100, 'Drama')
-            RatingEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/high{i}', title=movie.title,
-                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
-            )
-            LikedFilmEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/high{i}', title=movie.title,
-                year=movie.release_year, movie=movie,
-            )
-        for i in range(5):
-            movie = _make_movie(3010 + i, f'Low {i}', 2000, 100, 'Drama')
-            RatingEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/low{i}', title=movie.title,
-                year=movie.release_year, rating=Decimal('2.5'), movie=movie,
-            )
 
         diary = DiaryEntry.objects.filter(import_session=session)
-        rated = RatingEntry.objects.filter(import_session=session)
-        insights = (
-            _rewatch_drift_insights(diary)
-            + _rewatch_vs_first_watch_insight(diary)
-            + _liked_vs_rated_insight(rated, session)
-        )
-
-        self.assertEqual(len(insights), 4)
+        insights = _rewatch_drift_insights(diary)
+        self.assertEqual(len(insights), 2)
         self.assertIn('Up Film', insights[0]['text'])
         self.assertEqual(insights[0]['label'], 'Rewatch increase')
         self.assertIn('Down Film', insights[1]['text'])
         self.assertEqual(insights[1]['label'], 'Rewatch decrease')
-        self.assertEqual(insights[2]['label'], 'Rewatch score change')
-        self.assertEqual(insights[3]['label'], 'Heart percent')
-        texts = [i['text'] for i in insights]
-        self.assertFalse(any('genre' in t.lower() or 'predictable' in t.lower() for t in texts))
 
 
 class DashboardInsightsOrderTests(TestCase):
-    """_dashboard_insights -- the single combined grid's fixed slot order, spanning
-    every insight type this file builds. Verified through build_dashboard_context's
-    'insights' key against one real, moderately rich fixture that touches director/
-    actor/pairing/decade/runtime/rewatch/heart data at once (each individual
-    piece's own selection/threshold/image logic is already covered by its own
-    focused tests elsewhere in this file -- this just proves they combine in the
-    documented order)."""
+    """_dashboard_insights -- the insight section's two zones and their fixed
+    within-zone order, spanning every insight type this file builds. Verified
+    through build_dashboard_context's 'insights' key against one real,
+    moderately rich fixture that touches pairing/decade/runtime/rewatch/like
+    data at once (each individual piece's own selection/threshold/image logic
+    is already covered by its own focused tests elsewhere in this file -- this
+    just proves they combine into the documented order). Director/actor no
+    longer get their own slots here at all (Favorite Directors/Actors already
+    cover that signal on their own cards) -- the fixture still sets up a
+    favorite director/actor pairing purely to populate the 'Favorite
+    actor/director duo' tile, which is a real two-person co-occurrence fact
+    distinct from either axis on its own."""
 
     def test_present_tiles_follow_the_documented_canonical_order(self):
-        canonical_order = [
-            'Favorite director', 'Least favorite director', 'Favorite actor', 'Least favorite actor',
-            'Actor/director duo', 'Hidden gem', 'Favorite runtime', 'Least favorite runtime',
-            'Favorite decade', 'Least favorite decade',
-            'Rewatch increase', 'Rewatch decrease', 'Rewatch score change', 'Heart percent',
+        featured_order = [
+            'Actor/director duo', 'Actor duo', 'Genre combo',
+            'Favorite runtime', 'Least favorite runtime', 'Favorite decade', 'Least favorite decade',
+            'Hidden gem', 'Rewatch increase', 'Rewatch decrease',
         ]
+        # stat cards carry the short display label (see _STAT_SHORT_LABELS).
+        stats_order = ['Countries', 'Languages', 'Rewatch Δ', 'Like %']
         session = ImportSession.objects.create(display_name='Alex')
 
-        # Director + actor + duo + decade + runtime, all from the same 3 films --
-        # a favorite director/actor/duo in the 1970s, over 150 minutes long.
+        # Duo + decade + runtime, all from the same 3 films -- a favorite
+        # director/actor pairing in the 1970s, over 150 minutes long.
         actor, _ = Person.objects.get_or_create(tmdb_id=9001, defaults={'name': 'Duo Actor'})
         for i, year in enumerate([1975, 1976, 1977]):
             movie = _make_movie(9100 + i, f'Epic {i}', year, 160, 'Drama', 'Great Director')
@@ -2929,7 +3604,7 @@ class DashboardInsightsOrderTests(TestCase):
                 import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}', title=f'Rewatch {i}', year=2000,
                 watched_date='2021-01-01', rating=Decimal('4.5'), rewatch=True,
             )
-        # Heart-vs-rating correlation.
+        # Like percentage: some rated films that were also hearted.
         for i in range(5):
             movie = _make_movie(9400 + i, f'Liked {i}', 2015, 100, 'Drama')
             RatingEntry.objects.create(
@@ -2942,12 +3617,16 @@ class DashboardInsightsOrderTests(TestCase):
             )
 
         insights = build_dashboard_context(session)['insights']
-        labels = [i['label'] for i in insights]
-        # Not asserting every one of the 14 possible labels showed up -- just that
-        # whichever did appear are in the documented relative order.
-        self.assertGreaterEqual(len(labels), 5)
-        positions = [canonical_order.index(label) for label in labels]
-        self.assertEqual(positions, sorted(positions))
+        # Not asserting every possible label showed up -- just that whichever did
+        # appear, in each zone, are in that zone's documented relative order.
+        featured_labels = [i['label'] for i in insights['featured']]
+        stats_labels = [s['label'] for s in insights['stats']]
+        self.assertGreaterEqual(len(featured_labels), 3)
+        self.assertGreaterEqual(len(stats_labels), 2)
+        featured_positions = [featured_order.index(label) for label in featured_labels]
+        self.assertEqual(featured_positions, sorted(featured_positions))
+        stats_positions = [stats_order.index(label) for label in stats_labels]
+        self.assertEqual(stats_positions, sorted(stats_positions))
 
 
 class AverageRequiresAtLeastTwoEntriesTests(TestCase):
@@ -3842,3 +4521,197 @@ class PersonFilmographyTests(TestCase):
             )
         result = build_person_filmography(session, director, 'director')
         self.assertEqual([f['title'] for f in result['films']], ['High Film', 'Mid Film', 'Low Film'])
+
+
+class InsightFilmsTests(TestCase):
+    """build_insight_films -- the click-through modal behind the duo / genre-combo
+    / decade insight tiles. Scoped to RATED films, since those tiles' "N films"
+    counts come from ratings.csv."""
+
+    def _rate(self, session, movie, rating, uri):
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri=uri, title=movie.title,
+            year=movie.release_year, rating=Decimal(rating), movie=movie,
+        )
+
+    def test_pairing_is_the_intersection_of_a_directors_and_an_actors_films(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=9001, name='D')
+        actor = Person.objects.create(tmdb_id=9002, name='A')
+        other = Person.objects.create(tmdb_id=9003, name='Other')
+
+        collab_hi = Movie.objects.create(tmdb_id=7001, title='Collab Hi', release_year=2010)
+        collab_lo = Movie.objects.create(tmdb_id=7002, title='Collab Lo', release_year=2011)
+        director_only = Movie.objects.create(tmdb_id=7003, title='Director Only', release_year=2012)
+        actor_only = Movie.objects.create(tmdb_id=7004, title='Actor Only', release_year=2013)
+        for m in (collab_hi, collab_lo, director_only):
+            m.directors.add(director)
+        actor_only.directors.add(other)
+        for m in (collab_hi, collab_lo, actor_only):
+            Credit.objects.create(movie=m, person=actor, order=0)
+        for m, r in [(collab_hi, '5.0'), (collab_lo, '3.5'), (director_only, '4.0'), (actor_only, '4.0')]:
+            self._rate(session, m, r, f'https://boxd.it/{m.tmdb_id}')
+
+        data = build_insight_films(session, 'pairing', director.tmdb_id, actor.tmdb_id)
+        self.assertEqual([f['title'] for f in data['films']], ['Collab Hi', 'Collab Lo'])
+        self.assertEqual(float(data['films'][0]['rating']), 5.0)
+
+    def test_actor_pairing_is_the_intersection_of_two_actors_films(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        a1 = Person.objects.create(tmdb_id=9101, name='A1')
+        a2 = Person.objects.create(tmdb_id=9102, name='A2')
+        both = Movie.objects.create(tmdb_id=7101, title='Both', release_year=2010)
+        just_a1 = Movie.objects.create(tmdb_id=7102, title='Just A1', release_year=2011)
+        for m in (both, just_a1):
+            Credit.objects.create(movie=m, person=a1, order=0)
+        Credit.objects.create(movie=both, person=a2, order=1)
+        self._rate(session, both, '4.5', 'https://boxd.it/7101')
+        self._rate(session, just_a1, '4.0', 'https://boxd.it/7102')
+
+        data = build_insight_films(session, 'actor_pairing', a1.tmdb_id, a2.tmdb_id)
+        self.assertEqual([f['title'] for f in data['films']], ['Both'])
+
+    def test_genre_combo_requires_both_genres_on_the_film(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        both = _make_movie(7201, 'Both Genres', 2010, 100, 'Sci-Fi')
+        comedy, _ = Genre.objects.get_or_create(tmdb_id=hash('Comedy') % 10_000, defaults={'name': 'Comedy'})
+        both.genres.add(comedy)
+        one = _make_movie(7202, 'One Genre', 2011, 100, 'Sci-Fi')
+        self._rate(session, both, '4.5', 'https://boxd.it/7201')
+        self._rate(session, one, '4.0', 'https://boxd.it/7202')
+
+        data = build_insight_films(session, 'genre_combo', 'Sci-Fi', 'Comedy')
+        self.assertEqual([f['title'] for f in data['films']], ['Both Genres'])
+
+    def test_decade_covers_the_ten_years_from_the_label(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        in_1990 = _make_movie(7301, 'Edge Low', 1990, 100, 'Drama')
+        in_1999 = _make_movie(7302, 'Edge High', 1999, 100, 'Drama')
+        in_2000 = _make_movie(7303, 'Next Decade', 2000, 100, 'Drama')
+        for m, r in [(in_1990, '5.0'), (in_1999, '4.0'), (in_2000, '5.0')]:
+            self._rate(session, m, r, f'https://boxd.it/{m.tmdb_id}')
+
+        data = build_insight_films(session, 'decade', '1990s', '')
+        self.assertEqual([f['title'] for f in data['films']], ['Edge Low', 'Edge High'])
+
+    def test_runtime_bucket_covers_its_own_minute_range(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        short = _make_movie(7501, 'Short', 2010, 80, 'Drama')
+        edge_low = _make_movie(7502, 'Edge Low', 2011, 90, 'Drama')
+        edge_high = _make_movie(7503, 'Edge High', 2012, 150, 'Drama')
+        epic = _make_movie(7504, 'Epic', 2013, 180, 'Drama')
+        for m, r in [(short, '3.0'), (edge_low, '5.0'), (edge_high, '4.0'), (epic, '5.0')]:
+            self._rate(session, m, r, f'https://boxd.it/{m.tmdb_id}')
+
+        mid = build_insight_films(session, 'runtime', '90-150 min', '')
+        self.assertEqual([f['title'] for f in mid['films']], ['Edge Low', 'Edge High'])
+        under = build_insight_films(session, 'runtime', 'Under 90 min', '')
+        self.assertEqual([f['title'] for f in under['films']], ['Short'])
+        over = build_insight_films(session, 'runtime', 'Over 150 min', '')
+        self.assertEqual([f['title'] for f in over['films']], ['Epic'])
+
+    def test_unknown_runtime_bucket_raises_value_error(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        with self.assertRaises(ValueError):
+            build_insight_films(session, 'runtime', '3 hours', '')
+
+    def test_only_rated_films_count_not_merely_watched(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        rated = _make_movie(7401, 'Rated', 1995, 100, 'Drama')
+        watched_only = _make_movie(7402, 'Watched Only', 1996, 100, 'Drama')
+        self._rate(session, rated, '4.0', 'https://boxd.it/7401')
+        WatchedEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/7402', title='Watched Only',
+            year=1996, movie=watched_only,
+        )
+
+        data = build_insight_films(session, 'decade', '1990s', '')
+        self.assertEqual([f['title'] for f in data['films']], ['Rated'])
+
+    def test_no_matches_returns_an_empty_list(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        data = build_insight_films(session, 'decade', '1970s', '')
+        self.assertEqual(data['films'], [])
+
+    def test_unknown_kind_raises_value_error(self):
+        from stats.services.insight_films import build_insight_films
+
+        session = ImportSession.objects.create(display_name='Alex')
+        with self.assertRaises(ValueError):
+            build_insight_films(session, 'nonsense', '1', '2')
+
+
+class InsightDrillKeysTests(TestCase):
+    """Every clickable insight tile has to hand the template a `drill` dict the
+    JS turns into data-* attributes; _featured_card passes it straight through."""
+
+    def _session_with_pairing(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        actor = Person.objects.create(tmdb_id=9500, name='Star')
+        for i, r in enumerate([Decimal('5.0'), Decimal('5.0'), Decimal('4.5')]):
+            movie = _make_movie(9600 + i, f'Collab {i}', 2000 + i, 100, 'Drama', 'Duo Director')
+            Credit.objects.create(movie=movie, person=actor, order=0)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/c{i}', title=movie.title,
+                year=movie.release_year, rating=r, movie=movie,
+            )
+        for i in range(10):
+            movie = _make_movie(9700 + i, f'Filler {i}', 2010, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/f{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        return session
+
+    def test_pairing_insight_carries_a_pairing_drill_with_both_person_ids(self):
+        from stats.services.dashboard import _favorite_pairing_insight
+
+        session = self._session_with_pairing()
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        drill = _favorite_pairing_insight(rated, avg_rating)[0]['drill']
+        self.assertEqual(drill['kind'], 'pairing')
+        director = Person.objects.get(name='Duo Director')
+        self.assertEqual(drill['p1'], director.tmdb_id)
+        self.assertEqual(drill['p2'], 9500)
+
+    def test_featured_card_passes_the_drill_dict_through(self):
+        from stats.services.dashboard import _favorite_pairing_insight, _featured_card
+
+        session = self._session_with_pairing()
+        rated = RatingEntry.objects.filter(import_session=session)
+        avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
+        insight = _favorite_pairing_insight(rated, avg_rating)[0]
+        card = _featured_card(insight)
+        self.assertEqual(card['drill'], insight['drill'])
+
+    def test_a_non_clickable_insight_has_a_none_drill(self):
+        from stats.services.dashboard import _featured_card
+
+        card = _featured_card({'text': 'Something — with a stat', 'label': 'Hidden gem'})
+        self.assertIsNone(card['drill'])
+
+    def test_rating_insights_decade_and_runtime_slots_carry_a_bucket_drill(self):
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
+
+        axis_deltas = {'decade': {'1990s': 0.6}, 'runtime': {'Over 150 min': 0.6}}
+        insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
+        by_axis = {i['axis']: i for i in insights}
+        self.assertEqual(by_axis['runtime']['drill'], {'kind': 'runtime', 'p1': 'Over 150 min', 'p2': ''})
+        self.assertEqual(by_axis['decade']['drill'], {'kind': 'decade', 'p1': '1990s', 'p2': ''})

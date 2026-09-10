@@ -1007,58 +1007,180 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   text-align: center;
   color: var(--muted);
 }
-/* "Your rating insights" -- a single combined grid of up to 12 tiles (see
-   _dashboard_insights in dashboard.py: 4 director/actor preference tiles, a
-   favorite duo + hidden gem + runtime + decade, then 4 rewatch/heart behavioral
-   tiles). Built on the same .favs/.fav-card system every other stat grid on this
-   site uses -- .fav-card's own image/.fav-placeholder/caption-<p> styling is
-   reused as-is, not reinvented -- so the only additions below are the handful of
-   things genuinely specific to this grid: its 4-column sizing, an eyebrow title
-   above each card (new -- see its own comment), and reapplying Favorite
-   Directors/Actors' existing narrower-headshot treatment per-card instead of
-   per-container. */
-.favs--insight { gap: 0.6rem; }
-.favs--insight .fav-card {
-  flex: 0 0 calc((100% - 3 * 0.6rem) / 4);
-  max-width: calc((100% - 3 * 0.6rem) / 4);
+/* "Your rating insights" -- two zones (Favorite Directors/Actors already cover
+   the director/actor signal on their own cards, so this doesn't repeat it).
+   Zone 1 (.ib-grid): up to 8 borderless entries, each a poster or two-headshot
+   portrait over a centered label / value / stat stack -- a grid of entries,
+   not discrete cards. Zone 2 (.ib-strip): a 4-up "by the numbers" bar. Sizes
+   in px, deliberately not scaled down at the mobile breakpoint. */
+.ib-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+@media (max-width: 700px) { .ib-grid { grid-template-columns: repeat(2, 1fr); } }
+/* Portrait 2:3 band -- a poster fills it edge to edge with no crop and no
+   pillarbox; duo headshots / the placeholder sit centered in the same shape.
+   max-height caps how big it gets on a wide screen (below that it's just the
+   column width), and margin:auto re-centres it once the cap makes it narrower
+   than its column. */
+.ib-media {
+  aspect-ratio: 2 / 3;
+  max-height: 250px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-/* 4 columns is desktop-only math -- unwound to 2 at the same 700px breakpoint
-   every other responsive grid on this site uses (.favs--eight/.favs--six
-   included), rather than holding at 4 the way .favs--eight holds at 4 down to
-   phone width -- .favs--eight's mobile floor IS 4, so this grid's own floor
-   needs to sit a step below that, not repeat it. */
-@media (max-width: 700px) {
-  .favs--insight .fav-card {
-    flex: 0 0 calc((100% - 1 * 0.6rem) / 2);
-    max-width: calc((100% - 1 * 0.6rem) / 2);
-  }
+.ib-poster { width: 100%; height: 100%; object-fit: cover; }
+/* No band behind the duo headshots -- the circles sit straight on the card. */
+.ib-media--duo { background: transparent; }
+.ib-media--duo img, .ib-media--duo span {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: 50% 30%;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  flex-shrink: 0;
 }
-/* A small eyebrow title above the image -- genuinely new, no other .fav-card
-   variant on the site has one, because this is the first grid whose cards mix
-   several distinct KINDS of fact (a person, a film, an aggregate stat) in the
-   same row rather than one repeated kind -- the title is what tells them apart
-   before the image even loads. */
-.fav-card-label {
-  margin: 0 0 0.5rem;
-  font-size: 0.75rem;
+/* Overlapping and vertically staggered -- reads as two people, not a stamped
+   pair. The ring on the second circle, in the card colour, punches a gap
+   where they overlap. */
+.ib-media--duo :first-child { transform: translateY(-8px); margin-right: -22px; border: 3px solid transparent; }
+.ib-media--duo :last-child { transform: translateY(8px); border: 3px solid var(--surface); }
+.ib-media--ph { font-size: 44px; color: var(--muted); }
+/* Only the duo / genre-combo / decade tiles carry a drill-down modal (see
+   dashboard.html's JS) -- give those an accent lift on hover/focus, same idiom
+   as .fav-card:has(.person-trigger), and leave every other entry with no click
+   cue. The cue rides on the poster / headshot circles rather than the .ib-media
+   box itself, so the borderless duo tiles don't gain a stray rectangle. */
+.ib-tile--clickable { cursor: pointer; }
+.ib-tile--clickable:focus-visible { outline: none; }
+.ib-tile--clickable .ib-media { transition: transform 0.15s ease; }
+.ib-tile--clickable .ib-poster,
+.ib-tile--clickable .ib-media--ph {
+  border: 2px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.ib-tile--clickable .ib-media--duo :first-child,
+.ib-tile--clickable .ib-media--duo :last-child {
+  transition: border-color 0.15s ease;
+}
+.ib-tile--clickable:hover .ib-media,
+.ib-tile--clickable:focus-visible .ib-media { transform: translateY(-2px); }
+.ib-tile--clickable:hover .ib-poster,
+.ib-tile--clickable:focus-visible .ib-poster,
+.ib-tile--clickable:hover .ib-media--ph,
+.ib-tile--clickable:focus-visible .ib-media--ph { border-color: var(--accent); }
+.ib-tile--clickable:hover .ib-media--duo :first-child,
+.ib-tile--clickable:focus-visible .ib-media--duo :first-child,
+.ib-tile--clickable:hover .ib-media--duo :last-child,
+.ib-tile--clickable:focus-visible .ib-media--duo :last-child { border-color: var(--accent); }
+/* Footer -- centered under the image: eyebrow label, the value (names / genre
+   combo / decade / film title), then the stat line (counts, star ratings). */
+.ib-foot { padding: 9px 0 0; text-align: center; }
+.ib-eyebrow {
+  margin: 0;
+  font-size: 10px;
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-/* Director/actor tiles only -- the exact same narrower, centered, circular
-   headshot treatment Favorite Directors/Actors already use (.favs--headshots,
-   see its own comment for why aspect-ratio/border-radius/object-position need
-   to move together), just applied per-card here instead of per-container,
-   since this grid mixes headshots with film posters and icon placeholders in
-   the same row rather than being all-headshots the way that grid is. */
-.fav-card--headshot img, .fav-card--headshot .fav-placeholder {
-  width: 75%;
-  aspect-ratio: 1 / 1;
-  border-radius: 50%;
-  margin: 0 auto;
+/* The label sits on one line (all of them fit, even "Least favorite runtime"
+   on a 2-col column); the value gets 2 lines reserved, since it can wrap
+   ("Matt Reeves + Andy Serkis"), and that reservation keeps the stat line
+   below aligned entry to entry regardless. */
+.ib-foot .ib-eyebrow { line-height: 1.3; min-height: 1.3em; }
+.ib-value {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  min-height: 2.6em;
+  overflow: hidden;
 }
-.fav-card--headshot img { object-position: 50% 30%; }
+.ib-meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Zone 2 -- a "by the numbers" bar under a single top rule. */
+.ib-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px 10px;
+  margin-top: 12px;
+  padding: 20px 0 2px;
+  border-top: 1px solid var(--border);
+  align-items: start;
+}
+@media (max-width: 700px) { .ib-strip { grid-template-columns: repeat(2, 1fr); } }
+.ib-stat { text-align: center; }
+.ib-stat .ib-eyebrow { margin: 0 0 8px; }
+.ib-val {
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ib-val--plain { color: var(--text); }
+.ib-val--down { color: var(--danger); }
+.ib-trend { width: 26px; height: 26px; }
+/* Like percentage -- a plain CSS conic-gradient ring, filled clockwise from 12
+   o'clock to --ib-gauge-pct percent. The hole is a smaller circle in the
+   card's own background, punching the ring out of a solid wedge. */
+.ib-gauge {
+  position: relative;
+  /* ~matches the eyebrow + number + sub-line stack of the other cells, so the
+     bar's rows come out level on the 2-up mobile layout too. */
+  width: 66px;
+  height: 66px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--ib-gauge-pct) * 1%), var(--border) 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ib-gauge-hole { position: absolute; inset: 8px; border-radius: 50%; background: var(--surface); }
+.ib-gauge-label { position: relative; font-size: 15px; font-weight: 700; color: var(--text); }
+/* Supporting line under each number -- flag cluster for the two counts, a
+   muted phrase for the deltas -- so the cells carry some texture instead of a
+   lone digit. min-height so a flag row and a text row come out the same
+   height. */
+.ib-stat-sub {
+  margin: 8px 0 0;
+  min-height: 20px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ib-stat-sub .flag { font-size: 14px; margin-right: 3px; vertical-align: -1px; }
+.ib-stat-sub .more { margin-left: 2px; }
+/* Desktop only -- thin rules between the cells so the strip reads as one bar
+   rather than four detached items (on mobile it's a plain 2-up grid, where
+   dividers get awkward across wrapped rows). Symmetric cell padding so the
+   centered content sits at the true middle of each quarter. */
+@media (min-width: 701px) {
+  .ib-strip { gap: 0; }
+  .ib-strip .ib-stat { border-left: 1px solid var(--border); padding: 0 16px; }
+  .ib-strip .ib-stat:first-child { border-left: 0; }
+}
 
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }

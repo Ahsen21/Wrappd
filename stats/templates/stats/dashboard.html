@@ -124,25 +124,64 @@
   <h2 id="movie-stats"><span class="section-heading-tick">Movie Stats</span></h2>
   <p class="muted">What you watch and how you rate it.</p>
 
-  <!-- {% if insights %}
+  {% if insights.featured or insights.stats %}
     <div class="card">
       <h3>Your rating insights</h3>
       <p class="muted">What moves your rating, your standout picks, and how you actually watch.</p>
-      <div class="favs favs--insight">
-        {% for insight in insights %}
-          <div class="fav-card{% if insight.axis == 'director' or insight.axis == 'actor' %} fav-card--headshot{% endif %}">
-            <p class="fav-card-label">{{ insight.label }}</p>
-            {% if insight.image %}
-              <img src="{{ insight.image }}" alt="">
-            {% else %}
-              <div class="fav-placeholder">{{ insight.icon }}</div>
-            {% endif %}
-            <p class="muted">{{ insight.text }}</p>
-          </div>
-        {% endfor %}
-      </div>
+      {% if insights.featured %}
+        <div class="ib-grid">
+          {% for card in insights.featured %}
+            <div class="ib-tile{% if card.drill %} ib-tile--clickable{% endif %}"{% if card.drill %} role="button" tabindex="0" data-drill-kind="{{ card.drill.kind }}" data-drill-p1="{{ card.drill.p1 }}" data-drill-p2="{{ card.drill.p2 }}" data-drill-title="{{ card.label }} · {{ card.value }}"{% endif %}>
+              {% if card.duo %}
+                <div class="ib-media ib-media--duo">
+                  {% if card.duo.a.image %}<img src="{{ card.duo.a.image }}" alt="{{ card.duo.a.name }}" title="{{ card.duo.a.name }}">{% else %}<span title="{{ card.duo.a.name }}">👤</span>{% endif %}
+                  {% if card.duo.b.image %}<img src="{{ card.duo.b.image }}" alt="{{ card.duo.b.name }}" title="{{ card.duo.b.name }}">{% else %}<span title="{{ card.duo.b.name }}">👤</span>{% endif %}
+                </div>
+              {% elif card.image %}
+                <div class="ib-media">
+                  <img class="ib-poster" src="{{ card.image }}" alt="{{ card.value }}" title="{{ card.value }}">
+                </div>
+              {% else %}
+                <div class="ib-media ib-media--ph">🎬</div>
+              {% endif %}
+              <div class="ib-foot">
+                <p class="ib-eyebrow">{{ card.label }}</p>
+                <p class="ib-value">{{ card.value }}</p>
+                <p class="ib-meta">{{ card.stat }}</p>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if insights.stats %}
+        <div class="ib-strip">
+          {% for card in insights.stats %}
+            <div class="ib-stat">
+              <p class="ib-eyebrow">{{ card.label }}</p>
+              {% if card.pct is not None %}
+                <div class="ib-gauge" style="--ib-gauge-pct: {{ card.pct }};">
+                  <span class="ib-gauge-hole"></span>
+                  <span class="ib-gauge-label">{{ card.value }}</span>
+                </div>
+              {% elif card.flags %}
+                <div class="ib-val ib-val--plain">{{ card.value }}</div>
+                <p class="ib-stat-sub">{% for flag in card.flags %}<span class="flag">{{ flag }}</span>{% endfor %}{% if card.flags_more %}<span class="more">{{ card.flags_more }}</span>{% endif %}</p>
+              {% else %}
+                <div class="ib-val ib-val--{{ card.direction }}">
+                  {% if card.direction == 'up' %}
+                    <svg class="ib-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6 -6l4 4l8 -8"/><path d="M14 7l7 0l0 7"/></svg>
+                  {% else %}
+                    <svg class="ib-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6 6l4 -4l8 8"/><path d="M14 17l7 0l0 -7"/></svg>
+                  {% endif %}{{ card.value }}
+                </div>
+                {% if card.sub %}<p class="ib-stat-sub">{{ card.sub }}</p>{% endif %}
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
     </div>
-  {% endif %} -->
+  {% endif %}
 
   <div class="card jump-target" id="ratings-genres">
     <h3>Rating distribution</h3>
@@ -550,6 +589,7 @@
       // script decoupled from the URL's literal path shape rather than
       // hardcoding "/dashboard/.../person/<id>/" directly.
       const urlTemplate = "{% url 'stats:person_filmography' session_id=import_session.id tmdb_id=999999999 %}";
+      const insightUrl = "{% url 'stats:insight_films' session_id=import_session.id %}";
       let lastTrigger = null;
 
       function escapeHtml(str) {
@@ -571,7 +611,7 @@
 
       function renderFilms(data) {
         if (!data.films.length) {
-          bodyEl.innerHTML = '<p class="modal-empty">No watched films from this session yet.</p>';
+          bodyEl.innerHTML = '<p class="modal-empty">No matching films from this session yet.</p>';
           return;
         }
         const cards = data.films.map(function (film) {
@@ -606,6 +646,37 @@
             .catch(function () {
               bodyEl.innerHTML = '<p class="modal-error">Couldn’t load this person’s films. Try again.</p>';
             });
+        });
+      });
+
+      // The duo / genre-combo / decade insight tiles are role="button" divs (no
+      // inner <button>), so wire click plus Enter/Space here. Same modal, same
+      // renderFilms -- only the endpoint differs (insight_films instead of
+      // person_filmography), keyed off the tile's data-drill-* attributes.
+      function openInsightModal(tile) {
+        lastTrigger = tile;
+        titleEl.textContent = tile.dataset.drillTitle || '';
+        bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
+        openModal();
+        const url = insightUrl
+          + '?kind=' + encodeURIComponent(tile.dataset.drillKind)
+          + '&p1=' + encodeURIComponent(tile.dataset.drillP1)
+          + '&p2=' + encodeURIComponent(tile.dataset.drillP2);
+        fetch(url)
+          .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
+          .then(renderFilms)
+          .catch(function () {
+            bodyEl.innerHTML = '<p class="modal-error">Couldn’t load these films. Try again.</p>';
+          });
+      }
+
+      document.querySelectorAll('.ib-tile--clickable').forEach(function (tile) {
+        tile.addEventListener('click', function () { openInsightModal(tile); });
+        tile.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openInsightModal(tile);
+          }
         });
       });
 
