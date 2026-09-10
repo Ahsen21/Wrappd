@@ -1205,12 +1205,11 @@ def _raw_axis_deltas(rated, avg_rating) -> dict:
     return {'decade': decade_deltas, 'runtime': runtime_deltas}
 
 
-# Shared by every _rating_insights slot (director/actor/decade/runtime) -- deliber-
-# ately ONE plain format now, not a per-axis/per-direction sentence, since the
-# combined insight grid's own tile label (see _INSIGHT_LABELS) already says what
-# the tile is and which direction it goes ("Favorite director", "Least favorite
-# runtime", ...), so the body text just needs the value and the number, tight
-# enough to read in a grid tile rather than a full-width row.
+# Shared by every _rating_insights slot -- deliberately ONE plain format, not a
+# per-axis sentence, since the combined insight grid's own tile label (see
+# _INSIGHT_LABELS) already says what the tile is ("Favorite runtime", "Favorite
+# decade"), so the body text just needs the value and the number, tight enough
+# to read in a grid tile rather than a full-width row.
 _DELTA_INSIGHT_TEXT = '{value} — {delta:+.1f}★ vs. avg'
 
 # Only 2 of the 7 axes _all_axis_deltas/_raw_axis_deltas compute get a slot in the
@@ -1229,22 +1228,17 @@ _DELTA_INSIGHT_TEXT = '{value} — {delta:+.1f}★ vs. avg'
 # the next.
 _AXIS_ICONS = {'decade': '📅', 'runtime': '⏱️'}
 
-# Small header title shown above each grid tile in _rating_insights --
-# decade/runtime get a direction-aware title even though _AXIS_INSIGHT_SLOTS
-# only ever asks for whichever single direction is stronger on those axes, so
-# the title still says which way it goes.
-_INSIGHT_LABELS = {
-    'decade': {'positive': 'Favorite decade', 'negative': 'Least favorite decade'},
-    'runtime': {'positive': 'Favorite runtime', 'negative': 'Least favorite runtime'},
-}
+# Small header title shown above each grid tile in _rating_insights. Only the
+# favorable direction is ever shown for these axes (see _AXIS_INSIGHT_SLOTS), so
+# there's a single label each -- no "Least favorite ..." variant.
+_INSIGHT_LABELS = {'decade': 'Favorite decade', 'runtime': 'Favorite runtime'}
 
 # The combined insight grid's second row (the other two -- duo, hidden gem --
 # come from _favorite_pairing_insight/_hidden_gem_insight, computed separately
-# -- see _dashboard_insights). 'either' means "whichever of positive/negative
-# actually clears the bar, picking the stronger one if both do" -- decade/
-# runtime only get one grid slot each, so there's no separate slot to give the
-# other direction.
-_AXIS_INSIGHT_SLOTS = [('runtime', 'either'), ('decade', 'either')]
+# -- see _dashboard_insights). 'positive' only: this grid celebrates what a
+# person likes, so a runtime/decade they rate BELOW their own average never
+# gets a tile even when that negative delta is the stronger one.
+_AXIS_INSIGHT_SLOTS = [('runtime', 'positive'), ('decade', 'positive')]
 
 
 def _strongest_axis_delta(deltas: dict, direction: str):
@@ -1389,9 +1383,10 @@ def _rating_insights(axis_deltas: dict, slots: list, decade_best_films: dict = N
     MIN_COUNT_FOR_AVERAGE rated films -- no baseline to compute a delta against).
 
     `slots` is a list of (axis, direction) pairs -- currently always
-    _AXIS_INSIGHT_SLOTS (decade/runtime, one direction each; see that constant's
-    own comment). Each slot's axis has to clear RECOMMENDATION_REASON_THRESHOLD
-    in the requested direction to produce a tile at all (same "don't fabricate a
+    _AXIS_INSIGHT_SLOTS (runtime then decade, 'positive' only; see that
+    constant's own comment for why the unfavorable direction is never shown).
+    Each slot's axis has to clear RECOMMENDATION_REASON_THRESHOLD in the
+    requested direction to produce a tile at all (same "don't fabricate a
     neutral insight" principle as the rest of this file) -- a shorter grid
     rather than a fabricated filler. Unlike an earlier version of this function,
     the result is NOT sorted by |delta| -- slot order is fixed by category
@@ -1411,18 +1406,17 @@ def _rating_insights(axis_deltas: dict, slots: list, decade_best_films: dict = N
         if best is None:
             continue
         value, delta = best
-        actual_direction = 'positive' if delta > 0 else 'negative'
         film = best_films_by_axis.get(axis, {}).get(value)
-        resolved.append((axis, value, delta, actual_direction, film))
+        resolved.append((axis, value, delta, film))
 
-    movie_ids = {r[4]['movie_id'] for r in resolved if r[4] and r[4].get('movie_id')}
+    movie_ids = {r[3]['movie_id'] for r in resolved if r[3] and r[3].get('movie_id')}
     movies_by_id = Movie.objects.in_bulk(movie_ids)
 
     insights = []
-    for axis, value, delta, actual_direction, film in resolved:
+    for axis, value, delta, film in resolved:
         insight = {
             'text': _DELTA_INSIGHT_TEXT.format(value=value, delta=delta),
-            'label': _INSIGHT_LABELS[axis][actual_direction],
+            'label': _INSIGHT_LABELS[axis],
             'axis': axis,
             'delta': delta,
             'icon': _AXIS_ICONS[axis],
@@ -1513,7 +1507,7 @@ def _favorite_pairing_insight(rated, avg_rating) -> list:
     director_photo, actor_photo, director_id, actor_id = pair_meta[best_pair]
     return [{
         'text': f'{director_name} + {actor_name} — {len(ratings)} films, {avg:.1f}★',
-        'label': 'Actor/director duo',
+        'label': 'Favorite actor/director duo',
         'axis': 'pairing',
         'icon': '🤝',
         'image': None,
@@ -1591,7 +1585,7 @@ def _favorite_actor_duo_insight(rated, avg_rating) -> list:
     photo_a, photo_b, id_a, id_b = pair_meta[best_pair]
     return [{
         'text': f'{actor_a} + {actor_b} — {len(ratings)} films, {avg:.1f}★',
-        'label': 'Actor duo',
+        'label': 'Favorite actor duo',
         'axis': 'actor_pairing',
         'icon': '🎬',
         'image': None,
@@ -1684,7 +1678,7 @@ def _favorite_genre_combo_insight(rated, avg_rating) -> list:
     genre_a, genre_b = best_pair
     return [{
         'text': f'{genre_a} + {genre_b} — {len(ratings)} films, {avg:.1f}★',
-        'label': 'Genre combo',
+        'label': 'Favorite genre combo',
         'axis': 'genre_combo',
         'icon': '🎨',
         'image': image or None,
@@ -1868,7 +1862,7 @@ def _rewatch_drift_insights(diary) -> list:
     posters = Movie.objects.in_bulk(d['movie_id'] for d, _ in selected if d['movie_id'] is not None)
     # {verb: grid label} -- "climbed" is the increase tile, "dropped" the decrease
     # tile, matching _rewatch_drift_insights' own selected-tuple verbs above.
-    labels = {'climbed': 'Rewatch increase', 'dropped': 'Rewatch decrease'}
+    labels = {'climbed': 'Biggest rewatch increase', 'dropped': 'Biggest rewatch decrease'}
     insights = []
     for d, verb in selected:
         movie = posters.get(d['movie_id'])
@@ -1883,29 +1877,34 @@ def _rewatch_drift_insights(diary) -> list:
     return insights
 
 
-def _rewatch_vs_first_watch_insight(diary) -> list:
-    """0 or 1 insight comparing average rating on first-time watches vs. rewatches
-    -- e.g. "+0.3★ vs. first watches". Requires MIN_COUNT_FOR_AVERAGE logged-
-    rating diary entries on both sides, and only surfaces if the gap itself
-    clears RECOMMENDATION_REASON_THRESHOLD.
+def _rewatch_shift_insight(diary) -> list:
+    """0 or 1 insight: whether this person rates films higher or lower once
+    they're rewatching them -- their average rating on rewatch log entries
+    minus their average on first-watch entries, e.g. "0.3★ vs. first watch"
+    with an up arrow.
 
-    Renders in the insight grid's compact "by the numbers" strip (see
-    _dashboard_insights): the signed delta as the value, colored by direction
-    ('direction' -> --accent for a rewatch scoring higher, --danger for a
-    drop). The +/- sign and the color both carry the direction, so no arrow
-    glyph is needed in a cell this small."""
-    first_watch = diary.filter(rewatch=False, rating__isnull=False).aggregate(avg=Avg('rating'), count=Count('id'))
-    rewatch = diary.filter(rewatch=True, rating__isnull=False).aggregate(avg=Avg('rating'), count=Count('id'))
-    if first_watch['count'] < MIN_COUNT_FOR_AVERAGE or rewatch['count'] < MIN_COUNT_FOR_AVERAGE:
+    A pool comparison (every rated rewatch entry against every rated first-watch
+    entry), not a per-film paired difference -- the plain-English claim is "your
+    rewatch ratings run higher/lower than your first-watch ratings", which
+    doesn't need a film to have been logged on both sides. Needs
+    MIN_COUNT_FOR_AVERAGE rated entries in each pool.
+
+    A gap under RECOMMENDATION_REASON_THRESHOLD either way isn't a real lean, so
+    it collapses to a flat "0.0★ / barely changes" with no arrow rather than a
+    misleading tiny number. Renders in the number bar (see _stat_card /
+    dashboard.html): 'direction' drives the trending arrow and the accent
+    colour, and is absent for the flat state."""
+    first = diary.filter(rewatch=False, rating__isnull=False).aggregate(avg=Avg('rating'), n=Count('id'))
+    rewatched = diary.filter(rewatch=True, rating__isnull=False).aggregate(avg=Avg('rating'), n=Count('id'))
+    if (first['n'] or 0) < MIN_COUNT_FOR_AVERAGE or (rewatched['n'] or 0) < MIN_COUNT_FOR_AVERAGE:
         return []
-    delta = float(rewatch['avg']) - float(first_watch['avg'])
+    delta = float(rewatched['avg']) - float(first['avg'])
     if abs(delta) < RECOMMENDATION_REASON_THRESHOLD:
-        return []
+        return [{'label': 'Rewatch shift', 'value': '0.0★', 'note': 'barely changes'}]
     return [{
-        'label': 'Rewatch score change',
-        # No +/- sign -- the trending arrow and the colour carry the direction.
+        'label': 'Rewatch shift',
         'value': f'{abs(delta):.1f}★',
-        'note': 'vs. first watches',
+        'note': 'vs. first watch',
         'direction': 'up' if delta > 0 else 'down',
     }]
 
@@ -1936,7 +1935,7 @@ def _like_percentage_insight(likes_count: int, films_watched_total: int) -> list
 
 _STAT_SHORT_LABELS = {
     'Countries explored': 'Countries', 'Languages explored': 'Languages',
-    'Like percentage': 'Like %', 'Rewatch score change': 'Rewatch Δ',
+    'Like percentage': 'Like %',
 }
 
 
@@ -1968,15 +1967,16 @@ def _featured_card(insight: dict) -> dict:
 
 def _stat_card(stat: dict) -> dict:
     """One cell in the insight section's zone 2 number bar -- a short label
-    (see _STAT_SHORT_LABELS) and the figure itself, rendered one of three
-    ways: the two "explored" counts as a plain number over a flag cluster, the
-    rewatch delta as a coloured number with a trending arrow, and the like
-    percentage as a circular gauge (`pct`)."""
+    (see _STAT_SHORT_LABELS) and the figure itself, rendered one of four ways:
+    the two "explored" counts as a plain number over a flag cluster, the like
+    percentage as a circular gauge (`pct`), the rewatch shift as an accent
+    figure with a trending arrow (`direction`), and its flat "barely changes"
+    state as a muted figure -- all over a short note (`sub`)."""
     card = {
         'label': _STAT_SHORT_LABELS.get(stat['label'], stat['label']),
         'value': stat['value'],
-        'direction': stat.get('direction'),
         'pct': stat.get('pct'),
+        'direction': stat.get('direction'),
     }
     if 'flags' in stat:
         more = int(stat['value']) - len(stat['flags'])
@@ -2002,9 +2002,8 @@ def _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, f
         each the film whose rating moved most.
     'stats' -- up to 4 cells in a "by the numbers" bar, for the facts that are
         just a figure: countries explored (_countries_explored_insight),
-        languages explored (_languages_explored_insight), rewatch vs.
-        first-watch score change (_rewatch_vs_first_watch_insight), and like
-        percentage (_like_percentage_insight).
+        languages explored (_languages_explored_insight), rewatch shift
+        (_rewatch_shift_insight), and like percentage (_like_percentage_insight).
 
     Each zone is a fixed order -- not sorted by magnitude -- so the same
     insight always lands in the same spot from one visit to the next; see each
@@ -2026,7 +2025,7 @@ def _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, f
     stats = (
         _countries_explored_insight(watched_movies)
         + _languages_explored_insight(watched_movies)
-        + _rewatch_vs_first_watch_insight(diary)
+        + _rewatch_shift_insight(diary)
         + _like_percentage_insight(likes_count, films_watched_total)
     )
     return {

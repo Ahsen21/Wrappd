@@ -164,16 +164,19 @@
                   <span class="ib-gauge-label">{{ card.value }}</span>
                 </div>
               {% elif card.flags %}
-                <div class="ib-val ib-val--plain">{{ card.value }}</div>
+                <div class="ib-val">{{ card.value }}</div>
                 <p class="ib-stat-sub">{% for flag in card.flags %}<span class="flag">{{ flag }}</span>{% endfor %}{% if card.flags_more %}<span class="more">{{ card.flags_more }}</span>{% endif %}</p>
-              {% else %}
-                <div class="ib-val ib-val--{{ card.direction }}">
+              {% elif card.direction %}
+                <div class="ib-val ib-val--shift">
                   {% if card.direction == 'up' %}
                     <svg class="ib-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6 -6l4 4l8 -8"/><path d="M14 7l7 0l0 7"/></svg>
                   {% else %}
                     <svg class="ib-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6 6l4 -4l8 8"/><path d="M14 17l7 0l0 -7"/></svg>
                   {% endif %}{{ card.value }}
                 </div>
+                {% if card.sub %}<p class="ib-stat-sub">{{ card.sub }}</p>{% endif %}
+              {% else %}
+                <div class="ib-val ib-val--flat">{{ card.value }}</div>
                 {% if card.sub %}<p class="ib-stat-sub">{{ card.sub }}</p>{% endif %}
               {% endif %}
             </div>

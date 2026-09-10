@@ -5,11 +5,12 @@ runtime bucket. Same {films: [{title, year, poster_url, rating}]} shape as
 build_person_filmography, so dashboard.html's one modal renders both.
 
 Scoped to what one import session has RATED, not merely watched: the tiles these
-back up -- Actor/director duo, Actor duo, Genre combo, the decade tile and the
-runtime tile -- are all computed from ratings.csv (see _favorite_pairing_insight
-etc. in dashboard.py), so their "N films, X.X★" numbers only count rated films
-and the modal has to match. Cameo appearances are excluded the same way every
-other actor stat on the dashboard excludes them (_cameo_credit_ids)."""
+back up -- Favorite actor/director duo, Favorite actor duo, Favorite genre
+combo, Favorite decade and Favorite runtime -- are all computed from ratings.csv
+(see _favorite_pairing_insight etc. in dashboard.py), so their "N films, X.X★"
+numbers only count rated films and the modal has to match. Cameo appearances are
+excluded the same way every other actor stat on the dashboard excludes them
+(_cameo_credit_ids)."""
 
 from django.db.models import Max
 
