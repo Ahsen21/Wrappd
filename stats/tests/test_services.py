@@ -2232,22 +2232,25 @@ class RatingInsightsTests(TestCase):
     two axes this grid shows now (director/actor already have their own Favorite
     Directors/Actors cards; see _dashboard_insights)."""
 
-    def test_picks_strongest_positive_and_negative_per_axis_above_threshold(self):
+    def test_picks_strongest_positive_per_axis_and_ignores_negatives(self):
         from stats.services.dashboard import (
             RECOMMENDATION_REASON_THRESHOLD, _AXIS_INSIGHT_SLOTS, _rating_insights,
         )
 
         axis_deltas = {
             'decade': {'1990s': 0.6},
+            # A strong dislike of short films AND a weak like of long ones -- the
+            # grid only celebrates the favorable side, so the -0.5 is ignored
+            # outright (not "picked because it's stronger"), and Over 150 min
+            # fails only because 0.02 is under the threshold.
             'runtime': {'Under 90 min': -0.5, 'Over 150 min': 0.02},
         }
         insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
+        labels = [i['label'] for i in insights]
         texts = {i['text'] for i in insights}
+        self.assertEqual(labels, ['Favorite decade'])
         self.assertTrue(any('1990s' in t for t in texts))
-        self.assertTrue(any('Under 90 min' in t for t in texts))
-        # Over 150 min's delta doesn't clear RECOMMENDATION_REASON_THRESHOLD, and
-        # loses to Under 90 min's stronger |delta| under 'either' either way, so
-        # it's silently dropped rather than forcing a filler insight.
+        self.assertFalse(any('Under 90 min' in t for t in texts))
         self.assertLess(0.02, RECOMMENDATION_REASON_THRESHOLD)
         self.assertFalse(any('Over 150 min' in t for t in texts))
 
@@ -2279,24 +2282,31 @@ class RatingInsightsTests(TestCase):
 
         axis_deltas = {
             'decade': {'2020s': 0.9},
-            'runtime': {'Over 150 min': -0.2},
+            'runtime': {'Over 150 min': 0.2},
         }
         insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
         self.assertEqual([i['axis'] for i in insights], ['runtime', 'decade'])
 
-    def test_decade_and_runtime_get_one_slot_for_whichever_direction_is_stronger(self):
+    def test_an_unfavorable_delta_never_produces_a_tile_even_when_stronger(self):
         from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
 
         axis_deltas = {
-            # Both directions clear the threshold -- 'either' should pick the
-            # stronger one (the negative here) and NOT produce two decade slots.
+            # The dislike of 1990s (-0.7) is the numerically stronger signal, but
+            # the grid only ever shows the favorable side -- so the tile is the
+            # 1980s like (+0.2), not a "Least favorite decade".
             'decade': {'1980s': 0.2, '1990s': -0.7},
             'runtime': {},
         }
         insights = _rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS)
         self.assertEqual(len(insights), 1)
-        self.assertEqual(insights[0]['label'], 'Least favorite decade')
-        self.assertIn('1990s', insights[0]['text'])
+        self.assertEqual(insights[0]['label'], 'Favorite decade')
+        self.assertIn('1980s', insights[0]['text'])
+
+    def test_a_purely_unfavorable_axis_produces_no_tile_at_all(self):
+        from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
+
+        axis_deltas = {'decade': {'1990s': -0.7}, 'runtime': {'Under 90 min': -0.9}}
+        self.assertEqual(_rating_insights(axis_deltas, _AXIS_INSIGHT_SLOTS), [])
 
     def test_a_skipped_slot_shortens_the_grid_rather_than_leaving_a_gap(self):
         from stats.services.dashboard import _AXIS_INSIGHT_SLOTS, _rating_insights
@@ -2640,7 +2650,7 @@ class FavoritePairingInsightTests(TestCase):
         self.assertEqual(len(insights), 1)
         self.assertIn('Favorite Director + Star Actor', insights[0]['text'])
         self.assertIn('3 films', insights[0]['text'])
-        self.assertEqual(insights[0]['label'], 'Actor/director duo')
+        self.assertEqual(insights[0]['label'], 'Favorite actor/director duo')
 
     def test_duo_carries_each_persons_own_headshot(self):
         from stats.services.dashboard import _favorite_pairing_insight
@@ -2806,7 +2816,7 @@ class FavoriteActorDuoInsightTests(TestCase):
         self.assertIn('Star One', insights[0]['text'])
         self.assertIn('Star Two', insights[0]['text'])
         self.assertIn('3 films', insights[0]['text'])
-        self.assertEqual(insights[0]['label'], 'Actor duo')
+        self.assertEqual(insights[0]['label'], 'Favorite actor duo')
 
     def test_duo_carries_each_actors_own_headshot(self):
         from stats.services.dashboard import _favorite_actor_duo_insight
@@ -3008,7 +3018,7 @@ class FavoriteGenreComboInsightTests(TestCase):
         self.assertIn('Comedy', insights[0]['text'])
         self.assertIn('Sci-Fi', insights[0]['text'])
         self.assertIn(f'{MIN_COUNT_FOR_GENRE_COMBO} films', insights[0]['text'])
-        self.assertEqual(insights[0]['label'], 'Genre combo')
+        self.assertEqual(insights[0]['label'], 'Favorite genre combo')
 
     def test_representative_poster_is_the_highest_rated_film_in_the_combo(self):
         from stats.services.dashboard import MIN_COUNT_FOR_GENRE_COMBO, _favorite_genre_combo_insight
@@ -3341,7 +3351,7 @@ class FlagEmojiTests(TestCase):
 
 class RatingPatternInsightsTests(TestCase):
     """"How you actually watch" -- behavioral pattern insights (rewatch drift,
-    rewatch vs. first-watch, like percentage), distinct from RatingInsightsTests'
+    rewatch shift, like percentage), distinct from RatingInsightsTests'
     preference-axis deltas above."""
 
     def test_rewatch_drift_resolves_the_films_poster(self):
@@ -3405,10 +3415,10 @@ class RatingPatternInsightsTests(TestCase):
         diary = DiaryEntry.objects.filter(import_session=session)
         insights = _rewatch_drift_insights(diary)
         self.assertTrue(any(
-            'Upgrade Film' in i['text'] and i['label'] == 'Rewatch increase' for i in insights
+            'Upgrade Film' in i['text'] and i['label'] == 'Biggest rewatch increase' for i in insights
         ))
         self.assertTrue(any(
-            'Downgrade Film' in i['text'] and i['label'] == 'Rewatch decrease' for i in insights
+            'Downgrade Film' in i['text'] and i['label'] == 'Biggest rewatch decrease' for i in insights
         ))
 
     def test_rewatch_drift_ignores_small_changes_and_single_watches(self):
@@ -3430,57 +3440,65 @@ class RatingPatternInsightsTests(TestCase):
         diary = DiaryEntry.objects.filter(import_session=session)
         self.assertEqual(_rewatch_drift_insights(diary), [])
 
-    def test_rewatch_vs_first_watch_reports_when_gap_is_meaningful(self):
-        from stats.services.dashboard import _rewatch_vs_first_watch_insight
+    def _diary_pool(self, session, ratings, rewatch):
+        tag = 'rw' if rewatch else 'fw'
+        for i, r in enumerate(ratings):
+            DiaryEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/{tag}{i}', title=f'{tag}{i}',
+                year=2000, watched_date='2020-01-01', rating=Decimal(str(r)), rewatch=rewatch,
+            )
+
+    def test_rewatch_shift_reports_up_when_rewatch_ratings_run_higher(self):
+        from stats.services.dashboard import _rewatch_shift_insight
 
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(3):
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/fw{i}', title=f'First {i}', year=2000,
-                watched_date='2020-01-01', rating=Decimal('3.0'), rewatch=False,
-            )
-        for i in range(3):
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}', title=f'Rewatch {i}', year=2000,
-                watched_date='2021-01-01', rating=Decimal('4.0'), rewatch=True,
-            )
-        diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_vs_first_watch_insight(diary)
+        # first-watch pool avg 3.0, rewatch pool avg 4.0 -> +1.0 -> up.
+        self._diary_pool(session, [3.0, 3.0, 3.0], rewatch=False)
+        self._diary_pool(session, [4.0, 4.0, 4.0], rewatch=True)
+        insights = _rewatch_shift_insight(DiaryEntry.objects.filter(import_session=session))
         self.assertEqual(len(insights), 1)
-        self.assertEqual(insights[0]['label'], 'Rewatch score change')
+        self.assertEqual(insights[0]['label'], 'Rewatch shift')
         self.assertEqual(insights[0]['value'], '1.0★')
+        self.assertEqual(insights[0]['note'], 'vs. first watch')
         self.assertEqual(insights[0]['direction'], 'up')
 
-    def test_rewatch_vs_first_watch_reports_down_direction_for_a_drop(self):
-        from stats.services.dashboard import _rewatch_vs_first_watch_insight
+    def test_rewatch_shift_reports_down_when_rewatch_ratings_run_lower(self):
+        from stats.services.dashboard import _rewatch_shift_insight
 
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(3):
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/fw{i}', title=f'First {i}', year=2000,
-                watched_date='2020-01-01', rating=Decimal('4.0'), rewatch=False,
-            )
-        for i in range(3):
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}', title=f'Rewatch {i}', year=2000,
-                watched_date='2021-01-01', rating=Decimal('3.0'), rewatch=True,
-            )
-        diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_vs_first_watch_insight(diary)
-        self.assertEqual(len(insights), 1)
-        self.assertEqual(insights[0]['value'], '1.0★')
+        self._diary_pool(session, [4.0, 4.0], rewatch=False)
+        self._diary_pool(session, [3.0, 3.0], rewatch=True)
+        insights = _rewatch_shift_insight(DiaryEntry.objects.filter(import_session=session))
         self.assertEqual(insights[0]['direction'], 'down')
+        self.assertEqual(insights[0]['value'], '1.0★')
 
-    def test_rewatch_vs_first_watch_empty_with_too_little_data(self):
-        from stats.services.dashboard import _rewatch_vs_first_watch_insight
+    def test_rewatch_shift_collapses_to_barely_changes_for_a_small_gap(self):
+        from stats.services.dashboard import _rewatch_shift_insight
 
         session = ImportSession.objects.create(display_name='Alex')
-        DiaryEntry.objects.create(
-            import_session=session, letterboxd_uri='https://boxd.it/only', title='Only', year=2000,
-            watched_date='2020-01-01', rating=Decimal('4.0'), rewatch=True,
-        )
-        diary = DiaryEntry.objects.filter(import_session=session)
-        self.assertEqual(_rewatch_vs_first_watch_insight(diary), [])
+        # gap of 0.1★ -- under RECOMMENDATION_REASON_THRESHOLD -> flat state.
+        self._diary_pool(session, [4.0, 4.0, 4.0], rewatch=False)
+        self._diary_pool(session, [4.0, 4.0, 4.3], rewatch=True)
+        insights = _rewatch_shift_insight(DiaryEntry.objects.filter(import_session=session))
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['value'], '0.0★')
+        self.assertEqual(insights[0]['note'], 'barely changes')
+        self.assertNotIn('direction', insights[0])
+
+    def test_rewatch_shift_needs_ratings_in_both_pools(self):
+        from stats.services.dashboard import _rewatch_shift_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        self._diary_pool(session, [4.0, 4.0, 4.0], rewatch=True)  # no first-watch entries
+        self.assertEqual(_rewatch_shift_insight(DiaryEntry.objects.filter(import_session=session)), [])
+
+    def test_rewatch_shift_needs_min_count_in_each_pool(self):
+        from stats.services.dashboard import _rewatch_shift_insight
+
+        session = ImportSession.objects.create(display_name='Alex')
+        self._diary_pool(session, [3.0], rewatch=False)  # only one first-watch rating
+        self._diary_pool(session, [5.0, 5.0, 5.0], rewatch=True)
+        self.assertEqual(_rewatch_shift_insight(DiaryEntry.objects.filter(import_session=session)), [])
 
     def test_like_percentage_is_likes_over_films_watched(self):
         from stats.services.dashboard import _like_percentage_insight
@@ -3531,9 +3549,9 @@ class RatingPatternInsightsTests(TestCase):
         insights = _rewatch_drift_insights(diary)
         self.assertEqual(len(insights), 2)
         self.assertIn('Up Film', insights[0]['text'])
-        self.assertEqual(insights[0]['label'], 'Rewatch increase')
+        self.assertEqual(insights[0]['label'], 'Biggest rewatch increase')
         self.assertIn('Down Film', insights[1]['text'])
-        self.assertEqual(insights[1]['label'], 'Rewatch decrease')
+        self.assertEqual(insights[1]['label'], 'Biggest rewatch decrease')
 
 
 class DashboardInsightsOrderTests(TestCase):
@@ -3552,25 +3570,28 @@ class DashboardInsightsOrderTests(TestCase):
 
     def test_present_tiles_follow_the_documented_canonical_order(self):
         featured_order = [
-            'Actor/director duo', 'Actor duo', 'Genre combo',
-            'Favorite runtime', 'Least favorite runtime', 'Favorite decade', 'Least favorite decade',
-            'Hidden gem', 'Rewatch increase', 'Rewatch decrease',
+            'Favorite actor/director duo', 'Favorite actor duo', 'Favorite genre combo',
+            'Favorite runtime', 'Favorite decade',
+            'Hidden gem', 'Biggest rewatch increase', 'Biggest rewatch decrease',
         ]
         # stat cards carry the short display label (see _STAT_SHORT_LABELS).
-        stats_order = ['Countries', 'Languages', 'Rewatch Δ', 'Like %']
+        stats_order = ['Countries', 'Languages', 'Rewatch shift', 'Like %']
         session = ImportSession.objects.create(display_name='Alex')
 
-        # Duo + decade + runtime, all from the same 3 films -- a favorite
-        # director/actor pairing in the 1970s, over 150 minutes long.
+        # Duo + Favorite decade -- a beloved director/actor pairing across the
+        # 1970s. Ten films (>= MIN_COUNT_FOR_DECADE_INSIGHT) so the decade clears
+        # the gate, all rated 5.0 so the delta is firmly favorable.
         actor, _ = Person.objects.get_or_create(tmdb_id=9001, defaults={'name': 'Duo Actor'})
-        for i, year in enumerate([1975, 1976, 1977]):
-            movie = _make_movie(9100 + i, f'Epic {i}', year, 160, 'Drama', 'Great Director')
+        for i in range(10):
+            movie = _make_movie(9100 + i, f'Epic {i}', 1970 + i, 160, 'Drama', 'Great Director')
             Credit.objects.create(movie=movie, person=actor, order=0)
             RatingEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/epic{i}', title=movie.title,
-                year=year, rating=Decimal('5.0'), movie=movie,
+                year=1970 + i, rating=Decimal('5.0'), movie=movie,
             )
-        # A least-favorite director, to populate that slot too.
+        # A disliked 2010s cluster -- the grid only celebrates favorites now, so
+        # this never becomes a tile; it's just here to keep the overall average
+        # honestly mixed rather than pinned near 5.0.
         for i in range(3):
             movie = _make_movie(9200 + i, f'Dud {i}', 2010, 100, 'Comedy', 'Bad Director')
             RatingEntry.objects.create(
@@ -3585,24 +3606,21 @@ class DashboardInsightsOrderTests(TestCase):
                 import_session=session, letterboxd_uri=f'https://boxd.it/filler{i}', title=movie.title,
                 year=2015, rating=Decimal('3.0'), movie=movie,
             )
-        # Rewatch drift + rewatch-vs-first-watch, via diary entries.
-        DiaryEntry.objects.create(
-            import_session=session, letterboxd_uri='https://boxd.it/rwu1', title='Rewatch Up', year=2000,
-            watched_date='2020-01-01', rating=Decimal('2.0'),
-        )
-        DiaryEntry.objects.create(
-            import_session=session, letterboxd_uri='https://boxd.it/rwu2', title='Rewatch Up', year=2000,
-            watched_date='2022-01-01', rating=Decimal('5.0'), rewatch=True,
-        )
-        for i in range(3):
+        # Rewatch drift (per-film first vs. latest) + rewatch shift (first-watch
+        # pool avg vs rewatch pool avg), via diary entries. Four films logged
+        # twice: first-watch pool avgs 3.5, rewatch pool avgs 4.25 -> shift cell
+        # reads +0.75 up; the +3.0 climb and -1.0 drop drive both drift tiles.
+        for title, first, last in [
+            ('Rewatch Up', '2.0', '5.0'), ('Rewatch Down', '5.0', '4.0'),
+            ('Rewatch Nudge A', '3.0', '3.5'), ('Rewatch Nudge B', '4.0', '4.5'),
+        ]:
             DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/fw{i}', title=f'First {i}', year=2000,
-                watched_date='2020-01-01', rating=Decimal('3.0'), rewatch=False,
+                import_session=session, letterboxd_uri=f'https://boxd.it/{title}-1', title=title, year=2000,
+                watched_date='2020-01-01', rating=Decimal(first),
             )
-        for i in range(3):
             DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/rw{i}', title=f'Rewatch {i}', year=2000,
-                watched_date='2021-01-01', rating=Decimal('4.5'), rewatch=True,
+                import_session=session, letterboxd_uri=f'https://boxd.it/{title}-2', title=title, year=2000,
+                watched_date='2022-01-01', rating=Decimal(last), rewatch=True,
             )
         # Like percentage: some rated films that were also hearted.
         for i in range(5):

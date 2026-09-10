@@ -1011,10 +1011,17 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    the director/actor signal on their own cards, so this doesn't repeat it).
    Zone 1 (.ib-grid): up to 8 borderless entries, each a poster or two-headshot
    portrait over a centered label / value / stat stack -- a grid of entries,
-   not discrete cards. Zone 2 (.ib-strip): a 4-up "by the numbers" bar. Sizes
-   in px, deliberately not scaled down at the mobile breakpoint. */
-.ib-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-@media (max-width: 700px) { .ib-grid { grid-template-columns: repeat(2, 1fr); } }
+   not discrete cards. Zone 2 (.ib-strip): a "by the numbers" bar of up to 4
+   cells. Sizes in px, deliberately not scaled down at the mobile breakpoint.
+
+   Both zones are flex rows with a centered final line, NOT fixed-track grids:
+   any slot whose insight doesn't clear its own "worth reporting" bar is dropped
+   entirely (see _dashboard_insights), so the tile count is often not a multiple
+   of the row width. A flex row centres the short final line instead of leaving
+   a hole hanging off the right edge. */
+.ib-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.ib-grid .ib-tile { flex: 0 0 calc((100% - 36px) / 4); }
+@media (max-width: 700px) { .ib-grid .ib-tile { flex-basis: calc((100% - 12px) / 2); } }
 /* Portrait 2:3 band -- a poster fills it edge to edge with no crop and no
    pillarbox; duo headshots / the placeholder sit centered in the same shape.
    max-height caps how big it gets on a wide screen (below that it's just the
@@ -1091,11 +1098,12 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-/* The label sits on one line (all of them fit, even "Least favorite runtime"
-   on a 2-col column); the value gets 2 lines reserved, since it can wrap
-   ("Matt Reeves + Andy Serkis"), and that reservation keeps the stat line
-   below aligned entry to entry regardless. */
-.ib-foot .ib-eyebrow { line-height: 1.3; min-height: 1.3em; }
+/* Both the label and the value get 2 lines reserved: the labels are full
+   phrases now ("Favorite actor/director duo", "Biggest rewatch increase") that
+   wrap to two lines at this column width, and the value wraps too ("Matt Reeves
+   + Andy Serkis"), so reserving two lines for each keeps the stat line below
+   level entry to entry whether a given label/value actually wraps or not. */
+.ib-foot .ib-eyebrow { line-height: 1.3; min-height: 2.6em; }
 .ib-value {
   margin: 3px 0 0;
   font-size: 14px;
@@ -1113,31 +1121,33 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Zone 2 -- a "by the numbers" bar under a single top rule. */
+/* Zone 2 -- a "by the numbers" bar under a single top rule. Same centred-flex
+   reasoning as .ib-grid above: a cell whose stat didn't qualify is dropped, so
+   the bar can hold 2-4 cells and a fixed 4-track grid would leave a hole. */
 .ib-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 16px 10px;
   margin-top: 12px;
   padding: 20px 0 2px;
   border-top: 1px solid var(--border);
   align-items: start;
 }
-@media (max-width: 700px) { .ib-strip { grid-template-columns: repeat(2, 1fr); } }
-.ib-stat { text-align: center; }
+/* Mobile: 2-up at a fixed half width, so an odd cell out sits centred at the
+   same size rather than stretching full-width. Desktop: cells grow to share the
+   bar equally however many there are (grow 1, basis 0), so 3 cells fill the
+   width the same way 4 do. */
+.ib-stat { flex: 0 1 calc(50% - 5px); text-align: center; }
+@media (min-width: 701px) { .ib-stat { flex: 1 1 0; } }
 .ib-stat .ib-eyebrow { margin: 0 0 8px; }
-.ib-val {
-  font-size: 38px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--accent);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.ib-val--plain { color: var(--text); }
-.ib-val--down { color: var(--danger); }
-.ib-trend { width: 26px; height: 26px; }
+.ib-val { font-size: 38px; font-weight: 700; line-height: 1; color: var(--text); }
+/* Rewatch shift: accent green with a trending arrow when there's a real up/down
+   lean, flat muted when it barely changes (no arrow). The count cells keep the
+   bare .ib-val (--text). */
+.ib-val--shift { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; }
+.ib-val--flat { color: var(--muted); }
+.ib-trend { width: 24px; height: 24px; }
 /* Like percentage -- a plain CSS conic-gradient ring, filled clockwise from 12
    o'clock to --ib-gauge-pct percent. The hole is a smaller circle in the
    card's own background, punching the ring out of a solid wedge. */
