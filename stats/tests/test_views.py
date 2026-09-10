@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from imports.models import ImportSession, RatingEntry
-from tmdb.models import Movie, Person
+from tmdb.models import Credit, Movie, Person
 
 User = get_user_model()
 
@@ -58,6 +58,69 @@ class PersonFilmographyViewTests(TestCase):
 
     def test_unknown_person_returns_404(self):
         response = self.client.get(self._url(tmdb_id=999999), {'role': 'director'})
+        self.assertEqual(response.status_code, 404)
+
+
+class InsightFilmsViewTests(TestCase):
+    """stats:insight_films -- the JSON endpoint behind the duo / genre-combo /
+    decade tile modal."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+        self.director = Person.objects.create(tmdb_id=880, name='D')
+        self.actor = Person.objects.create(tmdb_id=881, name='A')
+        movie = Movie.objects.create(tmdb_id=890, title='Collab', release_year=2010)
+        movie.directors.add(self.director)
+        Credit.objects.create(movie=movie, person=self.actor, order=0)
+        RatingEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/c', title='Collab', year=2010,
+            rating=Decimal('4.5'), movie=movie,
+        )
+
+    def _url(self, session_id=None):
+        return reverse('stats:insight_films', kwargs={'session_id': session_id or self.session.id})
+
+    def test_valid_pairing_request_returns_films(self):
+        response = self.client.get(
+            self._url(), {'kind': 'pairing', 'p1': self.director.tmdb_id, 'p2': self.actor.tmdb_id}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual([f['title'] for f in data['films']], ['Collab'])
+        self.assertEqual(data['films'][0]['rating'], '4.5')
+
+    def test_decade_request_needs_only_p1(self):
+        response = self.client.get(self._url(), {'kind': 'decade', 'p1': '2010s'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['films'][0]['title'], 'Collab')
+
+    def test_runtime_request_returns_films_in_the_bucket(self):
+        Movie.objects.filter(tmdb_id=890).update(runtime_minutes=120)
+        response = self.client.get(self._url(), {'kind': 'runtime', 'p1': '90-150 min'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['films'][0]['title'], 'Collab')
+
+    def test_unknown_runtime_bucket_returns_400(self):
+        response = self.client.get(self._url(), {'kind': 'runtime', 'p1': 'a while'})
+        self.assertEqual(response.status_code, 400)
+
+    def test_unknown_kind_returns_400(self):
+        response = self.client.get(self._url(), {'kind': 'producer', 'p1': '1'})
+        self.assertEqual(response.status_code, 400)
+
+    def test_missing_p1_returns_400(self):
+        response = self.client.get(self._url(), {'kind': 'decade'})
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_integer_id_for_a_pairing_returns_400(self):
+        response = self.client.get(self._url(), {'kind': 'pairing', 'p1': 'abc', 'p2': 'def'})
+        self.assertEqual(response.status_code, 400)
+
+    def test_unknown_session_returns_404(self):
+        response = self.client.get(
+            reverse('stats:insight_films', kwargs={'session_id': '00000000-0000-0000-0000-000000000000'}),
+            {'kind': 'decade', 'p1': '2010s'},
+        )
         self.assertEqual(response.status_code, 404)
 
 
