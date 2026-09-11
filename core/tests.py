@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from imports.models import ImportSession
+from imports.models import ImportSession, RatingEntry
+from tmdb.models import Movie
 
 User = get_user_model()
 
@@ -76,6 +79,38 @@ class LandingRouterTests(TestCase):
         response = self.client.get(reverse('core:landing'))
 
         self.assertRedirects(response, reverse('accounts:login'))
+
+    def test_home_screen_shows_the_stat_line_and_collage_backdrop_for_real_data(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        for i, rating in enumerate(['4.0', '5.0', '3.0']):
+            movie = Movie.objects.create(
+                tmdb_id=9950 + i, title=f'Landing Film {i}', release_year=2015, poster_path=f'/9950{i}.jpg',
+            )
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/landing{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal(rating), movie=movie,
+            )
+        session_key = _give_client_a_session(self.client)
+        ImportSession.objects.filter(pk=session.pk).update(session_key=session_key)
+
+        response = self.client.get(reverse('core:landing'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '3</b> films watched')
+        self.assertContains(response, '4.0 ★</b> avg rating')
+        self.assertContains(response, 'hero-collage')
+        self.assertContains(response, 'image.tmdb.org')
+
+    def test_home_screen_with_no_ratings_shows_no_stat_line_or_collage(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_key = _give_client_a_session(self.client)
+        ImportSession.objects.filter(pk=session.pk).update(session_key=session_key)
+
+        response = self.client.get(reverse('core:landing'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'films watched')
+        self.assertNotContains(response, 'hero-collage')
 
 
 class NavProfileMenuTests(TestCase):

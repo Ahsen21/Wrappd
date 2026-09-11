@@ -1,6 +1,7 @@
 from django.shortcuts import redirect, render
 
 from imports.models import ImportSession
+from stats.services.dashboard import home_summary
 
 
 def landing(request):
@@ -19,7 +20,10 @@ def landing(request):
     bypass would just dead-end back at this same upload step anyway."""
     my_session = ImportSession.ready_for(request)
     if my_session:
-        context = {'my_session': my_session, 'my_session_url': my_session.canonical_dashboard_path()}
+        context = {
+            'my_session': my_session, 'my_session_url': my_session.canonical_dashboard_path(),
+            **home_summary(my_session),
+        }
         return render(request, 'core/landing.html', context)
     if request.user.is_authenticated:
         return redirect('imports:upload')

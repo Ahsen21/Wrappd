@@ -13,6 +13,7 @@ Three data sources are used deliberately:
 
 import hashlib
 import math
+import random
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -2320,3 +2321,58 @@ def _favorite_films(import_session) -> list:
             'movie': movies.get(best['movie_id']) if best and best['movie_id'] else None,
         })
     return favorites
+
+
+# How many posters make up the home screen's hero collage (see
+# _home_collage_posters below) -- enough to read as a mosaic rather than a
+# couple of tiles, without shrinking to an illegible sliver on a phone-width hero.
+HOME_COLLAGE_POSTER_COUNT = 5
+
+
+def _home_collage_posters(import_session) -> list:
+    """Up to HOME_COLLAGE_POSTER_COUNT poster URLs for the home screen hero's
+    collage backdrop -- this person's own 5-star rated films with a resolved
+    poster, genuinely reshuffled on every call (random.sample), unlike most
+    "pick one film" choices elsewhere in this file.
+
+    Deliberately NOT _stable_hash's "looks arbitrary, never changes between
+    requests" pattern (see _best_film_per_bucket's own 'stable_random'
+    tiebreak) -- that pattern exists to protect a REPORTED fact, so the same
+    query keeps answering the same way (e.g. "your favorite decade" always
+    showing the same representative poster). This collage reports nothing; it's
+    unlabeled backdrop decoration on a page most people land on every session,
+    so there's no consistency to protect and a fresh shuffle each visit reads
+    as alive rather than a screen frozen on the same 6 posters forever.
+
+    Fewer than HOME_COLLAGE_POSTER_COUNT (or none at all) if this session
+    doesn't have that many 5-star films with a resolved poster -- see
+    .hero-collage's own "no image at all" fallback in base.css for that case."""
+    movie_ids = (
+        RatingEntry.objects.filter(import_session=import_session, rating=Decimal('5.0'))
+        .exclude(movie__isnull=True).values_list('movie_id', flat=True).distinct()
+    )
+    movies = list(Movie.objects.filter(tmdb_id__in=movie_ids, poster_path__gt=''))
+    chosen = random.sample(movies, min(len(movies), HOME_COLLAGE_POSTER_COUNT))
+    return [m.poster_url for m in chosen]
+
+
+def home_summary(import_session) -> dict:
+    """The home screen's (core/landing.html) quick personalization: a two-figure
+    stat line under the greeting, and the poster set for the hero's collage
+    backdrop (see _home_collage_posters).
+
+    Deliberately lighter than build_dashboard_context -- this is a router page
+    reached before either destination, not a report, so it only computes the two
+    numbers it actually shows rather than the full context those pages need.
+    films_watched_total reuses _films_watched_total so the figure agrees exactly
+    with the same count shown on Director's Cut, rather than a second, subtly
+    different definition of "watched" living on this page alone."""
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
+    rated_count = rated.count()
+    avg_rating = float(rated.aggregate(avg=Avg('rating'))['avg']) if rated_count >= MIN_COUNT_FOR_AVERAGE else None
+    return {
+        'films_watched_total': _films_watched_total(import_session, diary, rated),
+        'avg_rating': avg_rating,
+        'collage_poster_urls': _home_collage_posters(import_session),
+    }
