@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.db.models import Avg
 from django.test import TestCase
@@ -4733,3 +4734,145 @@ class InsightDrillKeysTests(TestCase):
         by_axis = {i['axis']: i for i in insights}
         self.assertEqual(by_axis['runtime']['drill'], {'kind': 'runtime', 'p1': 'Over 150 min', 'p2': ''})
         self.assertEqual(by_axis['decade']['drill'], {'kind': 'decade', 'p1': '1990s', 'p2': ''})
+
+
+class HomeSummaryTests(TestCase):
+    """home_summary -- the home screen's (core/landing.html) quick stat line and
+    hero collage backdrop. Deliberately lighter than build_dashboard_context,
+    since this router page is reached before either destination and only needs
+    the two figures it actually shows."""
+
+    def test_films_watched_total_and_avg_rating(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i, rating in enumerate(['4.0', '5.0', '3.0']):
+            movie = _make_movie(9800 + i, f'Home Film {i}', 2015, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/home{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal(rating), movie=movie,
+            )
+        summary = home_summary(session)
+        self.assertEqual(summary['films_watched_total'], 3)
+        self.assertAlmostEqual(summary['avg_rating'], 4.0)
+
+    def test_avg_rating_is_none_below_min_count_for_average(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        movie = _make_movie(9810, 'Solo Home Film', 2015, 100, 'Drama')
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/solo-home', title=movie.title,
+            year=movie.release_year, rating=Decimal('4.0'), movie=movie,
+        )
+        summary = home_summary(session)
+        self.assertIsNone(summary['avg_rating'])
+
+    def test_empty_session_has_no_stats_or_collage(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        summary = home_summary(session)
+        self.assertEqual(summary['films_watched_total'], 0)
+        self.assertIsNone(summary['avg_rating'])
+        self.assertEqual(summary['collage_poster_urls'], [])
+
+
+class HomeCollagePostersTests(TestCase):
+    """_home_collage_posters -- the home screen hero's multi-poster backdrop: a
+    fresh random handful of this person's 5-star films, reshuffled on every
+    call (see the function's own docstring for why this one deliberately
+    isn't the _stable_hash "same answer every time" pattern used elsewhere)."""
+
+    def _five_star_movie(self, session, tmdb_id, title, poster=True):
+        movie = Movie.objects.create(
+            tmdb_id=tmdb_id, title=title, release_year=2015,
+            poster_path=f'/{tmdb_id}.jpg' if poster else '',
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri=f'https://boxd.it/{tmdb_id}', title=title, year=2015,
+            rating=Decimal('5.0'), movie=movie,
+        )
+        return movie
+
+    def test_only_includes_5_star_films_with_a_resolved_poster(self):
+        from stats.services.dashboard import _home_collage_posters
+
+        session = ImportSession.objects.create(display_name='Alex')
+        five_star = self._five_star_movie(session, 9950, 'Five Star')
+        self._five_star_movie(session, 9951, 'No Poster Five Star', poster=False)
+        four_star_movie = Movie.objects.create(
+            tmdb_id=9952, title='Four Star', release_year=2015, poster_path='/9952.jpg',
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/9952', title='Four Star', year=2015,
+            rating=Decimal('4.0'), movie=four_star_movie,
+        )
+        # Rated 5.0 but never resolved to a Movie -- no poster to show either way.
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/unresolved', title='Unresolved', year=2015,
+            rating=Decimal('5.0'),
+        )
+        self.assertEqual(_home_collage_posters(session), [five_star.poster_url])
+
+    def test_caps_at_the_collage_poster_count(self):
+        from stats.services.dashboard import HOME_COLLAGE_POSTER_COUNT, _home_collage_posters
+
+        session = ImportSession.objects.create(display_name='Alex')
+        movies = [
+            self._five_star_movie(session, 9960 + i, f'Five Star {i}')
+            for i in range(HOME_COLLAGE_POSTER_COUNT + 3)
+        ]
+        urls = _home_collage_posters(session)
+        self.assertEqual(len(urls), HOME_COLLAGE_POSTER_COUNT)
+        # Every poster shown is a genuine candidate, and none repeats.
+        self.assertEqual(len(set(urls)), HOME_COLLAGE_POSTER_COUNT)
+        self.assertTrue(set(urls) <= {m.poster_url for m in movies})
+
+    def test_defers_to_random_sample_over_the_full_candidate_pool(self):
+        from stats.services.dashboard import HOME_COLLAGE_POSTER_COUNT, _home_collage_posters
+
+        session = ImportSession.objects.create(display_name='Alex')
+        movies = [
+            self._five_star_movie(session, 9965 + i, f'Five Star {i}')
+            for i in range(HOME_COLLAGE_POSTER_COUNT + 4)
+        ]
+        with patch('stats.services.dashboard.random.sample') as mock_sample:
+            mock_sample.return_value = movies[:HOME_COLLAGE_POSTER_COUNT]
+            urls = _home_collage_posters(session)
+        self.assertEqual(mock_sample.call_count, 1)
+        (population, k), _kwargs = mock_sample.call_args
+        self.assertEqual({m.tmdb_id for m in population}, {m.tmdb_id for m in movies})
+        self.assertEqual(k, HOME_COLLAGE_POSTER_COUNT)
+        self.assertEqual(urls, [m.poster_url for m in movies[:HOME_COLLAGE_POSTER_COUNT]])
+
+    def test_reshuffles_across_calls_when_there_are_more_candidates_than_the_cap(self):
+        from stats.services.dashboard import HOME_COLLAGE_POSTER_COUNT, _home_collage_posters
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(HOME_COLLAGE_POSTER_COUNT + 10):
+            self._five_star_movie(session, 9990 + i, f'Five Star {i}')
+        # 16 candidates, 6 chosen each time -- vanishingly unlikely for 10
+        # independent draws to all land on the exact same set-and-order.
+        results = {tuple(_home_collage_posters(session)) for _ in range(10)}
+        self.assertGreater(len(results), 1)
+
+    def test_a_rewatch_does_not_duplicate_the_poster(self):
+        from stats.services.dashboard import _home_collage_posters
+
+        session = ImportSession.objects.create(display_name='Alex')
+        movie = Movie.objects.create(
+            tmdb_id=9980, title='Rewatched Five Star', release_year=2015, poster_path='/9980.jpg',
+        )
+        for uri in ['https://boxd.it/rw1', 'https://boxd.it/rw2']:
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=uri, title=movie.title, year=movie.release_year,
+                rating=Decimal('5.0'), movie=movie,
+            )
+        self.assertEqual(_home_collage_posters(session), [movie.poster_url])
+
+    def test_no_five_star_films_returns_an_empty_list(self):
+        from stats.services.dashboard import _home_collage_posters
+
+        session = ImportSession.objects.create(display_name='Alex')
+        self.assertEqual(_home_collage_posters(session), [])

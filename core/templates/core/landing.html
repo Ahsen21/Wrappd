@@ -1,10 +1,23 @@
 {% extends "core/base.html" %}
 {% block content %}
-  <h1>Wrappd</h1>
-  <p class="muted">
-    {% if my_session.display_name %}Hello, {{ my_session.display_name }}.{% else %}Your export is ready.{% endif %}
-    Pick where to go next.
-  </p>
+<div class="landing-page">
+  <div class="hero">
+    {% if collage_poster_urls %}
+      <div class="hero-collage">
+        {% for url in collage_poster_urls %}<div style="background-image: url('{{ url }}');"></div>{% endfor %}
+      </div>
+    {% endif %}
+    <h1>Wrappd</h1>
+    <p class="muted">
+      {% if my_session.display_name %}Hello, {{ my_session.display_name }}.{% else %}Your export is ready.{% endif %}
+      Pick where to go next.
+    </p>
+    {% if films_watched_total %}
+      <p class="hero-stat-line">
+        <b>{{ films_watched_total }}</b> films watched{% if avg_rating %} &middot; <b>{{ avg_rating|floatformat:1 }} ★</b> avg rating{% endif %}
+      </p>
+    {% endif %}
+  </div>
   <div class="choices">
     <a class="choice-card" href="{{ my_session_url }}">
       <h3>Director's Cut</h3>
@@ -16,4 +29,5 @@
       {% if not user.is_authenticated %}<p class="muted" style="font-size:0.85rem;">Requires a free account</p>{% endif %}
     </a>
   </div>
+</div>
 {% endblock %}
