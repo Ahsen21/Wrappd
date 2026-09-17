@@ -1,0 +1,136 @@
+{% comment %}
+Person-filmography / insight-drill-down modal -- shared by the dashboard's
+Favorite Directors/Actors, Rewatches, and insight tiles, and by the home
+screen's stat-of-the-day card. Include with `session_id` set to whichever
+ImportSession this page is showing (`{% include 'stats/_person_drill_modal.html' with session_id=import_session.id %}`).
+
+Wires up two independent triggers, both delegated so any matching element
+present in the DOM at parse time is picked up with no page-specific JS:
+  - `.fav-card`/`[data-person-card]` wrapping a `.person-trigger` button
+    (`data-tmdb-id`/`data-role`) -- opens a person's filmography.
+  - any element carrying `data-drill-kind` (`data-drill-p1`/`data-drill-p2`/
+    `data-drill-title`) -- opens an insight's matching films.
+{% endcomment %}
+<div class="modal-backdrop" id="personModalBackdrop" hidden>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="personModalTitle">
+    <div class="modal-header">
+      <h3 id="personModalTitle"></h3>
+      <button type="button" class="modal-close" id="personModalClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="personModalBody"></div>
+  </div>
+</div>
+
+<script>
+  // Person filmography / insight-drill modal -- click a director/actor's name
+  // (.person-trigger) or a drillable insight tile (data-drill-kind) to fetch and
+  // show which of their films this session has watched. First fetch()-based
+  // feature in this codebase -- every other view is a full server render.
+  (function () {
+    const backdrop = document.getElementById('personModalBackdrop');
+    const titleEl = document.getElementById('personModalTitle');
+    const bodyEl = document.getElementById('personModalBody');
+    const closeBtn = document.getElementById('personModalClose');
+    // Sentinel tmdb_id swapped for the real one at click time -- keeps this
+    // script decoupled from the URL's literal path shape rather than
+    // hardcoding "/dashboard/.../person/<id>/" directly.
+    const urlTemplate = "{% url 'stats:person_filmography' session_id=session_id tmdb_id=999999999 %}";
+    const insightUrl = "{% url 'stats:insight_films' session_id=session_id %}";
+    let lastTrigger = null;
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function openModal() {
+      backdrop.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal() {
+      backdrop.hidden = true;
+      document.body.style.overflow = '';
+      if (lastTrigger) lastTrigger.focus();
+    }
+
+    function renderFilms(data) {
+      if (!data.films.length) {
+        bodyEl.innerHTML = '<p class="modal-empty">No matching films from this session yet.</p>';
+        return;
+      }
+      const cards = data.films.map(function (film) {
+        const yearText = film.year ? ' (' + film.year + ')' : '';
+        const tooltip = escapeHtml(film.title + yearText);
+        const poster = film.poster_url
+          ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
+          : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
+        const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
+        return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
+      }).join('');
+      bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
+    }
+
+    // Delegated to the whole card, not just the .person-trigger button -- matches
+    // the hover affordance on .fav-card:has(.person-trigger) in base.css, and
+    // means a click anywhere on the poster/placeholder/name (or a keyboard
+    // activation of the button itself, which still bubbles here) all run through
+    // this one listener rather than needing separate handlers. [data-person-card]
+    // covers non-.fav-card wrappers (the home screen's stat-of-the-day card) that
+    // want this same behavior without adopting .fav-card's own visual styling.
+    document.querySelectorAll('.fav-card, [data-person-card]').forEach(function (card) {
+      const trigger = card.querySelector('.person-trigger');
+      if (!trigger) return;
+      card.addEventListener('click', function () {
+        lastTrigger = trigger;
+        titleEl.textContent = trigger.textContent;
+        bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
+        openModal();
+        const url = urlTemplate.replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
+        fetch(url)
+          .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
+          .then(renderFilms)
+          .catch(function () {
+            bodyEl.innerHTML = '<p class="modal-error">Couldn’t load this person’s films. Try again.</p>';
+          });
+      });
+    });
+
+    // Any [data-drill-kind] element (the duo / genre-combo / decade insight tiles,
+    // and the home screen's stat-of-the-day card when it's showing one of those) is
+    // a role="button" div, not a real <button>, so wire click plus Enter/Space here.
+    // Same modal, same renderFilms -- only the endpoint differs (insight_films
+    // instead of person_filmography), keyed off the element's data-drill-* attributes.
+    function openInsightModal(tile) {
+      lastTrigger = tile;
+      titleEl.textContent = tile.dataset.drillTitle || '';
+      bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
+      openModal();
+      const url = insightUrl
+        + '?kind=' + encodeURIComponent(tile.dataset.drillKind)
+        + '&p1=' + encodeURIComponent(tile.dataset.drillP1)
+        + '&p2=' + encodeURIComponent(tile.dataset.drillP2);
+      fetch(url)
+        .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
+        .then(renderFilms)
+        .catch(function () {
+          bodyEl.innerHTML = '<p class="modal-error">Couldn’t load these films. Try again.</p>';
+        });
+    }
+
+    document.querySelectorAll('[data-drill-kind]').forEach(function (tile) {
+      tile.addEventListener('click', function () { openInsightModal(tile); });
+      tile.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openInsightModal(tile);
+        }
+      });
+    });
+
+    closeBtn.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !backdrop.hidden) closeModal(); });
+  })();
+</script>

@@ -6,6 +6,7 @@
   --text: #e5e9ec;
   --muted: #8a99a8;
   --accent: #00e054;
+  --accent-rgb: 0, 224, 84;
   --accent-2: #40bcf4;
   --accent-3: #ff8000;
   --accent-text: #05130a;
@@ -247,40 +248,174 @@ a { color: var(--accent-2); }
    "no image = just the gradient" fallback as ::before. Slightly less blur than
    ::before's single-poster 8px -- a narrow collage tile blurs together with
    its neighbours faster than a full-width poster does, so less blur keeps
-   each one a bit more recognizable. */
-.hero-collage { position: absolute; inset: 0; z-index: -1; display: flex; filter: blur(4px) brightness(0.35) saturate(1.3); transform: scale(1.1); }
-.hero-collage div { flex: 1 1 0; background-size: cover; background-position: center 20%; }
-/* Two mobile-only adjustments, same breakpoint as the rest of the site's
-   responsive rules:
-   1. One fewer tile on a phone-width hero -- 5 equally-narrow slivers read as
-      noise on a small screen, so this hides whichever tile lands 5th
-      (nth-child, not :last-child, so a session with under 5 five-star films
-      is untouched -- nothing to hide a "5th" of). Coupled to
-      HOME_COLLAGE_POSTER_COUNT (5) in dashboard.py; bump this selector's
-      number if that constant ever changes. The remaining tiles' flex:1 1 0
-      redistributes to fill the freed width.
-   2. Less blur -- with only 4 (now wider) tiles instead of 5, each poster
-      already reads less "sliver-like" than on desktop, so the desktop
-      blur's job of hiding narrow-tile seams matters less here; a lighter
-      blur keeps more of each poster recognizable on the screen most likely
-      to be someone's daily one. Brightness/saturate stay the same -- only
-      the blur radius drops. */
+   each one a bit more recognizable.
+
+   An explicit grid (not flex-wrap) -- the hero got much taller once the
+   stat-of-day card and choice cards moved inside it, and a single row (or an
+   under-specified wrap) turns each poster into a tall, narrow sliver that
+   background-size:cover crops down to an unrecognizable, "stretched"-looking
+   strip. 5 columns x 2 rows on desktop, 4 x 3 on (a narrower, taller-relative
+   -to-width) mobile -- both exactly fill HOME_COLLAGE_POSTER_COUNT's 10/12
+   tiles with no gaps and no per-tile stretching to cover a leftover slot.
+
+   Wider than its own container (125%/133.33%, offset left by half that extra
+   width) rather than a plain inset:0 -- that spare width is what lets a row
+   get shifted sideways (see the brick-style nth-child rules below) without
+   its far edge exposing empty background where a poster used to be. The
+   shift amount is exactly half a column's width in each breakpoint's own
+   grid, so a shifted row's tiles land straddling the seam between the row
+   above's tiles -- a masonry-brick stagger, not a bigger/smaller re-tiling. */
+.hero-collage {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -12.5%;
+  width: 125%;
+  z-index: -1;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  filter: blur(4px) brightness(0.35) saturate(1.3);
+  transform: scale(1.1);
+}
+.hero-collage div { background-size: cover; background-position: center 20%; }
+/* Desktop only shows 10 of HOME_COLLAGE_POSTER_COUNT's 12 (2 rows of 5) --
+   the other 2 are reserved for mobile's denser 3rd row below, rather than
+   sampling a separately-sized pool for each breakpoint. */
+.hero-collage div:nth-child(n + 11) { display: none; }
+/* Row 2 (children 6-10) shifted right by half a column -- with only 2 rows,
+   one offset is enough for no poster to sit directly under another. 50%, not
+   12.5% -- translateX()'s percentage is relative to the TILE's own width, not
+   the hero's, and each tile here is exactly 1/5 of .hero-collage's 125% width
+   (see above), so 50% of one tile is precisely the half-column shift that
+   125%'s spare width was sized to cover. Scoped to min-width so it doesn't
+   leak into the mobile block below, which has its own column count (and
+   therefore its own tile width) entirely. */
+@media (min-width: 701px) {
+  .hero-collage div:nth-child(n + 6):nth-child(-n + 10) { transform: translateX(50%); }
+}
 @media (max-width: 700px) {
-  .hero-collage div:nth-child(n + 5) { display: none; }
-  .hero-collage { filter: blur(2px) brightness(0.35) saturate(1.3); }
+  /* Less blur -- each tile is smaller/more numerous-per-row at this width
+     than the desktop grid, so the desktop blur's job of hiding tile seams
+     matters less here; a lighter blur keeps more of each poster recognizable
+     on the screen most likely to be someone's daily one. */
+  .hero-collage {
+    left: -16.67%;
+    width: 133.33%;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    filter: blur(2px) brightness(0.35) saturate(1.3);
+  }
+  .hero-collage div:nth-child(n + 11) { display: block; }
+  /* Row 2 shifted one way, row 3 shifted back the other -- a full zigzag
+     across all 3 rows (row 1 stays put as the baseline), rather than just
+     the single offset above the 2-row desktop grid gets. 50%/-50%, same
+     "relative to the tile's own width, not the hero's" reasoning as the
+     desktop rule above -- each tile here is 1/4 of .hero-collage's 133.33%
+     width, sized so a half-tile shift in either direction stays covered. */
+  .hero-collage div:nth-child(n + 5):nth-child(-n + 8) { transform: translateX(50%); }
+  .hero-collage div:nth-child(n + 9) { transform: translateX(-50%); }
 }
 /* The home screen's quick personalization line, under the greeting -- see
    home_summary. Plain text like .muted, with the two figures picked out in
    accent green the same way .hero-eyebrow's own accent draws the eye above. */
 .hero-stat-line { margin: 0.75rem 0 0; color: var(--muted); }
 .hero-stat-line b { color: var(--accent); font-weight: 700; }
-/* A bit taller than the dashboard's own .hero -- this one only ever holds 3
-   short lines (h1, greeting, stat line) against a 5-poster collage, so the
-   default padding left it feeling cropped compared to a full poster backdrop.
+/* The display name in the "Welcome to Wrappd, {name}!" heading -- same accent
+   green as the stat line's own figures above, so the personalized part of the
+   greeting stands out against the plain white heading text around it. */
+.hero-name { color: var(--accent); }
+/* A bit taller than the dashboard's own .hero -- this one holds the greeting,
+   stat line, stat-of-day card, AND the Director's Cut/Double Feature choice
+   cards all against one poster-collage backdrop (see landing.html), so the
+   default padding left it feeling cramped compared to a full poster backdrop.
    Scoped to the landing page specifically (see landing.html's own wrapper div,
    same pattern as .compare-page's .hero override) rather than changing .hero
    itself, which the Director's Cut/Double Feature heroes still use as-is. */
 .landing-page .hero { padding: 4rem 2rem; }
+/* Single column again (greeting, stat-of-day, choices stacked top to bottom)
+   -- a two-column layout and a full-width stat-of-day card were both tried
+   and rejected; the actual fix was making the card itself substantial
+   (see .stat-of-day below), not finding something for it to match widths
+   with. .choices keeps a top margin unconditionally now that it's always
+   the block directly below the stat-of-day card, not a sibling column that
+   only needed spacing once flex-wrap stacked it. */
+.landing-page .hero .choices { margin-top: 1.5rem; }
+/* Home screen's stat-of-the-day card (see stats/services/dashboard.py's
+   _stat_of_the_day) -- sized to its own content (inline-flex, not a block
+   stretched to the hero's full width), with an accent tint/border so it
+   still reads as a featured element despite being compact. The gradient
+   fades to plain --surface by 60% across so the tint reads as a highlight
+   near the media/text, not a flat wash over the whole card. */
+.stat-of-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.25rem;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.12), var(--surface) 60%);
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  border-radius: 12px;
+  padding: 1.1rem 1.4rem;
+  margin-top: 1.5rem;
+  max-width: 100%;
+}
+.stat-of-day-eyebrow { color: var(--accent); letter-spacing: 0.09em; font-size: 0.72rem; font-weight: 700; margin: 0 0 0.5rem; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.stat-of-day-label { margin: 0 0 0.3rem; font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
+.stat-of-day-detail { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.stat-of-day-detail .person-trigger { color: var(--text); font-weight: 700; }
+.stat-of-day-media { flex-shrink: 0; }
+.stat-of-day-poster, .stat-of-day-headshot {
+  width: 78px;
+  height: 117px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--border);
+}
+.stat-of-day-headshot { width: 90px; height: 90px; border-radius: 50%; object-position: 50% 30%; }
+.stat-of-day-poster--ph, .stat-of-day-headshot--ph {
+  display: flex; align-items: center; justify-content: center; font-size: 28px; color: var(--muted);
+}
+/* Reuses .ib-media--duo's own headshot styling (see base.css's insight-tile
+   section) at close to its native size, since this card no longer needs the
+   larger scale a bigger poster/headshot called for. aspect-ratio/max-height
+   reset to auto/none -- those come from the shared .ib-media class (built for
+   a poster's 2:3 box) and, left alone, stretch this card's duo circles into
+   a tall portrait box sized off their own ~154px overlapped width instead of
+   wrapping them at their natural ~88px circle height. */
+.stat-of-day-media .ib-media--duo {
+  aspect-ratio: auto;
+  max-height: none;
+  transform: scale(0.85);
+  transform-origin: center;
+}
+/* Below the same 700px breakpoint the rest of the site treats as mobile --
+   media above text (column, not row) rather than the desktop's side-by-side
+   layout, since a phone-width row would squeeze the text into a column too
+   narrow for even the "STAT OF THE DAY" eyebrow to fit on one line. */
+@media (max-width: 700px) {
+  .stat-of-day { display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem; padding: 1rem 1.25rem; }
+  .stat-of-day-label { font-size: 1.1rem; }
+  .stat-of-day-detail { font-size: 0.85rem; }
+  .stat-of-day-poster, .stat-of-day-headshot { width: 60px; height: 90px; }
+  .stat-of-day-headshot { width: 68px; height: 68px; }
+  .stat-of-day-media .ib-media--duo { transform: scale(0.64); transform-origin: left center; }
+}
+.stat-of-day--clickable { cursor: pointer; }
+.stat-of-day--clickable:focus-visible { outline: none; }
+.stat-of-day--clickable .stat-of-day-poster,
+.stat-of-day--clickable .stat-of-day-headshot,
+.stat-of-day--clickable .stat-of-day-poster--ph,
+.stat-of-day--clickable .stat-of-day-headshot--ph {
+  border: 2px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.stat-of-day--clickable:hover .stat-of-day-poster,
+.stat-of-day--clickable:focus-visible .stat-of-day-poster,
+.stat-of-day--clickable:hover .stat-of-day-headshot,
+.stat-of-day--clickable:focus-visible .stat-of-day-headshot,
+.stat-of-day--clickable:hover .stat-of-day-poster--ph,
+.stat-of-day--clickable:focus-visible .stat-of-day-poster--ph,
+.stat-of-day--clickable:hover .stat-of-day-headshot--ph,
+.stat-of-day--clickable:focus-visible .stat-of-day-headshot--ph { border-color: var(--accent); }
 /* Shared base for the site's several small "eyebrow" labels -- uppercase text used
    for quiet sub-headings and captions (this hero eyebrow above the h1, the poster
    row's "FAVORITES" label below, in-card sub-group titles like "Day of week", and
@@ -466,6 +601,16 @@ a { color: var(--accent-2); }
   }
   .grid--rating-avg .stat .value { font-size: 1.5rem; }
 }
+/* Heatmap's per-week/per-month pace, above the year toggle -- same 2-column
+   phone override as .grid--rating-avg above, so the pair reads side by side
+   instead of stacking under .grid's ~180px auto-fit floor. */
+.grid--pace-stats { margin-bottom: 1rem; }
+@media (max-width: 700px) {
+  .grid--pace-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+  }
+}
 
 /* Sticks directly under the site's own .nav bar while scrolling -- top: 60px, not
    0, matching that nav's own measured rendered height at its current padding/
@@ -516,28 +661,35 @@ a { color: var(--accent-2); }
 
 h1, h2, h3, h4 { font-weight: 700; }
 
-/* Section dividers ("Movie Stats" / "Watching Stats") are the only h2s left outside
-   the hero (card titles were demoted to h3 so they stop competing with these at the
-   same visual weight). Sized and spaced to read as a real break between sections;
-   watching-stats gets the top rule since it follows a full section of cards, while
-   movie-stats sits right after the hero's own intro line and needs less separation. */
-h2#movie-stats, h2#watching-stats {
+/* Section dividers -- one per nav destination (Director's Cut grew from 2 coarse
+   groups, "Movie Stats"/"Watching Stats", to 6 headings matching the section nav
+   1:1 -- see dashboard.html's own .jump-target wrappers, each carrying one of
+   these as its first child). Sized and spaced to read as a real break between
+   sections; card titles were demoted to h3 so they stop competing with these at
+   the same visual weight. A shared class, not ids, now that there are 6 of them
+   instead of 2 named ones -- .jump-target's own id is each section's real,
+   unique anchor, so the heading itself no longer needs one. */
+.section-heading {
   font-size: 1.5rem;
   margin: 1rem 0 0.25rem;
 }
-/* Every .section-nav-link's jump target -- the h2 dividers above (Director's Cut's
-   coarser "Movie Stats"/"Watching Stats" break, still kept as a visual marker
-   alongside the finer-grained nav) plus each grouped jump-nav's own target card on
-   both pages (see dashboard.html/compare.html). Without this, clicking a link
-   jumps its target to align flush with the viewport top -- directly behind the
-   two stacked sticky bars now sitting there (the site's own .nav plus
-   .section-nav, ~112px combined at their current measured heights), hiding it
-   right after the jump. 120px, not an even 7rem, to leave a hair of breathing
-   room past that measured total rather than landing flush against it. */
-h2#movie-stats, h2#watching-stats, .jump-target {
+/* Every .section-nav-link's jump target -- the .jump-target wrapper around each
+   section (dashboard.html/compare.html) that a nav link scrolls to. Without
+   this, clicking a link jumps its target to align flush with the viewport top
+   -- directly behind the two stacked sticky bars now sitting there (the site's
+   own .nav plus .section-nav, ~112px combined at their current measured
+   heights), hiding it right after the jump. 120px, not an even 7rem, to leave a
+   hair of breathing room past that measured total rather than landing flush
+   against it. */
+.jump-target {
   scroll-margin-top: 120px;
 }
-h2#watching-stats {
+/* The stronger break: extra top margin plus a rule, for every section heading
+   except the very first (Overview, which sits right after the hero's own intro
+   line and needs less separation) -- every other section follows a full block
+   of the previous section's cards, so it needs a real visual reset the way
+   "Watching Stats" alone used to provide back when there were only 2 dividers. */
+.section-heading--divider {
   margin-top: 3rem;
   padding-top: 2rem;
   border-top: 1px solid var(--border);
@@ -545,7 +697,7 @@ h2#watching-stats {
 /* An accent tick beside each heading's text, kept on an inner <span> rather than
    the <h2> itself -- a border-left on the heading would run the full height of its
    line box (font-size 1.5rem at the page's 1.5 line-height is a much taller box
-   than the glyphs' own ink), and on watching-stats specifically it would also
+   than the glyphs' own ink), and on a --divider heading specifically it would also
    swallow that heading's own top padding/divider spacing above. line-height: 1
    here collapses the span's box back down to just the text's height, so the tick
    matches the text exactly instead of visibly overshooting it top and bottom. */

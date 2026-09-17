@@ -7,27 +7,51 @@
         {% for url in collage_poster_urls %}<div style="background-image: url('{{ url }}');"></div>{% endfor %}
       </div>
     {% endif %}
-    <h1>Wrappd</h1>
-    <p class="muted">
-      {% if my_session.display_name %}Hello, {{ my_session.display_name }}.{% else %}Your export is ready.{% endif %}
-      Pick where to go next.
-    </p>
-    {% if films_watched_total %}
-      <p class="hero-stat-line">
-        <b>{{ films_watched_total }}</b> films watched{% if avg_rating %} &middot; <b>{{ avg_rating|floatformat:1 }} ★</b> avg rating{% endif %}
-      </p>
+    <h1>Welcome to Wrappd, <span class="hero-name">{{ my_session.display_name }}</span>!</h1>
+    {% if stat_of_day %}
+      <div class="stat-of-day{% if stat_of_day.drill or stat_of_day.person %} stat-of-day--clickable{% endif %}"
+        {% if stat_of_day.drill %}role="button" tabindex="0" data-drill-kind="{{ stat_of_day.drill.kind }}" data-drill-p1="{{ stat_of_day.drill.p1 }}" data-drill-p2="{{ stat_of_day.drill.p2 }}" data-drill-title="{{ stat_of_day.label }} · {{ stat_of_day.value }}"{% endif %}
+        {% if stat_of_day.person %}data-person-card{% endif %}>
+        <div class="stat-of-day-media">
+          {% if stat_of_day.duo %}
+            <div class="ib-media ib-media--duo">
+              {% if stat_of_day.duo.a.image %}<img src="{{ stat_of_day.duo.a.image }}" alt="{{ stat_of_day.duo.a.name }}" title="{{ stat_of_day.duo.a.name }}">{% else %}<span title="{{ stat_of_day.duo.a.name }}">👤</span>{% endif %}
+              {% if stat_of_day.duo.b.image %}<img src="{{ stat_of_day.duo.b.image }}" alt="{{ stat_of_day.duo.b.name }}" title="{{ stat_of_day.duo.b.name }}">{% else %}<span title="{{ stat_of_day.duo.b.name }}">👤</span>{% endif %}
+            </div>
+          {% elif stat_of_day.headshot %}
+            {% if stat_of_day.image %}<img class="stat-of-day-headshot" src="{{ stat_of_day.image }}" alt="{{ stat_of_day.value }}">{% else %}<div class="stat-of-day-headshot stat-of-day-headshot--ph">🎬</div>{% endif %}
+          {% elif stat_of_day.image %}
+            <img class="stat-of-day-poster" src="{{ stat_of_day.image }}" alt="{{ stat_of_day.value }}">
+          {% else %}
+            <div class="stat-of-day-poster stat-of-day-poster--ph">🎬</div>
+          {% endif %}
+        </div>
+        <div class="stat-of-day-text">
+          <p class="stat-of-day-eyebrow"><span aria-hidden="true">✨</span> Stat of the day</p>
+          <p class="stat-of-day-label">{{ stat_of_day.label }}</p>
+          <p class="stat-of-day-detail">
+            {% if stat_of_day.person %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ stat_of_day.person.tmdb_id }}" data-role="{{ stat_of_day.person.role }}">{{ stat_of_day.value }}</button>
+            {% else %}
+              {{ stat_of_day.value }}
+            {% endif %}
+            &middot; {{ stat_of_day.stat }}
+          </p>
+        </div>
+      </div>
     {% endif %}
-  </div>
-  <div class="choices">
-    <a class="choice-card" href="{{ my_session_url }}">
-      <h3>Director's Cut</h3>
-      <p>Take a deep dive into your movie watching history, with detailed insights and analytics.</p>
-    </a>
-    <a class="choice-card" href="{% url 'imports:compare_join' %}">
-      <h3>Double Feature</h3>
-      <p>Compare your watch history with a friend and see how similar, or different, your tastes are.</p>
-      {% if not user.is_authenticated %}<p class="muted" style="font-size:0.85rem;">Requires a free account</p>{% endif %}
-    </a>
+    <div class="choices">
+      <a class="choice-card" href="{{ my_session_url }}">
+        <h3>Director's Cut</h3>
+        <p>Take a deep dive into your movie watching history, with detailed insights and analytics.</p>
+      </a>
+      <a class="choice-card" href="{% url 'imports:compare_join' %}">
+        <h3>Double Feature</h3>
+        <p>Compare your watch history with a friend and see how similar, or different, your tastes are.</p>
+        {% if not user.is_authenticated %}<p class="muted" style="font-size:0.85rem;">Requires a free account</p>{% endif %}
+      </a>
+    </div>
   </div>
 </div>
+{% if stat_of_day %}{% include 'stats/_person_drill_modal.html' with session_id=my_session.id %}{% endif %}
 {% endblock %}

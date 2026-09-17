@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from imports.models import ImportSession, RatingEntry
-from tmdb.models import Movie
+from tmdb.models import Movie, Person
 
 User = get_user_model()
 
@@ -80,7 +80,7 @@ class LandingRouterTests(TestCase):
 
         self.assertRedirects(response, reverse('accounts:login'))
 
-    def test_home_screen_shows_the_stat_line_and_collage_backdrop_for_real_data(self):
+    def test_home_screen_shows_the_collage_backdrop_for_real_data(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
         for i, rating in enumerate(['4.0', '5.0', '3.0']):
             movie = Movie.objects.create(
@@ -96,12 +96,10 @@ class LandingRouterTests(TestCase):
         response = self.client.get(reverse('core:landing'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '3</b> films watched')
-        self.assertContains(response, '4.0 ★</b> avg rating')
         self.assertContains(response, 'hero-collage')
         self.assertContains(response, 'image.tmdb.org')
 
-    def test_home_screen_with_no_ratings_shows_no_stat_line_or_collage(self):
+    def test_home_screen_with_no_ratings_shows_no_collage(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
         session_key = _give_client_a_session(self.client)
         ImportSession.objects.filter(pk=session.pk).update(session_key=session_key)
@@ -109,8 +107,29 @@ class LandingRouterTests(TestCase):
         response = self.client.get(reverse('core:landing'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'films watched')
         self.assertNotContains(response, 'hero-collage')
+        self.assertNotContains(response, 'stat-of-day')
+
+    def test_home_screen_shows_the_stat_of_the_day_card_when_one_qualifies(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        director = Person.objects.create(tmdb_id=88001, name='Dir Home', profile_path='/dirhome.jpg')
+        for i in range(3):
+            movie = Movie.objects.create(tmdb_id=88010 + i, title=f'Home Dir Film {i}', release_year=2015)
+            movie.directors.add(director)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/homedir{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+            )
+        session_key = _give_client_a_session(self.client)
+        ImportSession.objects.filter(pk=session.pk).update(session_key=session_key)
+
+        response = self.client.get(reverse('core:landing'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'stat-of-day')
+        self.assertContains(response, 'Favorite director')
+        self.assertContains(response, 'Dir Home')
+        self.assertContains(response, 'personModalBackdrop')
 
 
 class NavProfileMenuTests(TestCase):

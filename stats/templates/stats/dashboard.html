@@ -113,21 +113,24 @@
   </div>
 
   <nav class="section-nav">
-    <a href="#ratings-genres" class="section-nav-link active" data-section="ratings-genres">Ratings &amp; Genres</a>
-    <a href="#favorites-taste" class="section-nav-link" data-section="favorites-taste">Favorites &amp; Taste</a>
+    <a href="#ratings" class="section-nav-link active" data-section="ratings">Ratings</a>
+    <a href="#what-you-watch" class="section-nav-link" data-section="what-you-watch">What You Watch</a>
+    <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
     <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
+    <a href="#rewatches" class="section-nav-link" data-section="rewatches">Rewatches</a>
     {% if recommendations %}
       <a href="#watchlist" class="section-nav-link" data-section="watchlist">Watchlist</a>
     {% endif %}
   </nav>
 
-  <h2 id="movie-stats"><span class="section-heading-tick">Movie Stats</span></h2>
+  <div class="jump-target" id="ratings">
+  <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
   <p class="muted">What you watch and how you rate it.</p>
 
   {% if insights.featured or insights.stats %}
     <div class="card">
-      <h3>Your rating insights</h3>
-      <p class="muted">What moves your rating, your standout picks, and how you actually watch.</p>
+      <h3>Highlights</h3>
+      <p class="muted">Some featured insights about your ratings.</p>
       {% if insights.featured %}
         <div class="ib-grid">
           {% for card in insights.featured %}
@@ -186,11 +189,59 @@
     </div>
   {% endif %}
 
-  <div class="card jump-target" id="ratings-genres">
+  <div class="card">
     <h3>Rating distribution</h3>
     <p class="muted">Average rating: <strong>{% if avg_rating %}{{ avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong></p>
     <canvas id="ratingDistributionChart"></canvas>
   </div>
+
+  <div class="card">
+    <h3>Taste vs. the crowd</h3>
+    <p class="muted">Your rating compared to TMDB's community average.</p>
+    <div class="grid">
+      <div class="stat">
+        {% if taste.generosity_score == None %}
+          <div class="value">—</div>
+          <div class="label">Not enough data yet</div>
+        {% else %}
+          <div class="value">{% if taste.generosity_score > 0 %}+{% endif %}{{ taste.generosity_score|floatformat:2 }}</div>
+          <div class="label">{% if taste.generosity_score > 0 %}More generous{% elif taste.generosity_score < 0 %}Harsher{% else %}Generosity{% endif %} than the crowd</div>
+        {% endif %}
+      </div>
+    </div>
+    <h4>Biggest over-rates</h4>
+    {% if taste.overrates %}
+      <div class="favs favs--eight">
+        {% for film in taste.overrates %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-state">No data yet</p>
+    {% endif %}
+    <h4>Biggest under-rates</h4>
+    {% if taste.underrates %}
+      <div class="favs favs--eight">
+        {% for film in taste.underrates %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-state">No data yet</p>
+    {% endif %}
+  </div>
+  </div>
+
+  <div class="jump-target" id="what-you-watch">
+
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">What You Watch</span></h2>
+  <p class="muted">Your most watched genres, languages, and more.</p>
 
   <div class="card">
     <h3>Films per release year</h3>
@@ -234,9 +285,15 @@
       <div class="h-chart"><canvas id="languageChart"></canvas></div>
     </div>
   </div>
+  </div>
 
-  <div class="card jump-target" id="favorites-taste">
-    <h3>Favorite Directors</h3>
+  <div class="jump-target" id="favorite-people">
+
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Favorite People</span></h2>
+  <p class="muted">The directors and actors behind your favorite films.</p>
+
+  <div class="card">
+    <h3>Directors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
       <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
@@ -295,7 +352,7 @@
   </div>
 
   <div class="card">
-    <h3><span class="th-with-tip">Favorite Actors <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></h3>
+    <h3><span class="th-with-tip">Actors <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
       <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
@@ -352,53 +409,12 @@
       {% endif %}
     </div>
   </div>
-
-  <div class="card">
-    <h3>Taste vs. the crowd</h3>
-    <p class="muted">Your rating compared to TMDB's community average.</p>
-    <div class="grid">
-      <div class="stat">
-        {% if taste.generosity_score == None %}
-          <div class="value">—</div>
-          <div class="label">Not enough data yet</div>
-        {% else %}
-          <div class="value">{% if taste.generosity_score > 0 %}+{% endif %}{{ taste.generosity_score|floatformat:2 }}</div>
-          <div class="label">{% if taste.generosity_score > 0 %}More generous{% elif taste.generosity_score < 0 %}Harsher{% else %}Generosity{% endif %} than the crowd</div>
-        {% endif %}
-      </div>
-    </div>
-    <h4>Biggest over-rates</h4>
-    {% if taste.overrates %}
-      <div class="favs favs--eight">
-        {% for film in taste.overrates %}
-          <div class="fav-card">
-            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
-          </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No data yet</p>
-    {% endif %}
-    <h4>Biggest under-rates</h4>
-    {% if taste.underrates %}
-      <div class="favs favs--eight">
-        {% for film in taste.underrates %}
-          <div class="fav-card">
-            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
-          </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No data yet</p>
-    {% endif %}
   </div>
 
-  <h2 id="watching-stats"><span class="section-heading-tick">Watching Stats</span></h2>
+  <div class="jump-target" id="watching-habits">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watching Habits</span></h2>
   <p class="muted">How much, how often, and when you watch.</p>
-
-  <div class="card jump-target" id="watching-habits">
+  <div class="card">
     <h3>Films per year</h3>
     <canvas id="filmsPerYearChart"></canvas>
   </div>
@@ -419,7 +435,7 @@
     </div>
 
     {% if calendar.heatmap.years %}
-      <h4>Activity</h4>
+      <h4>Activity by year</h4>
       {% if calendar.heatmap.years|length > 1 %}
         <div class="toggle-group" data-chart-toggle="heatmapYear">
           {% for year in calendar.heatmap.years %}
@@ -430,6 +446,10 @@
           {% endfor %}
         </div>
       {% endif %}
+      <div class="grid grid--pace-stats">
+        <div class="stat"><div class="value" id="heatmapPerWeekStat">—</div><div class="label">Films per week</div></div>
+        <div class="stat"><div class="value" id="heatmapPerMonthStat">—</div><div class="label">Films per month</div></div>
+      </div>
       <div class="heatmap-wrap">
         <div class="heatmap-months" id="heatmapMonths"></div>
         <div class="heatmap-grid" id="heatmapGrid"></div>
@@ -447,6 +467,15 @@
     {% endif %}
   </div>
 
+  <div class="card">
+    <h3>Most used tags</h3>
+    <div class="h-chart"><canvas id="tagsChart"></canvas></div>
+  </div>
+  </div>
+
+  <div class="jump-target" id="rewatches">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Rewatches</span></h2>
+  <p class="muted">Your most rewatched films and directors.</p>
   <div class="card">
     <h3>Most rewatched films</h3>
     {% if rewatch.most_rewatched_films %}
@@ -479,38 +508,30 @@
       <p class="empty-state">No data yet</p>
     {% endif %}
   </div>
-
-  <div class="card">
-    <h3>Tags</h3>
-    <div class="h-chart"><canvas id="tagsChart"></canvas></div>
   </div>
 
-  <div class="modal-backdrop" id="personModalBackdrop" hidden>
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="personModalTitle">
-      <div class="modal-header">
-        <h3 id="personModalTitle"></h3>
-        <button type="button" class="modal-close" id="personModalClose" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body" id="personModalBody"></div>
-    </div>
-  </div>
+  {% include 'stats/_person_drill_modal.html' with session_id=import_session.id %}
 
   {% if recommendations %}
-    <div class="card jump-target" id="watchlist">
-      <h3>Recommended from your watchlist</h3>
-      <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
-      <div class="favs favs--eight">
-        {% for rec in recommendations %}
-          <div class="fav-card">
-            {% if rec.movie.poster_url %}
-              <img src="{{ rec.movie.poster_url }}" alt="{{ rec.movie.title }}" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">
-            {% else %}
-              <div class="fav-placeholder" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">🎬</div>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </div>
+  <div class="jump-target" id="watchlist">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watchlist</span></h2>
+  <p class="muted">Recommended films from your watchlist.</p>
+  <div class="card">
+    <h3>Watchlist recommendations</h3>
+    <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
+    <div class="favs favs--eight">
+      {% for rec in recommendations %}
+        <div class="fav-card">
+          {% if rec.movie.poster_url %}
+            <img src="{{ rec.movie.poster_url }}" alt="{{ rec.movie.title }}" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">
+          {% else %}
+            <div class="fav-placeholder" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">🎬</div>
+          {% endif %}
+        </div>
+      {% endfor %}
     </div>
+  </div>
+  </div>
   {% endif %}
 
   {{ chart_data|json_script:"chart-data" }}
@@ -576,117 +597,6 @@
         });
       });
     });
-
-    // Person filmography modal -- click a director/actor's name (.person-trigger,
-    // wired up throughout Favorite Directors/Actors) to fetch and show which of
-    // their films this session has watched. First
-    // fetch()-based feature in this codebase -- every other view is a full server
-    // render, and building this as its own IIFE (rather than folding it into the
-    // data-toggle-group block above) keeps that boundary clear.
-    (function () {
-      const backdrop = document.getElementById('personModalBackdrop');
-      const titleEl = document.getElementById('personModalTitle');
-      const bodyEl = document.getElementById('personModalBody');
-      const closeBtn = document.getElementById('personModalClose');
-      // Sentinel tmdb_id swapped for the real one at click time -- keeps this
-      // script decoupled from the URL's literal path shape rather than
-      // hardcoding "/dashboard/.../person/<id>/" directly.
-      const urlTemplate = "{% url 'stats:person_filmography' session_id=import_session.id tmdb_id=999999999 %}";
-      const insightUrl = "{% url 'stats:insight_films' session_id=import_session.id %}";
-      let lastTrigger = null;
-
-      function escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-      }
-
-      function openModal() {
-        backdrop.hidden = false;
-        document.body.style.overflow = 'hidden';
-      }
-
-      function closeModal() {
-        backdrop.hidden = true;
-        document.body.style.overflow = '';
-        if (lastTrigger) lastTrigger.focus();
-      }
-
-      function renderFilms(data) {
-        if (!data.films.length) {
-          bodyEl.innerHTML = '<p class="modal-empty">No matching films from this session yet.</p>';
-          return;
-        }
-        const cards = data.films.map(function (film) {
-          const yearText = film.year ? ' (' + film.year + ')' : '';
-          const tooltip = escapeHtml(film.title + yearText);
-          const poster = film.poster_url
-            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
-            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
-          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
-          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
-        }).join('');
-        bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
-      }
-
-      // Delegated to the whole card, not just the .person-trigger button -- matches
-      // the hover affordance on .fav-card:has(.person-trigger) in base.css, and
-      // means a click anywhere on the poster/placeholder/name (or a keyboard
-      // activation of the button itself, which still bubbles here) all run through
-      // this one listener rather than needing separate handlers.
-      document.querySelectorAll('.fav-card').forEach(function (card) {
-        const trigger = card.querySelector('.person-trigger');
-        if (!trigger) return;
-        card.addEventListener('click', function () {
-          lastTrigger = trigger;
-          titleEl.textContent = trigger.textContent;
-          bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
-          openModal();
-          const url = urlTemplate.replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
-          fetch(url)
-            .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
-            .then(renderFilms)
-            .catch(function () {
-              bodyEl.innerHTML = '<p class="modal-error">Couldn’t load this person’s films. Try again.</p>';
-            });
-        });
-      });
-
-      // The duo / genre-combo / decade insight tiles are role="button" divs (no
-      // inner <button>), so wire click plus Enter/Space here. Same modal, same
-      // renderFilms -- only the endpoint differs (insight_films instead of
-      // person_filmography), keyed off the tile's data-drill-* attributes.
-      function openInsightModal(tile) {
-        lastTrigger = tile;
-        titleEl.textContent = tile.dataset.drillTitle || '';
-        bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
-        openModal();
-        const url = insightUrl
-          + '?kind=' + encodeURIComponent(tile.dataset.drillKind)
-          + '&p1=' + encodeURIComponent(tile.dataset.drillP1)
-          + '&p2=' + encodeURIComponent(tile.dataset.drillP2);
-        fetch(url)
-          .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
-          .then(renderFilms)
-          .catch(function () {
-            bodyEl.innerHTML = '<p class="modal-error">Couldn’t load these films. Try again.</p>';
-          });
-      }
-
-      document.querySelectorAll('.ib-tile--clickable').forEach(function (tile) {
-        tile.addEventListener('click', function () { openInsightModal(tile); });
-        tile.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            openInsightModal(tile);
-          }
-        });
-      });
-
-      closeBtn.addEventListener('click', closeModal);
-      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
-      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !backdrop.hidden) closeModal(); });
-    })();
 
     const chartData = JSON.parse(document.getElementById('chart-data').textContent);
     // Checked once at load, not re-checked on resize -- only used to give a couple
@@ -884,6 +794,8 @@
       const monthsEl = document.getElementById('heatmapMonths');
       const tipEl = document.getElementById('heatmapTip');
       const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
+      const perWeekEl = document.getElementById('heatmapPerWeekStat');
+      const perMonthEl = document.getElementById('heatmapPerMonthStat');
       if (!gridEl || !chartData.heatmap) return;
 
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -953,6 +865,21 @@
         // actual number of calendar days between two Jan 1s never does.
         const daysInYear = Math.round((new Date(year + 1, 0, 1) - startOfYear) / 86400000);
         const weekCount = Math.floor((startOffset + daysInYear - 1) / 7) + 1;
+
+        // Per-week/month pace for the selected year -- for the year still in
+        // progress this divides by days elapsed so far (not the full 365/366),
+        // otherwise a partial current year would understate the user's actual
+        // rate; a past year always divides by its full length, since months with
+        // zero activity are real data, not missing data.
+        if (perWeekEl && perMonthEl) {
+          const today = new Date();
+          const elapsedDays = year === today.getFullYear()
+            ? Math.min(daysInYear, Math.floor((today - startOfYear) / 86400000) + 1)
+            : daysInYear;
+          const totalFilms = Object.values(counts).reduce(function (sum, c) { return sum + c; }, 0);
+          perWeekEl.textContent = (totalFilms / (elapsedDays / 7)).toFixed(1);
+          perMonthEl.textContent = (totalFilms / (elapsedDays / (daysInYear / 12))).toFixed(1);
+        }
 
         // Column width AND row height, computed together so cells stay square --
         // see the comment on .heatmap-grid in base.css for why this can't be left

@@ -297,6 +297,36 @@ def _watched_movies(import_session, diary, rated, exclude_shorts=False):
     return exclude_short_movies(movies) if exclude_shorts else movies
 
 
+def _actor_rating_data(rated, watched_movies) -> tuple:
+    """Non-cameo per-actor rating lists/profile paths/tmdb ids, shared by
+    top_actors' avg_rating column and _favorite_people's favorite_actors (so an
+    actor's "highest rated" and "most watched" numbers can never disagree about
+    which of their appearances actually count) -- also called directly by the
+    home screen's stat-of-the-day pool (_stat_of_the_day), which only needs
+    favorite_actors and not the rest of build_dashboard_context.
+
+    Also returns cameo_credit_ids, since build_dashboard_context's own
+    top_actors query needs the same exclusion set and shouldn't compute it
+    twice."""
+    cameo_credit_ids = _cameo_credit_ids(
+        set(watched_movies.values_list('tmdb_id', flat=True))
+        | set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))
+    )
+    rated_ratings_by_movie = dict(rated.exclude(movie__isnull=True).values_list('movie_id', 'rating'))
+    actor_rating_lists = defaultdict(list)
+    actor_profile_paths = {}
+    actor_tmdb_ids = {}
+    for person_name, movie_id, profile_path, person_tmdb_id in (
+        Credit.objects.filter(movie_id__in=rated_ratings_by_movie)
+        .exclude(id__in=cameo_credit_ids)
+        .values_list('person__name', 'movie_id', 'person__profile_path', 'person__tmdb_id')
+    ):
+        actor_rating_lists[person_name].append(rated_ratings_by_movie[movie_id])
+        actor_profile_paths[person_name] = profile_path
+        actor_tmdb_ids[person_name] = person_tmdb_id
+    return actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids
+
+
 def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
     # _maybe_exclude_shorts is a no-op when the toggle is off -- every call site
     # below stays identical either way, rather than an `if exclude_shorts: ...`
@@ -396,35 +426,9 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
     top_directors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
     top_directors = top_directors[:FAVORITE_PEOPLE_GRID_CAP]
 
-    # Cameo exclusion is computed once over every movie either "most watched" or
-    # "highest rated" could reference, then reused for both -- see _cameo_credit_ids.
-    cameo_credit_ids = _cameo_credit_ids(
-        set(watched_movies.values_list('tmdb_id', flat=True))
-        | set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))
+    actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids = _actor_rating_data(
+        rated, watched_movies
     )
-
-    # actor_rating_lists is per-movie ratings grouped by (non-cameo) actor -- shared
-    # by top_actors' avg_rating column below and by _favorite_people's favorite_actors,
-    # so an actor's "highest rated" and "most watched" numbers can never disagree
-    # about which of their appearances actually count.
-    rated_ratings_by_movie = dict(rated.exclude(movie__isnull=True).values_list('movie_id', 'rating'))
-    actor_rating_lists = defaultdict(list)
-    # Alongside each actor's per-movie ratings, also track one profile_path per name
-    # so favorite_actors (built from actor_rating_lists in _favorite_people) can show
-    # a headshot too, without a second query back through Credit.
-    actor_profile_paths = {}
-    # Alongside profile_path, also track one tmdb_id per name -- same reason as
-    # top_directors' director_tmdb_id below, so the template can link to a person
-    # filmography view without a second name-based lookup.
-    actor_tmdb_ids = {}
-    for person_name, movie_id, profile_path, person_tmdb_id in (
-        Credit.objects.filter(movie_id__in=rated_ratings_by_movie)
-        .exclude(id__in=cameo_credit_ids)
-        .values_list('person__name', 'movie_id', 'person__profile_path', 'person__tmdb_id')
-    ):
-        actor_rating_lists[person_name].append(rated_ratings_by_movie[movie_id])
-        actor_profile_paths[person_name] = profile_path
-        actor_tmdb_ids[person_name] = person_tmdb_id
 
     top_actors = list(
         Credit.objects.filter(movie__in=watched_movies)
@@ -1988,34 +1992,28 @@ def _stat_card(stat: dict) -> dict:
     return card
 
 
-def _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total) -> dict:
-    """The "Your rating insights" section, split into two visually distinct
-    zones (Favorite Directors/Actors already cover the director/actor signal on
-    their own cards, so this section doesn't repeat it):
+def _featured_insights(diary, rated, avg_rating) -> list:
+    """The "has a real image" insight pool: favorite director-actor duo
+    (_favorite_pairing_insight) and favorite actor duo
+    (_favorite_actor_duo_insight), both two headshots; favorite genre combo
+    (_favorite_genre_combo_insight), favorite runtime, favorite decade
+    (_rating_insights with _AXIS_INSIGHT_SLOTS), and hidden gem
+    (_hidden_gem_insight), each a representative film poster; biggest rewatch
+    increase and biggest rewatch decrease (_rewatch_drift_insights), each the
+    film whose rating moved most.
 
-    'featured' -- up to 8 borderless entries, for the facts that have a real
-        image: favorite director-actor duo (_favorite_pairing_insight) and
-        favorite actor duo (_favorite_actor_duo_insight), both two headshots;
-        favorite genre combo (_favorite_genre_combo_insight), favorite runtime,
-        favorite decade (_rating_insights with _AXIS_INSIGHT_SLOTS), and hidden
-        gem (_hidden_gem_insight), each a representative film poster; biggest
-        rewatch increase and biggest rewatch decrease (_rewatch_drift_insights),
-        each the film whose rating moved most.
-    'stats' -- up to 4 cells in a "by the numbers" bar, for the facts that are
-        just a figure: countries explored (_countries_explored_insight),
-        languages explored (_languages_explored_insight), rewatch shift
-        (_rewatch_shift_insight), and like percentage (_like_percentage_insight).
-
-    Each zone is a fixed order -- not sorted by magnitude -- so the same
-    insight always lands in the same spot from one visit to the next; see each
-    individual function's own docstring for how its piece is computed and
-    gated. A slot with nothing that clears its own "worth reporting" bar is
-    skipped entirely, not padded. The whole section is hidden only when BOTH
-    zones come back empty."""
+    Shared by _dashboard_insights' zone 1 (see its own docstring) and the home
+    screen's stat-of-the-day pool (_stat_of_the_day) -- both want the same
+    "has a picture" facts, just picked differently (every qualifying one there,
+    exactly one rotated daily here). Fixed order, not sorted by magnitude, so
+    the same insight always lands in the same spot from one visit to the next;
+    see each individual function's own docstring for how its piece is computed
+    and gated. A slot with nothing that clears its own "worth reporting" bar is
+    skipped entirely, not padded."""
     raw_deltas = _raw_axis_deltas(rated, avg_rating)
     decade_best_films = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
     runtime_best_films = _best_film_per_bucket(rated, 'runtime_minutes', _runtime_bucket, tie_break='runtime')
-    featured = (
+    return (
         _favorite_pairing_insight(rated, avg_rating)
         + _favorite_actor_duo_insight(rated, avg_rating)
         + _favorite_genre_combo_insight(rated, avg_rating)
@@ -2023,6 +2021,24 @@ def _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, f
         + _hidden_gem_insight(rated, avg_rating)
         + _rewatch_drift_insights(diary)
     )
+
+
+def _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total) -> dict:
+    """The "Your rating insights" section, split into two visually distinct
+    zones (Favorite Directors/Actors already cover the director/actor signal on
+    their own cards, so this section doesn't repeat it):
+
+    'featured' -- up to 8 borderless entries; see _featured_insights for what
+        goes in this zone.
+    'stats' -- up to 4 cells in a "by the numbers" bar, for the facts that are
+        just a figure: countries explored (_countries_explored_insight),
+        languages explored (_languages_explored_insight), rewatch shift
+        (_rewatch_shift_insight), and like percentage (_like_percentage_insight).
+
+    Each zone is a fixed order -- not sorted by magnitude -- so the same
+    insight always lands in the same spot from one visit to the next. The
+    whole section is hidden only when BOTH zones come back empty."""
+    featured = _featured_insights(diary, rated, avg_rating)
     stats = (
         _countries_explored_insight(watched_movies)
         + _languages_explored_insight(watched_movies)
@@ -2324,9 +2340,11 @@ def _favorite_films(import_session) -> list:
 
 
 # How many posters make up the home screen's hero collage (see
-# _home_collage_posters below) -- enough to read as a mosaic rather than a
-# couple of tiles, without shrinking to an illegible sliver on a phone-width hero.
-HOME_COLLAGE_POSTER_COUNT = 5
+# _home_collage_posters below) -- sized for the denser of the two CSS grids it
+# feeds (.hero-collage in base.css): 12 fills mobile's 4-column/3-row grid
+# exactly, and desktop's 5-column/2-row grid (10 tiles) just hides the last 2
+# via nth-child rather than sampling a separate, smaller pool for it.
+HOME_COLLAGE_POSTER_COUNT = 12
 
 
 def _home_collage_posters(import_session) -> list:
@@ -2356,13 +2374,89 @@ def _home_collage_posters(import_session) -> list:
     return [m.poster_url for m in chosen]
 
 
+def _favorite_person_card(name: str, avg, count: int, profile_url: str, tmdb_id, role: str) -> dict:
+    """A stat-of-the-day pool entry for a favorite director/actor -- same
+    {label, value, stat, image, duo, drill} shape _featured_card produces for
+    an insight, plus `headshot` (circular, not a poster rectangle) and
+    `person` (tmdb_id/role) so the template can wire it to the same
+    person-filmography modal Favorite Directors/Actors already use, instead of
+    the insight drill-down modal."""
+    return {
+        'label': f'Favorite {role}',
+        'value': name,
+        'stat': f"{avg:.1f}★ avg · {count} film{'s' if count != 1 else ''}",
+        'image': profile_url or None,
+        'headshot': True,
+        'duo': None,
+        'drill': None,
+        'person': {'tmdb_id': tmdb_id, 'role': role},
+    }
+
+
+# Fixed candidate order for the home screen's stat-of-the-day pool (see
+# _stat_of_the_day) -- a day's pick walks forward from its hashed starting
+# point through this list, so the walk is reproducible rather than depending
+# on dict insertion order.
+_STAT_OF_DAY_ORDER = [
+    'Favorite actor/director duo', 'Favorite actor duo', 'Favorite genre combo',
+    'Favorite decade', 'Favorite runtime', 'Hidden gem',
+    'Biggest rewatch increase', 'Biggest rewatch decrease',
+    'Favorite director', 'Favorite actor',
+]
+
+
+def _stat_of_the_day(import_session, diary, rated, avg_rating, watched_movies) -> dict:
+    """One card for the home screen: the same "has a real image" pool as the
+    Overview insights grid (_featured_insights) plus a favorite director and a
+    favorite actor -- deliberately excludes the plain-number insights
+    (countries/languages explored, rewatch shift, like percentage), which have
+    no image to show here.
+
+    Rotates once per calendar day, not per visit: _stable_hash seeded by the
+    session id and today's date picks a starting point in _STAT_OF_DAY_ORDER,
+    then walks forward (wrapping) to the first entry this account actually has
+    data for, so a sparse account never lands on a blank pick just because the
+    day's hash happened to land on a slot with nothing eligible. Returns {} if
+    nothing in the whole pool qualifies."""
+    if avg_rating is None:
+        return {}
+
+    by_label = {card['label']: card for card in (_featured_card(i) for i in _featured_insights(diary, rated, avg_rating))}
+
+    actor_rating_lists, actor_profile_paths, actor_tmdb_ids, _ = _actor_rating_data(rated, watched_movies)
+    favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, avg_rating)
+    if favorite_people['favorite_directors']:
+        top = favorite_people['favorite_directors'][0]
+        by_label['Favorite director'] = _favorite_person_card(
+            top['movie__directors__name'], top['avg'], top['count'], top['profile_url'],
+            top['director_tmdb_id'], 'director',
+        )
+    if favorite_people['favorite_actors']:
+        top = favorite_people['favorite_actors'][0]
+        by_label['Favorite actor'] = _favorite_person_card(
+            top['person__name'], top['avg'], top['count'], top['profile_url'],
+            top['actor_tmdb_id'], 'actor',
+        )
+
+    if not by_label:
+        return {}
+
+    start = _stable_hash(f'{import_session.id}:{date.today().isoformat()}') % len(_STAT_OF_DAY_ORDER)
+    for offset in range(len(_STAT_OF_DAY_ORDER)):
+        label = _STAT_OF_DAY_ORDER[(start + offset) % len(_STAT_OF_DAY_ORDER)]
+        if label in by_label:
+            return by_label[label]
+    return {}
+
+
 def home_summary(import_session) -> dict:
     """The home screen's (core/landing.html) quick personalization: a two-figure
-    stat line under the greeting, and the poster set for the hero's collage
-    backdrop (see _home_collage_posters).
+    stat line under the greeting, the poster set for the hero's collage
+    backdrop (see _home_collage_posters), and the stat-of-the-day card (see
+    _stat_of_the_day).
 
     Deliberately lighter than build_dashboard_context -- this is a router page
-    reached before either destination, not a report, so it only computes the two
+    reached before either destination, not a report, so it only computes the
     numbers it actually shows rather than the full context those pages need.
     films_watched_total reuses _films_watched_total so the figure agrees exactly
     with the same count shown on Director's Cut, rather than a second, subtly
@@ -2371,8 +2465,10 @@ def home_summary(import_session) -> dict:
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
     rated_count = rated.count()
     avg_rating = float(rated.aggregate(avg=Avg('rating'))['avg']) if rated_count >= MIN_COUNT_FOR_AVERAGE else None
+    watched_movies = _watched_movies(import_session, diary, rated)
     return {
         'films_watched_total': _films_watched_total(import_session, diary, rated),
         'avg_rating': avg_rating,
         'collage_poster_urls': _home_collage_posters(import_session),
+        'stat_of_day': _stat_of_the_day(import_session, diary, rated, avg_rating, watched_movies),
     }

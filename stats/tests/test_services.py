@@ -4776,6 +4776,7 @@ class HomeSummaryTests(TestCase):
         self.assertEqual(summary['films_watched_total'], 0)
         self.assertIsNone(summary['avg_rating'])
         self.assertEqual(summary['collage_poster_urls'], [])
+        self.assertEqual(summary['stat_of_day'], {})
 
 
 class HomeCollagePostersTests(TestCase):
@@ -4876,3 +4877,102 @@ class HomeCollagePostersTests(TestCase):
 
         session = ImportSession.objects.create(display_name='Alex')
         self.assertEqual(_home_collage_posters(session), [])
+
+
+class StatOfTheDayTests(TestCase):
+    """_stat_of_the_day (via home_summary) -- the home screen's daily-rotating
+    card, picked from the same "has a real image" pool as the Overview
+    insights grid (_featured_insights) plus a favorite director/actor. See
+    _STAT_OF_DAY_ORDER for the fixed candidate order the daily hash walks."""
+
+    def test_empty_below_min_count_for_average(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        movie = _make_movie(20000, 'Solo Film', 2015, 100, 'Drama')
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/solo', title=movie.title,
+            year=movie.release_year, rating=Decimal('4.0'), movie=movie,
+        )
+        self.assertEqual(home_summary(session)['stat_of_day'], {})
+
+    def test_empty_when_nothing_in_the_pool_qualifies(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        # Two rated films, different directors, no cast credited -- enough for
+        # avg_rating but nothing else in _STAT_OF_DAY_ORDER clears its bar.
+        for i, rating in enumerate(['4.0', '4.0']):
+            movie = _make_movie(20010 + i, f'Plain Film {i}', 2015, 100, 'Drama', f'Director {i}')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/plain{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal(rating), movie=movie,
+            )
+        self.assertEqual(home_summary(session)['stat_of_day'], {})
+
+    def test_picks_favorite_director_when_it_is_the_only_eligible_entry(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(3):
+            movie = _make_movie(20020 + i, f'Director Film {i}', 2015, 100, 'Drama', 'Dir X')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/dirx{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+            )
+        stat = home_summary(session)['stat_of_day']
+        self.assertEqual(stat['label'], 'Favorite director')
+        self.assertEqual(stat['value'], 'Dir X')
+        self.assertEqual(stat['person'], {'tmdb_id': hash('Dir X') % 10_000, 'role': 'director'})
+        self.assertIsNone(stat['drill'])
+        self.assertTrue(stat['headshot'])
+
+    def test_picks_favorite_actor_when_it_is_the_only_eligible_entry(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        actor, _ = Person.objects.get_or_create(tmdb_id=30001, defaults={'name': 'Actor Y'})
+        for i in range(4):
+            movie = _make_movie(20030 + i, f'Actor Film {i}', 2015, 100, 'Drama')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/actory{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+            )
+            _cast_movie(movie, actor, order=1, total_cast_size=35)
+        stat = home_summary(session)['stat_of_day']
+        self.assertEqual(stat['label'], 'Favorite actor')
+        self.assertEqual(stat['value'], 'Actor Y')
+        self.assertEqual(stat['person'], {'tmdb_id': 30001, 'role': 'actor'})
+        self.assertIsNone(stat['drill'])
+
+    def test_excluded_labels_are_not_in_the_candidate_order(self):
+        from stats.services.dashboard import _STAT_OF_DAY_ORDER
+
+        excluded = {'Rewatch shift', 'Like percentage', 'Countries explored', 'Languages explored'}
+        self.assertFalse(excluded & set(_STAT_OF_DAY_ORDER))
+
+    def test_pick_is_stable_for_the_same_day(self):
+        from stats.services.dashboard import home_summary
+
+        session = ImportSession.objects.create(display_name='Alex')
+        for i in range(3):
+            movie = _make_movie(20040 + i, f'Director Film {i}', 2015, 100, 'Drama', 'Dir Z')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/dirz{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+            )
+        actor, _ = Person.objects.get_or_create(tmdb_id=30002, defaults={'name': 'Actor W'})
+        for i in range(4):
+            movie = _make_movie(20050 + i, f'Actor Film {i}', 2015, 100, 'Comedy')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/actorw{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.5'), movie=movie,
+            )
+            _cast_movie(movie, actor, order=1, total_cast_size=35)
+
+        with patch('stats.services.dashboard.date') as mock_date:
+            mock_date.today.return_value = date(2026, 3, 14)
+            first = home_summary(session)['stat_of_day']
+            second = home_summary(session)['stat_of_day']
+        self.assertEqual(first['label'], second['label'])
+        self.assertIn(first['label'], {'Favorite director', 'Favorite actor'})
