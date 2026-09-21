@@ -880,21 +880,27 @@ h1, h2, h3, h4 { font-weight: 700; }
 .fav-card p { margin: 0.5rem 0 0; font-size: 0.9rem; }
 
 /* Only cards containing a .person-trigger (Favorite Directors/Actors, Most
-   rewatched directors) are actually clickable -- the whole card opens the
-   filmography modal (see dashboard.html/compare.html's JS), not just the name
-   text. Every other .fav-card (hero favorites, taste-vs-crowd, most rewatched
-   films, the modal's own poster grid, etc.) is purely decorative and deliberately
-   gets no hover cue here -- it would imply a click that does nothing. Matches
-   .choice-card's existing hover idiom (accent-colored border) rather than
-   inventing a new one. */
-.fav-card:has(.person-trigger) { cursor: pointer; }
+   rewatched directors) or, same reasoning, a .shared-person-trigger (Double
+   Feature's Favorite directors/actors Shared panel) are actually clickable --
+   the whole card opens a filmography modal (see dashboard.html/compare.html's
+   JS), not just the name text. Every other .fav-card (hero favorites,
+   taste-vs-crowd, most rewatched films, the modal's own poster grid, etc.) is
+   purely decorative and deliberately gets no hover cue here -- it would imply
+   a click that does nothing. Matches .choice-card's existing hover idiom
+   (accent-colored border) rather than inventing a new one. */
+.fav-card:has(.person-trigger),
+.fav-card:has(.shared-person-trigger) { cursor: pointer; }
 .fav-card:has(.person-trigger) img,
-.fav-card:has(.person-trigger) .fav-placeholder {
+.fav-card:has(.person-trigger) .fav-placeholder,
+.fav-card:has(.shared-person-trigger) img,
+.fav-card:has(.shared-person-trigger) .fav-placeholder {
   border: 2px solid transparent;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
 .fav-card:has(.person-trigger):hover img,
-.fav-card:has(.person-trigger):hover .fav-placeholder {
+.fav-card:has(.person-trigger):hover .fav-placeholder,
+.fav-card:has(.shared-person-trigger):hover img,
+.fav-card:has(.shared-person-trigger):hover .fav-placeholder {
   border-color: var(--accent);
   transform: translateY(-2px);
 }
@@ -932,8 +938,9 @@ h1, h2, h3, h4 { font-weight: 700; }
    .fav-card img/.fav-placeholder's own 2:3 poster box -- border-radius:50% alone
    on a 2:3 box draws an ellipse, not a circle; it needs a square box to round
    into a true circle) -- a full-width rectangular headshot looks odd blown up to
-   a poster's 2:3 box, and every other person photo across the site (.person-thumb)
-   is already circular, so this brings Favorite Directors/Actors and Most
+   a poster's 2:3 box, and every other person photo across the site
+   (.stat-of-day-headshot, .person-trigger avatars) is already circular, so this
+   brings Favorite Directors/Actors and Most
    rewatched directors in line with that rather than being the one rectangular
    exception. 2 lines' height reserved for the name below it regardless of whether
    it actually wraps, whether that name is plain text (Most rewatched directors)
@@ -968,7 +975,8 @@ h1, h2, h3, h4 { font-weight: 700; }
    TMDB to do this per-image), just a better-on-average default than 50/50. */
 .favs--headshots .fav-card img { object-position: 50% 30%; }
 .favs--headshots .fav-card .fav-name,
-.favs--headshots .fav-card .person-trigger {
+.favs--headshots .fav-card .person-trigger,
+.favs--headshots .fav-card .shared-person-trigger {
   min-height: 44px;
   /* Default text wrapping only breaks at spaces -- a single long word (a surname
      like "Cumberbatch") has nowhere to wrap at 4 columns on a phone, so without
@@ -978,14 +986,15 @@ h1, h2, h3, h4 { font-weight: 700; }
      natural space first, same as it already did for shorter names. */
   overflow-wrap: break-word;
 }
-/* .person-trigger's own left-aligned, inline-block default is tuned for a table's
-   name-cell -- centered and block-level here to match the plain <p> name this modal
+/* .person-trigger's own left-aligned, inline-block default is tuned for a table row
+   -- centered and block-level here to match the plain <p> name this modal
    trigger sits alongside in a .fav-card (Favorite Directors/Actors), which is
    already centered by .fav-card itself. width:100% is the part that actually makes
    text-align:center visible -- display:block alone doesn't stretch a <button> to
    its container the way it would a <div>, so without it the button stays
    shrink-wrapped to its own text and just sits flush left instead. */
-.fav-card .person-trigger {
+.fav-card .person-trigger,
+.fav-card .shared-person-trigger {
   display: block;
   width: 100%;
   text-align: center;
@@ -1174,8 +1183,8 @@ button, .btn {
 
 table { width: 100%; border-collapse: collapse; }
 /* Default td vertical-align is baseline, not middle -- fine for plain text cells, but
-   a row with a person/film thumbnail (person-thumb, film-thumb) is taller than its
-   plain-text siblings, so their text sits low against the image instead of centered. */
+   a row with a taller sibling (an image, a multi-line value) leaves plain text
+   sitting low against it instead of centered. */
 th, td { text-align: center; padding: 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 th { color: var(--muted); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; }
 /* Sora renders ~15-20% wider than the previous system-font stack at the same size
@@ -1447,6 +1456,17 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    single row of stat pairs, not 6 independent grid items that could reflow out
    of their intended groups. */
 .compare-overview-pair { display: flex; flex-direction: column; gap: 0.75rem; }
+/* Reserves 2 lines (2 * the inherited 1.5 line-height) regardless of whether a
+   given label actually wraps -- two of these three columns' labels embed a
+   session's display_name ("Only {name}"/"{name} rated higher"), which wraps to
+   a second line on a narrow phone width once the name is long enough. Without
+   a shared min-height, whichever column happens to wrap ends up taller than
+   its siblings, pushing just that column's second stat (and, on the "Only"
+   side, the middle "Both watched" column's own unrelated stats) down out of
+   line with the other two -- see the mismatched .value tops this was
+   introducing on the actual _sn_/thedreqmers_ page (thedreqmers_'s two labels
+   both wrap; the other two columns' don't wrap at the same point). */
+.compare-overview-pair .stat .label { min-height: 3em; }
 /* Forced to 3 (Only A / Both / Only B) and 3 again (Watched in common / Rating
    agreement / Per-film rating gap) at every width, same "short numbers read
    better side by side than stacked" reasoning as .grid--calendar-stats' own
@@ -1512,56 +1532,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    sibling .cards on the page. */
 @media (max-width: 600px) { .three-col { grid-template-columns: minmax(0, 1fr); gap: 0; } }
 
-/* Inline thumbnails for table rows -- a headshot next to a director/actor name, or a
-   small poster next to a film title. Sized to sit on one line with normal table text
-   rather than blowing out row height. */
-.name-cell { display: flex; align-items: center; gap: 0.6rem; }
-/* Matches film-thumb's 42px height, not an arbitrary avatar size -- so a table of
-   people (e.g. Most rewatched directors) has the same per-row height as the
-   matching table of films (Most rewatched films) it sits beside in a two-col row,
-   rather than looking shorter just because a circular headshot is naturally more
-   compact than a film poster's 2:3 aspect ratio. */
-.person-thumb, .person-thumb-placeholder {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-/* Same upward crop bias as .favs--headshots' own img rule, and for the same
-   reason -- this crops the same natively-2:3 TMDB profile photos down to a
-   square, and a dead-center crop undershoots the face on a lot of them. */
-.person-thumb { object-position: 50% 30%; }
-.film-thumb, .film-thumb-placeholder {
-  width: 28px;
-  height: 42px;
-  border-radius: 4px;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-/* Placeholder icon look (the emoji-in-a-box shown when a person/film has no
-   thumbnail image) is identical for both -- only the box shape above differs. */
-.person-thumb-placeholder, .film-thumb-placeholder {
-  background: var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.9rem;
-}
-
-/* Double Feature only -- every poster/headshot thumbnail on that page, ~20% larger
-   than Director's Cut's own sizing. Scoped to .compare-page (compare.html's content
-   wrapper) rather than changing the shared classes outright, since Director's Cut
-   uses the exact same .film-thumb/.person-thumb classes and its current sizing
-   wasn't part of this request. */
-.compare-page .person-thumb, .compare-page .person-thumb-placeholder { width: 50px; height: 50px; }
-/* Sized well beyond the base 28x42 -- .film-thumb is only used by Same day logs now
-   (every other film list on this page moved to the .fav-card poster grid), which
-   wanted bigger posters specifically to fill the dead space a lone thumbnail left in
-   its column once the title text next to it was dropped. Bumped again to 60x90 --
-   the day-grid's fixed-column cards (see .day-card) have the room now that width
-   isn't content-driven, so a bigger poster reads better than the extra whitespace. */
-.compare-page .film-thumb, .compare-page .film-thumb-placeholder { width: 60px; height: 90px; }
 /* "X loved it, Y hasn't seen it" and Favorite directors' "Side by side" grids both
    sit in a half-width .two-col card, not the full-width card the site's shared
    .favs--eight grid (Same rating, Watchlist matches, etc.) uses -- 3 rows of 4
@@ -1604,46 +1574,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
     max-width: calc((100% - 2 * 0.6rem) / 3);
   }
 }
-
-/* Same day logs -- a flow of day cards, one per shared logging day. Originally
-   sized to content (a 1-film day narrower than a 4-film day) inside a bordered box
-   per card; that made the row jagged -- card width visibly jumping around drew more
-   attention to the unevenness than a plain content-sized flex-wrap would have on its
-   own. No border/padding box either -- whitespace separates cards now, not a drawn
-   outline. Extra posters beyond what a column comfortably fits wrap within the card
-   (day-card-films > div is already flex-wrap) rather than widening it.
-   Fixed column count, same flex-basis-calc technique as .favs--six above (not real
-   CSS grid, for the same "content can still determine a card's own height" reason
-   that pattern already established) -- 3 columns on desktop (4 rows of
-   SAME_DAY_LOGS_GRID_CAP=12 in compare.py), 2 columns on mobile at the same 700px
-   breakpoint .favs--six uses (6 rows of the same 12) -- both shapes fill the cap
-   exactly, no sparse partial row at either width. */
-/* center, not flex-start -- flex-start left-packs each row and dumps all the
-   leftover width as a single gap on the right, which reads as uneven since the last
-   (partial) row looks nothing like the others; centering balances every row instead. */
-.day-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem 1.25rem; }
-.day-card {
-  flex: 0 0 calc((100% - 2 * 1.25rem) / 3);
-  max-width: calc((100% - 2 * 1.25rem) / 3);
-  text-align: center;
-}
-@media (max-width: 700px) {
-  .day-card {
-    flex: 0 0 calc((100% - 1 * 1.25rem) / 2);
-    max-width: calc((100% - 1 * 1.25rem) / 2);
-  }
-}
-.day-card-date { margin: 0 0 0.75rem; font-weight: 700; }
-.day-card-films { display: flex; justify-content: center; align-items: flex-start; gap: 1rem; }
-.day-card-films > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; }
-/* Colors each side's posters to match the page's a-color/b-color convention -- the
-   only other cue a day card gives for "whose films are these" is left-vs-right
-   position, which isn't self-explanatory without the .color-key legend above it.
-   outline, not border, so it doesn't add to each thumbnail's box size. */
-.day-card-films > div:first-child .film-thumb,
-.day-card-films > div:first-child .film-thumb-placeholder { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-.day-card-films > div:last-child .film-thumb,
-.day-card-films > div:last-child .film-thumb-placeholder { outline: 2px solid var(--accent-3); outline-offset: 2px; }
 
 /* A small "i" badge that reveals a plain-English explanation on hover/focus -- for
    spots where a number or a filtered list needs a sentence of context (e.g. what
@@ -1811,10 +1741,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
    sections side by side, one per person, instead of the plain single-column
    .modal-body/.modal-film-grid every other modal use gets. h4 carries the
    a-color/b-color distinction on its own (colored name, no poster outline --
-   unlike the day-card grid's own .day-card-films outlines, two side-by-side
-   sections already make "whose films are these" obvious from position alone, the
-   same reasoning .day-card-films' own comment gives for needing an outline when
-   posters instead sit stacked in one column). Always two 2-column grids side by
+   two side-by-side sections already make "whose films are these" obvious from
+   position alone, unlike a layout with both people's posters stacked in one
+   column, which would need an outline to tell them apart). Always two 2-column
+   grids side by
    side (a 2x2 each), deliberately not stacking to one column on a narrow phone
    the way .modal-film-grid's own phone breakpoint above does -- keeping the
    side-by-side shape consistent at every width mattered more here than avoiding
@@ -1836,10 +1766,14 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .modal-body--same-day h4 { margin: 0 0 0.75rem; font-size: 0.85rem; }
 .modal-body--same-day .modal-film-grid { grid-template-columns: repeat(2, 1fr); }
-/* Wraps just the name text next to a person-thumb, not the whole row -- the
-   thumbnail stays non-interactive. Inherits the surrounding table/card font instead
-   of looking like a generic <button>. */
-.person-trigger {
+/* Wraps just the name text next to a person's headshot, not the whole row -- the
+   headshot stays non-interactive. Inherits the surrounding table/card font instead
+   of looking like a generic <button>. .shared-person-trigger (Double Feature's
+   Favorite directors/actors Shared panel) gets the exact same reset -- a
+   distinct class only so its own JS/CSS click-target selectors don't also match
+   Side-by-side's .person-trigger cards (and vice versa), not because the visual
+   treatment differs at all. */
+.person-trigger, .shared-person-trigger {
   background: none;
   border: none;
   padding: 0;
@@ -1849,4 +1783,5 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   cursor: pointer;
   text-align: left;
 }
-.person-trigger:hover, .person-trigger:focus-visible { text-decoration: underline; }
+.person-trigger:hover, .person-trigger:focus-visible,
+.shared-person-trigger:hover, .shared-person-trigger:focus-visible { text-decoration: underline; }

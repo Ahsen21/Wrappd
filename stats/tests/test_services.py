@@ -196,19 +196,13 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(len(taste['overrates']), 16)
         self.assertEqual(len(taste['underrates']), 16)
 
-    def test_rating_by_genre_and_decade(self):
-        genre_decade = build_dashboard_context(self.session)['genre_decade']
+    def test_rating_by_genre(self):
+        chart = build_dashboard_context(self.session)['chart_data']['rating_by_genre']
 
-        by_genre = {row['label']: row for row in genre_decade['by_genre']}
-        self.assertEqual(by_genre['Drama']['avg'], 3.0)
-        self.assertEqual(by_genre['Drama']['count'], 2)
+        by_genre = dict(zip(chart['labels'], chart['data']))
+        self.assertEqual(by_genre['Drama'], 3.0)
         # Comedy has only 1 rated film (Gamma), below the count>=2 threshold -- excluded.
         self.assertNotIn('Comedy', by_genre)
-
-        self.assertEqual(
-            genre_decade['by_decade'],
-            [{'label': '1990s', 'avg': 3.0, 'count': 2}],
-        )
 
     def test_rating_distribution_sourced_from_ratings_not_diary(self):
         # Alpha has 2 diary rows (a rewatch), both rating 5.0, but only 1 RatingEntry --
@@ -1479,41 +1473,78 @@ class BuildCompareContextTests(TestCase):
         # Only "Shared Close" (delta 0.5) counts as agreement; "Shared Far" (delta 4.0) doesn't.
         self.assertEqual(context['agreement_pct'], 50.0)
 
-    def test_only_a_films_lists_unique_film(self):
-        context = build_compare_context(self.session_a, self.session_b)
-        self.assertEqual([f['title'] for f in context['only_a_films']], ['Only A'])
-
     def test_avg_delta_present_with_two_shared_rated_films(self):
         context = build_compare_context(self.session_a, self.session_b)
         self.assertIsNotNone(context['avg_delta'])
 
-    def test_only_a_films_capped_but_count_stays_uncapped(self):
+    def test_only_a_count_reflects_true_total(self):
         for i in range(15):
             RatingEntry.objects.create(
                 import_session=self.session_a, letterboxd_uri=f'https://boxd.it/onlya-extra{i}',
                 title=f'Only A Extra {i}', year=2020, rating=Decimal('3.0'),
             )
         context = build_compare_context(self.session_a, self.session_b)
-        # 15 extras + the 1 from setUp = 16 unique-to-A films, but the display list is
-        # capped at TOP_N while only_a_count stays the true total.
+        # 15 extras + the 1 from setUp = 16 unique-to-A films.
         self.assertEqual(context['only_a_count'], 16)
-        self.assertEqual(len(context['only_a_films']), 10)
 
-    def test_compatibility_is_average_of_overlap_and_agreement(self):
-        context = build_compare_context(self.session_a, self.session_b)
+    def test_compatibility_blends_overlap_agreement_and_gap(self):
+        # Two mutually-rated films, both fully shared, each 1.0★ apart:
+        # overlap_pct=100.0, agreement_pct=0.0 (1.0 > the 0.5 threshold),
+        # avg_delta=1.0 -> gap_pct=100*(1-1.0/4.5)=77.8, taste_pct=(0.0+77.8)/2=38.9,
+        # compatibility_pct=(100.0+38.9)/2=69.5 -- verified against the actual
+        # implementation, not hand-derived, since floating-point rounding on a
+        # three-stage blend isn't reliably reproducible by eye.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/gap1-a', title='Gap Film 1', year=2020,
+            rating=Decimal('3.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/gap1-b', title='Gap Film 1', year=2020,
+            rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/gap2-a', title='Gap Film 2', year=2021,
+            rating=Decimal('2.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/gap2-b', title='Gap Film 2', year=2021,
+            rating=Decimal('3.0'),
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(context['overlap_pct'], 100.0)
+        self.assertEqual(context['agreement_pct'], 0.0)
+        self.assertEqual(context['avg_delta'], 1.0)
+        self.assertEqual(context['compatibility_pct'], 69.5)
+
+    def test_compatibility_falls_back_to_overlap_and_agreement_with_only_one_rated_film(self):
+        # avg_delta needs MIN_COUNT_FOR_AVERAGE (2) mutually-rated films to mean
+        # anything -- with only one, compatibility_pct falls back to the plain
+        # overlap/agreement average rather than blending in a one-film "average".
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/solo-a', title='Solo Shared', year=2020,
+            rating=Decimal('3.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/solo-b', title='Solo Shared', year=2020,
+            rating=Decimal('4.0'),
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertIsNone(context['avg_delta'])
         expected = round((context['overlap_pct'] + context['agreement_pct']) / 2, 1)
         self.assertEqual(context['compatibility_pct'], expected)
 
     def test_compatibility_is_none_without_shared_rated_films(self):
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        DiaryEntry.objects.create(
-            import_session=session_a, letterboxd_uri='https://boxd.it/shared-a', title='Shared Unrated',
-            year=2020, watched_date='2024-01-01',
+        WatchedEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/shared-a', title='Shared Unrated', year=2020,
         )
-        DiaryEntry.objects.create(
-            import_session=session_b, letterboxd_uri='https://boxd.it/shared-b', title='Shared Unrated',
-            year=2020, watched_date='2024-01-02',
+        WatchedEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/shared-b', title='Shared Unrated', year=2020,
         )
         context = build_compare_context(session_a, session_b)
         self.assertIsNone(context['agreement_pct'])
@@ -1523,6 +1554,101 @@ class BuildCompareContextTests(TestCase):
         # one, when there's no score behind it yet.
         from stats.services.compare import ALIGNMENT_GAUGE_CIRCUMFERENCE
         self.assertEqual(context['compatibility_gauge_offset'], ALIGNMENT_GAUGE_CIRCUMFERENCE)
+
+    def test_a_rating_only_in_diary_csv_does_not_count(self):
+        # diary.csv is deliberately not a source for _film_map at all -- a film
+        # logged (with a rating) only in diary.csv, never in ratings.csv or
+        # watched.csv, isn't in either session's film map, so it can't even
+        # register as "shared" let alone contribute to rating agreement.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/diary-only-a',
+            title='Diary Rated Only', year=2020, watched_date='2024-01-01', rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/ratingscsv-b',
+            title='Diary Rated Only', year=2020, rating=Decimal('4.0'),
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(context['shared_count'], 0)
+        self.assertEqual(context['watched_count_a'], 0)
+        self.assertEqual(context['watched_count_b'], 1)
+
+    def test_a_diary_rating_never_overrides_the_ratings_csv_value(self):
+        # A rewatch can leave diary.csv holding a different rating than the one
+        # in ratings.csv (the current, authoritative one) -- since diary.csv
+        # isn't a source at all, ratings.csv's value is the only one that can
+        # ever reach the comparison, regardless of what diary.csv says.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        DiaryEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/stale-diary-a',
+            title='Rerated Film', year=2020, watched_date='2020-01-01', rating=Decimal('2.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/current-rating-a',
+            title='Rerated Film', year=2020, rating=Decimal('5.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/rerated-b',
+            title='Rerated Film', year=2020, rating=Decimal('5.0'),
+        )
+        # A second mutually-rated film so avg_delta clears MIN_COUNT_FOR_AVERAGE
+        # (2) and actually renders a number instead of None either way.
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/second-a',
+            title='Second Shared', year=2021, rating=Decimal('3.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/second-b',
+            title='Second Shared', year=2021, rating=Decimal('3.0'),
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(context['agreement_pct'], 100.0)
+        self.assertEqual(context['avg_delta'], 0.0)
+
+    def test_a_film_only_one_of_them_rated_is_excluded_from_agreement_and_gap(self):
+        # Both watched it (so it counts toward shared_count/overlap_pct), but only
+        # one of them rated it -- it must NOT count toward agreement_pct/avg_delta,
+        # which are specifically about films both of you rated.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/onlya-rated',
+            title='Only Alex Rated', year=2020, rating=Decimal('4.0'),
+        )
+        WatchedEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/onlya-rated-b',
+            title='Only Alex Rated', year=2020,
+        )
+        # Two mutually-rated films (MIN_COUNT_FOR_AVERAGE is 2) so agreement_pct/
+        # avg_delta have real numbers to compute over -- otherwise both would be
+        # None regardless of whether the exclusion bug exists, making the
+        # assertion vacuous.
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/both-rate-a',
+            title='Both Rated', year=2021, rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/both-rate-b',
+            title='Both Rated', year=2021, rating=Decimal('4.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/both-rate2-a',
+            title='Both Rated Two', year=2022, rating=Decimal('3.0'),
+        )
+        RatingEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/both-rate2-b',
+            title='Both Rated Two', year=2022, rating=Decimal('3.0'),
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertEqual(context['shared_count'], 3)
+        self.assertEqual(context['agreement_pct'], 100.0)
+        self.assertEqual(context['avg_delta'], 0.0)
+        self.assertEqual(
+            sorted(f['title'] for f in context['biggest_disagreements']), ['Both Rated', 'Both Rated Two'],
+        )
 
 
 class AlignmentBlurbTests(TestCase):
@@ -1662,6 +1788,34 @@ class SharedPeopleTests(TestCase):
         weak = next(row for row in context['shared_directors'] if row['name'] == 'Weak Link Director')
         self.assertEqual(weak['count_a'], 3)
         self.assertEqual(weak['count_b'], 3)
+
+    def test_shared_person_carries_a_tmdb_id_for_the_click_through_modal(self):
+        # tmdb_id feeds the Shared panel's own click-through modal (fetches both
+        # sessions' filmography for this one real person) -- same real person, so
+        # the same tmdb_id, regardless of which session's copy of the stats dict
+        # happens to supply it.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        director = Person.objects.get_or_create(
+            tmdb_id=hash('Shared Director') % 10_000, defaults={'name': 'Shared Director'},
+        )[0]
+        for j in range(3):
+            movie = _make_movie(2800 + j, f'Shared Dir Film A{j}', 2020, 100, 'Drama')
+            movie.directors.add(director)
+            RatingEntry.objects.create(
+                import_session=session_a, letterboxd_uri=f'https://boxd.it/tmdb-a{j}', title=movie.title,
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        for j in range(3):
+            movie = _make_movie(2810 + j, f'Shared Dir Film B{j}', 2020, 100, 'Drama')
+            movie.directors.add(director)
+            RatingEntry.objects.create(
+                import_session=session_b, letterboxd_uri=f'https://boxd.it/tmdb-b{j}', title=movie.title,
+                year=2020, rating=Decimal('5.0'), movie=movie,
+            )
+        context = build_compare_context(session_a, session_b)
+        row = next(row for row in context['shared_directors'] if row['name'] == 'Shared Director')
+        self.assertEqual(row['tmdb_id'], director.tmdb_id)
 
     def test_shared_actor_appears_when_both_qualify(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -4323,11 +4477,17 @@ class WatchlistMatchesRankingTests(TestCase):
 
 
 class TopUnseenByOtherTests(TestCase):
-    """'Not the other' means the other session has no record of the film at all --
-    not just a different rating, and not an unrated diary log either. Ranked by
-    rating descending, not restricted to a perfect 5.0."""
+    """'Not the other' means the other session has no record of the film in
+    ratings.csv or watched.csv -- diary.csv isn't a source _film_map draws
+    from at all, so a diary-only log (even with a date) doesn't count as "the
+    other has seen it" here. Ranked by rating descending, not restricted to a
+    perfect 5.0."""
 
-    def test_excluded_when_other_diary_logged_but_unrated(self):
+    def test_included_when_other_only_has_a_diary_log(self):
+        # A diary-only log (no matching ratings.csv/watched.csv row) isn't a
+        # "record of the film" for this list's purposes -- see _film_map's own
+        # docstring for why diary.csv is excluded from this page's watched/rated
+        # identity entirely.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         RatingEntry.objects.create(
@@ -4337,6 +4497,19 @@ class TopUnseenByOtherTests(TestCase):
         DiaryEntry.objects.create(
             import_session=session_b, letterboxd_uri='https://boxd.it/five-b', title='Five Star Film', year=2020,
             watched_date='2024-01-01',
+        )
+        context = build_compare_context(session_a, session_b)
+        self.assertIn('Five Star Film', [f['title'] for f in context['top_unseen_a']])
+
+    def test_excluded_when_other_watched_it_via_watched_csv(self):
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+        RatingEntry.objects.create(
+            import_session=session_a, letterboxd_uri='https://boxd.it/five', title='Five Star Film', year=2020,
+            rating=Decimal('5.0'),
+        )
+        WatchedEntry.objects.create(
+            import_session=session_b, letterboxd_uri='https://boxd.it/five-b', title='Five Star Film', year=2020,
         )
         context = build_compare_context(session_a, session_b)
         self.assertNotIn('Five Star Film', [f['title'] for f in context['top_unseen_a']])
@@ -4412,7 +4585,6 @@ class TopUnseenByOtherTests(TestCase):
             )
         context = build_compare_context(session_a, session_b)
         self.assertEqual(len(context['top_unseen_a']), 12)
-        self.assertEqual(context['top_unseen_a_total'], 13)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')

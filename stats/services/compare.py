@@ -15,6 +15,11 @@ from stats.services.filters import SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short
 from tmdb.models import Credit, Movie
 
 AGREEMENT_THRESHOLD = Decimal('0.5')
+# The largest possible per-film rating gap on Letterboxd's 0.5-5.0 scale (one of you
+# rated it the minimum, the other the maximum) -- used to normalize avg_delta into a
+# 0-100 "closeness" percentage for compatibility_pct (see build_compare_context),
+# the same way overlap_pct/agreement_pct already are.
+MAX_RATING_DELTA = Decimal('4.5')
 TOP_N = 10
 # Radius of the Overall alignment gauge's ring in compare.html (r="60" on a 150x150
 # SVG, cx/cy 75) -- the circumference here is that ring's stroke-dasharray, kept as
@@ -36,11 +41,10 @@ GRID_DISPLAY_CAP_NARROW = 12
 # shape: 2 rows of 6 on desktop (4 rows of 3 on mobile), full-width like
 # GRID_DISPLAY_CAP's grids but a different column count/cap than any of them.
 SHARED_PEOPLE_GRID_CAP = 12
-# Same day logs -- its own cap and its own shape, not any of the above: 4 rows of 3
-# on desktop, unwound to 6 rows of 2 on mobile (see .day-grid in base.css) rather
-# than SHARED_PEOPLE_GRID_CAP's 2-rows-of-6-desktop/4-rows-of-3-mobile shape, since a
-# day card (a date label plus two small poster columns) is far wider per item than a
-# person avatar -- fewer, taller columns fit it better at both breakpoints.
+# Cap for the 'same_day_logs' context list -- no longer rendered directly (the
+# template shows the heatmap built from the uncapped same_day_logs_all instead),
+# but kept capped and covered by its own tests rather than removed outright, since
+# same_day_logs_all's computation is still load-bearing for that heatmap.
 SAME_DAY_LOGS_GRID_CAP = 12
 # Qualifying bar for _top_unseen_by_other -- "X loved it, Y hasn't seen it" needs to
 # stay a genuine "loved it" claim, not just whatever happens to be the highest-rated
@@ -78,22 +82,30 @@ RATING_BUCKETS = [Decimal(v) for v in ('0.5', '1.0', '1.5', '2.0', '2.5', '3.0',
 
 
 def _film_map(import_session, exclude_shorts=False):
-    """One row per (title, year) for this session, combining the authoritative rating
-    (ratings.csv) with the movie FK / title fallback from diary.csv, then topped up
-    with watched.csv (WatchedEntry) -- the actual authoritative superset of "did this
-    person watch this film at all", same definition dashboard.py's own
-    _films_watched_total uses. A film marked watched but never dated or rated (an old
-    pre-diary watch, commonly) previously fell through this map entirely, silently
-    undercounting every stat derived from it on this page (shared/only-A/only-B
-    counts, "X hasn't seen it" claims, and so on) relative to Director's Cut's own
-    watched-film total for the same session.
+    """One row per (title, year) for this session, from exactly two sources:
+    ratings.csv (RatingEntry, the authoritative rating) and watched.csv
+    (WatchedEntry, the authoritative superset of "did this person watch this
+    film at all", same definition dashboard.py's own _films_watched_total
+    uses) -- ratings.csv is itself a subset of watched.csv (every rated film
+    was watched), so this is really just watched.csv's identity set with
+    ratings layered on where they exist.
+
+    diary.csv is deliberately NOT a source here, for every stat this page
+    builds from this map (shared/only-A/only-B counts, rating agreement, the
+    per-film rating gap, "X hasn't seen it" claims): it's a log of *when* you
+    watched something, a separate concern from *whether* you watched it or
+    *what* you rated it, and a film logged in diary.csv without also
+    appearing in watched.csv or ratings.csv (an incomplete export, or a
+    diary-only rating that never made it into ratings.csv) shouldn't count as
+    "watched" or "rated" here just because it happened to be logged with a
+    date. See _same_day_logs/_films_by_date and _rating_curve elsewhere in
+    this file for the date-based features diary.csv legitimately does drive.
 
     Keyed by (title, year), not letterboxd_uri: Letterboxd's "Letterboxd URI" column is
     a per-log-entry short link, not a stable per-film id -- the same film gets a
-    *different* boxd.it code in diary.csv than in ratings.csv (and again in
-    watched.csv). (title, year) is the same key TMDB matching already uses (see
-    tmdb/services/enrichment.py), so this keeps film identity consistent across the
-    whole app.
+    *different* boxd.it code in ratings.csv than in watched.csv. (title, year) is the
+    same key TMDB matching already uses (see tmdb/services/enrichment.py), so this
+    keeps film identity consistent across the whole app.
 
     exclude_shorts drops any row whose resolved movie has a confirmed runtime under
     SHORT_FILM_MAX_RUNTIME_MINUTES -- the include/exclude shorts toggle on this
@@ -102,28 +114,18 @@ def _film_map(import_session, exclude_shorts=False):
     films = {}
 
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
-    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
     watched = exclude_tv_shows(WatchedEntry.objects.filter(import_session=import_session))
     if exclude_shorts:
         rated = exclude_short_entries(rated)
-        diary = exclude_short_entries(diary)
         watched = exclude_short_entries(watched)
 
     for r in rated.select_related('movie'):
         films[(r.title, r.year)] = {'title': r.title, 'year': r.year, 'rating': r.rating, 'movie_id': r.movie_id}
 
-    for d in diary.select_related('movie').order_by('watched_date'):
-        key = (d.title, d.year)
-        entry = films.setdefault(key, {'title': d.title, 'year': d.year, 'rating': None, 'movie_id': None})
-        if d.movie_id and not entry.get('movie_id'):
-            entry['movie_id'] = d.movie_id
-        if entry.get('rating') is None and d.rating is not None:
-            entry['rating'] = d.rating
-
-    # No date, no rating to contribute -- just fills in the movie_id when the film
-    # is genuinely new to the map, and otherwise only shows up here at all (an
-    # unrated, undated "yes I've seen this"), same fallback role watched.csv plays
-    # in _films_watched_total.
+    # No rating to contribute -- just fills in the movie_id when the film is
+    # genuinely new to the map, and otherwise only shows up here at all (an
+    # unrated "yes I've seen this"), same fallback role watched.csv plays in
+    # _films_watched_total.
     for w in watched.select_related('movie'):
         key = (w.title, w.year)
         entry = films.setdefault(key, {'title': w.title, 'year': w.year, 'rating': None, 'movie_id': None})
@@ -254,11 +256,11 @@ def _top_unseen_by_other(import_session, other_watched_keys, exclude_shorts=Fals
     the other session has no record of watching at all -- not restricted to a
     perfect 5.0 (that returned nothing for anyone who rarely hands out perfect
     scores), but still a real "loved it" bar, not just "the best of whatever's left."
-    other_watched_keys is the other session's _film_map key set (rated union diary),
+    other_watched_keys is the other session's _film_map key set (rated union watched),
     reusing the same 'watched' identity this whole file already establishes rather
     than a separate WatchedEntry-based definition just for this one list. Returns
     every match, uncapped -- the caller slices to GRID_DISPLAY_CAP_NARROW and tracks
-    the true total, same cap-with-total pattern as watchlist_matches/only_a_films.
+    the true total, same cap-with-total pattern as watchlist_matches.
     exclude_shorts -- see _film_map's own comment.
 
     Sorted by rating descending, (title, year) as the tiebreak for determinism --
@@ -925,8 +927,12 @@ def _shared_people(stats_a, stats_b, cap=TOP_N):
             'name': name, 'avg_a': stats_a[name][0], 'avg_b': stats_b[name][0],
             'count_a': stats_a[name][1], 'count_b': stats_b[name][1],
             # Either session's copy works equally well here -- both were rated by the
-            # same real person, so their profile photo can't differ between sessions.
+            # same real person, so their profile photo/tmdb_id can't differ between
+            # sessions. tmdb_id feeds the Shared panel's own click-through modal
+            # (both sessions' filmography for this one person, fetched by the same
+            # id from each side).
             'profile_url': stats_a[name][2] or stats_b[name][2],
+            'tmdb_id': stats_a[name][3] or stats_b[name][3],
         }
         for name in set(stats_a) & set(stats_b)
     ]
@@ -985,17 +991,6 @@ def _same_rating_display(same_rating_all, cap, high_slots_target):
     high_slots = min(cap - low_slots, len(high))  # reclaim slots low couldn't use
 
     return _spread_by_rating(high, high_slots) + _spread_by_rating(low, low_slots)
-
-
-def _top_genres(import_session, limit=5, exclude_shorts=False):
-    entries = DiaryEntry.objects.filter(import_session=import_session, movie__genres__isnull=False)
-    if exclude_shorts:
-        entries = exclude_short_entries(entries)
-    return list(
-        entries.values('movie__genres__name')
-        .annotate(count=Count('id'))
-        .order_by('-count')[:limit]
-    )
 
 
 def _alignment_blurb(overlap_pct, agreement_pct):
@@ -1100,14 +1095,6 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     agree_count = sum(1 for d in rated_deltas if d <= AGREEMENT_THRESHOLD)
     union_size = len(keys_a | keys_b)
 
-    # (title, year), not title alone -- only_a_keys/only_b_keys are set differences,
-    # so their iteration order is affected by Python's per-process string hash
-    # randomization; a title-only tiebreak would leave two same-titled films (a
-    # remake) in an order that changes across server restarts, the same bug class
-    # fixed in biggest_disagreements_all/_shared_people above.
-    only_a_films_all = sorted((map_a[k] for k in only_a_keys), key=lambda f: (f['title'], f['year']))
-    only_b_films_all = sorted((map_b[k] for k in only_b_keys), key=lambda f: (f['title'], f['year']))
-
     watchlist_a = _watchlist_map(session_a, exclude_shorts)
     watchlist_b = _watchlist_map(session_b, exclude_shorts)
     shared_watchlist_keys = set(watchlist_a) & set(watchlist_b)
@@ -1160,8 +1147,8 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     top_actors_a = _top_people(actor_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
     top_actors_b = _top_people(actor_stats_b, cap=GRID_DISPLAY_CAP_NARROW)
 
-    # Capped to TOP_N same as this file's other top-N lists (only_a/b_films,
-    # same_day_logs). _genre_agreement itself sorts gap-ascending (agreement first,
+    # Capped to TOP_N same as this file's other top-N lists (same_day_logs).
+    # _genre_agreement itself sorts gap-ascending (agreement first,
     # see its own docstring) -- genre_agreement is that order's front TOP_N, the
     # genres you agree on most, and is also the card's default/empty-state list.
     # genre_agreement_least is the same rows re-sorted gap-descending (worst clashes
@@ -1177,15 +1164,14 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     # One bulk lookup spanning every film list on the page rather than a query per
     # list. Resolves onto shared_films (and therefore biggest_disagreements/
     # same_rating too, since they're built via sorted() on the same dict objects),
-    # only_a/b_films, top_unseen_a/b, watchlist_matches_ranked (the already-capped
-    # display list -- nothing beyond it ever renders, so it doesn't need posters
-    # resolved onto the wider watchlist_eligible pool too), the same-day films (and
-    # therefore same_day_logs_all's nested films_a/films_b), and
-    # same_day_exact_matches_all.
+    # top_unseen_a/b, watchlist_matches_ranked (the already-capped display list --
+    # nothing beyond it ever renders, so it doesn't need posters resolved onto the
+    # wider watchlist_eligible pool too), the same-day films (and therefore
+    # same_day_logs_all's nested films_a/films_b), and same_day_exact_matches_all.
     movie_ids = {
         f['movie_id']
         for f in (
-            shared_films + only_a_films_all + only_b_films_all
+            shared_films
             + top_unseen_a_all + top_unseen_b_all + watchlist_matches_ranked
             + same_day_films_a + same_day_films_b + same_day_exact_matches_all
         )
@@ -1193,21 +1179,45 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     }
     movies_by_id = Movie.objects.in_bulk(movie_ids)
     _resolve_posters(
-        movies_by_id, shared_films, only_a_films_all, only_b_films_all,
+        movies_by_id, shared_films,
         top_unseen_a_all, top_unseen_b_all, watchlist_matches_ranked,
         same_day_films_a, same_day_films_b, same_day_exact_matches_all,
     )
 
     overlap_pct = round(len(shared_keys) / union_size * 100, 1) if union_size else 0
     agreement_pct = round(agree_count / len(rated_shared) * 100, 1) if rated_shared else None
-    # A single headline number blending "how much do you watch the same things" with
-    # "when you do, do you feel the same way" -- a plain average of the two, in
-    # keeping with this file's own stated no-scipy, simple-hand-rolled-metric
-    # philosophy (see the module docstring). None when agreement_pct is unavailable
-    # (no shared rated films) rather than falling back to overlap alone, since a
-    # "compatibility" score that ignores taste entirely isn't really answering the
-    # question it claims to.
-    compatibility_pct = round((overlap_pct + agreement_pct) / 2, 1) if agreement_pct is not None else None
+    # Same MIN_COUNT_FOR_AVERAGE gate avg_delta itself uses below -- a single
+    # mutually-rated film gives agreement_pct something to show (100% or 0%,
+    # trivially) but isn't enough of a sample for "average gap" to mean anything.
+    avg_delta = (
+        round(float(sum(rated_deltas) / len(rated_deltas)), 1)
+        if len(rated_deltas) >= MIN_COUNT_FOR_AVERAGE else None
+    )
+    # A single headline number blending "how much do you watch the same things"
+    # (overlap_pct) with "when you do, do you feel the same way" -- the second half
+    # is itself agreement_pct and avg_delta averaged together, not either alone:
+    # agreement_pct is a coarse threshold (within 0.5 stars or not) that can't tell
+    # "always juuust misses the cutoff" apart from "rates everything wildly
+    # differently", so avg_delta (normalized to a 0-100 "closeness" the same way
+    # overlap/agreement already are) fills in the magnitude agreement_pct alone
+    # can't. Kept at a 50/50 overlap/taste split either way, in keeping with this
+    # file's own stated no-scipy, simple-hand-rolled-metric philosophy (see the
+    # module docstring) -- avg_delta enriches the taste half rather than claiming a
+    # third of the whole score, which would let two taste measures of the same
+    # underlying data quietly outweigh overlap.
+    #
+    # Falls back to plain overlap/agreement (avg_delta not gathered) when there's
+    # exactly one mutually-rated film, and to None entirely when there's none --
+    # a "compatibility" score that ignores taste entirely isn't really answering
+    # the question it claims to.
+    if avg_delta is not None:
+        gap_pct = round(float(100 * (1 - Decimal(str(avg_delta)) / MAX_RATING_DELTA)), 1)
+        taste_pct = round((agreement_pct + gap_pct) / 2, 1)
+        compatibility_pct = round((overlap_pct + taste_pct) / 2, 1)
+    elif agreement_pct is not None:
+        compatibility_pct = round((overlap_pct + agreement_pct) / 2, 1)
+    else:
+        compatibility_pct = None
     # SVG stroke-dashoffset for the Overall alignment ring -- 0 offset draws the
     # full circumference (a full ring), the full circumference as offset draws
     # none of it, so this is just that scale run in reverse against the percent.
@@ -1226,11 +1236,11 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'shared_count': len(shared_keys),
         'only_a_count': len(only_a_keys),
         'only_b_count': len(only_b_keys),
-        # Every distinct (title, year) either session has a rating or diary
-        # entry for -- shared_keys + only_a_keys/only_b_keys is the same set
-        # partitioned three ways, so watched_count_a always equals
-        # shared_count + only_a_count (and likewise for b). For the hero's new
-        # "# films" stat, not previously surfaced anywhere on this page.
+        # Every distinct (title, year) either session has a rating.csv or
+        # watched.csv record for (see _film_map) -- shared_keys + only_a_keys/
+        # only_b_keys is the same set partitioned three ways, so watched_count_a
+        # always equals shared_count + only_a_count (and likewise for b). For the
+        # hero's "# films" stat, not previously surfaced anywhere on this page.
         'watched_count_a': len(keys_a),
         'watched_count_b': len(keys_b),
         'rated_higher_a_count': rated_higher_a_count,
@@ -1240,19 +1250,11 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'compatibility_pct': compatibility_pct,
         'compatibility_gauge_offset': compatibility_gauge_offset,
         'alignment_blurb': alignment_blurb,
-        'avg_delta': (
-            round(float(sum(rated_deltas) / len(rated_deltas)), 1)
-            if len(rated_deltas) >= MIN_COUNT_FOR_AVERAGE
-            else None
-        ),
+        'avg_delta': avg_delta,
         'biggest_disagreements': biggest_disagreements_all[:GRID_DISPLAY_CAP],
         'biggest_disagreements_total': len(biggest_disagreements_all),
         'same_rating': _same_rating_display(same_rating_all, GRID_DISPLAY_CAP, GRID_HIGH_RATING_SLOTS),
         'same_rating_total': len(same_rating_all),
-        'only_a_films': only_a_films_all[:TOP_N],
-        'only_b_films': only_b_films_all[:TOP_N],
-        'genres_a': _top_genres(session_a, exclude_shorts=exclude_shorts),
-        'genres_b': _top_genres(session_b, exclude_shorts=exclude_shorts),
         'shared_directors': shared_directors,
         'shared_actors': shared_actors,
         'top_directors_a': top_directors_a,
@@ -1280,9 +1282,7 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'same_day_exact_matches': same_day_exact_matches_all[:GRID_DISPLAY_CAP],
         'same_day_exact_matches_total': len(same_day_exact_matches_all),
         'top_unseen_a': top_unseen_a_all[:GRID_DISPLAY_CAP_NARROW],
-        'top_unseen_a_total': len(top_unseen_a_all),
         'top_unseen_b': top_unseen_b_all[:GRID_DISPLAY_CAP_NARROW],
-        'top_unseen_b_total': len(top_unseen_b_all),
         'avg_rating_a': curve_a['avg'],
         'avg_rating_b': curve_b['avg'],
         'chart_data': {
