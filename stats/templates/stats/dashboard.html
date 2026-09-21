@@ -252,11 +252,6 @@
     <canvas id="releaseYearChart"></canvas>
   </div>
 
-  <!-- <div class="card">
-    <h3>Rating by decade</h3>
-    <canvas id="ratingByDecadeChart"></canvas>
-  </div> -->
-
   <div class="three-col">
     <div class="card">
       <h3>Genres</h3>
@@ -1010,7 +1005,7 @@
       }
 
       document.addEventListener('click', function (e) {
-        const poster = e.target.closest('.fav-card img, .fav-card .fav-placeholder, .film-thumb, .film-thumb-placeholder');
+        const poster = e.target.closest('.fav-card img, .fav-card .fav-placeholder');
         if (poster && !poster.closest('.fav-card:has(.person-trigger)')) {
           const text = poster.getAttribute('title');
           if (!text) return;

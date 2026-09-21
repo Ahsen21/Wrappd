@@ -461,7 +461,7 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
     films_watched_total = _films_watched_total(import_session, diary, rated, exclude_shorts)
 
     taste = _taste_vs_crowd(rated)
-    genre_decade = _rating_by_genre_and_decade(rated)
+    rating_by_genre = _rating_by_genre(rated)
     release_year_range = _release_year_range(watched_movies, rated)
     release_year_distribution = _release_year_distribution(watched_movies, release_year_range)
     rating_by_release_year = _rating_by_release_year(rated, release_year_range)
@@ -505,7 +505,6 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
         'top_directors': top_directors,
         'top_actors': top_actors,
         'taste': taste,
-        'genre_decade': genre_decade,
         'release_year_distribution': release_year_distribution,
         'country_distribution': country_distribution,
         'language_distribution': language_distribution,
@@ -531,12 +530,8 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
                 'data': [row['count'] for row in top_genres],
             },
             'rating_by_genre': {
-                'labels': [row['label'] for row in genre_decade['by_genre']],
-                'data': [row['avg'] for row in genre_decade['by_genre']],
-            },
-            'rating_by_decade': {
-                'labels': [row['label'] for row in genre_decade['by_decade']],
-                'data': [row['avg'] for row in genre_decade['by_decade']],
+                'labels': [row['label'] for row in rating_by_genre],
+                'data': [row['avg'] for row in rating_by_genre],
             },
             'weekday_distribution': {
                 'labels': [row['label'] for row in calendar['weekday_distribution']],
@@ -593,7 +588,7 @@ def _taste_vs_crowd(rated) -> dict:
             'crowd_rating': crowd_rating,
             'delta': delta,
             # w342, not w92 -- this renders as a full poster grid card now, not the
-            # small inline .film-thumb it was originally sized for. TMDB's smaller
+            # small inline thumbnail it was originally sized for. TMDB's smaller
             # size tiers are more aggressively compressed at the source, so w92
             # would look visibly softer than w342 even scaled down to the same size.
             'poster_url': _tmdb_image_url(row['movie__poster_path'], 'w342'),
@@ -612,7 +607,7 @@ def _taste_vs_crowd(rated) -> dict:
     }
 
 
-def _rating_by_genre_and_decade(rated) -> dict:
+def _rating_by_genre(rated) -> list:
     # count__gte requires at least MIN_COUNT_FOR_AVERAGE rated films in that genre --
     # a genre you've only rated one film in gets left out rather than showing a
     # single-film "average".
@@ -627,17 +622,7 @@ def _rating_by_genre_and_decade(rated) -> dict:
         row['label'] = row['movie__genres__name']
         row['avg'] = float(row['avg'])
 
-    decade_ratings = defaultdict(list)
-    for rating, year in rated.filter(movie__release_year__isnull=False).values_list('rating', 'movie__release_year'):
-        decade_ratings[(year // 10) * 10].append(rating)
-
-    by_decade = [
-        {'label': f'{decade}s', 'avg': round(_avg_or_none(ratings), 1), 'count': len(ratings)}
-        for decade, ratings in sorted(decade_ratings.items())
-        if len(ratings) >= MIN_COUNT_FOR_AVERAGE
-    ]
-
-    return {'by_genre': by_genre, 'by_decade': by_decade}
+    return by_genre
 
 
 def _release_year_range(watched_movies, rated):
@@ -1221,7 +1206,7 @@ _DELTA_INSIGHT_TEXT = '{value} — {delta:+.1f}★ vs. avg'
 # combined insight grid at all (see _AXIS_INSIGHT_SLOTS below) -- this grid exists
 # to say something the rest of the dashboard doesn't, and every other axis already
 # has a home of its own: genre/country/language have their own "Highest rated" tab
-# (_rating_by_genre_and_decade/_country/_language), showing the exact same raw
+# (_rating_by_genre/_country/_language), showing the exact same raw
 # average this grid uses (see _raw_axis_deltas); director/actor have their own
 # Favorite Directors/Actors cards. A tile repeating any of those would be a pure
 # duplicate, not just a rephrase. Decade and runtime have no dashboard tab of their
@@ -1605,7 +1590,7 @@ def _favorite_genre_combo_insight(rated, avg_rating) -> list:
     e.g. "Sci-Fi + Comedy — 9 films, 4.7★". Same duo mechanic as
     _favorite_pairing_insight/_favorite_actor_duo_insight, just genre x genre
     instead of two people -- a "your favorite blend" fact distinct from the
-    Genres chart (_rating_by_genre_and_decade), which only ever reports a
+    Genres chart (_rating_by_genre), which only ever reports a
     single genre's own average, never how two genres perform together. One
     tile in the combined insight grid (see _dashboard_insights).
 
@@ -2063,7 +2048,7 @@ def _rewatch_leaderboard(diary) -> dict:
     )
     for row in most_rewatched_films:
         # w342, not w185 -- this renders as a full poster card now (.favs--eight), not
-        # the small inline .film-thumb it was originally sized for. TMDB's smaller
+        # the small inline thumbnail it was originally sized for. TMDB's smaller
         # size tiers are more aggressively compressed at the source, so w185 still
         # looks visibly softer than w342 even scaled down to the same final size.
         row['poster_url'] = _tmdb_image_url(row.pop('poster_path'), 'w342')
