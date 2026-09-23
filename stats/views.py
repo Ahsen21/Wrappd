@@ -19,18 +19,33 @@ def _render_dashboard(request, import_session):
     # the switch in the template reloads with this param, same as any other GET-
     # driven filter on the site.
     exclude_shorts = request.GET.get('shorts') == 'exclude'
-    context = build_dashboard_context(import_session, exclude_shorts)
+    # ?year=2024 switches to the "Wrapped for a single year" view (see
+    # build_dashboard_context's own docstring) -- absent/invalid falls back to
+    # the all-time page rather than erroring, same "don't trust the query string"
+    # posture as exclude_shorts above; a year with no matching diary entries just
+    # renders every card in its own already-established empty state.
+    year_param = request.GET.get('year')
+    try:
+        year = int(year_param) if year_param else None
+    except ValueError:
+        year = None
+    context = build_dashboard_context(import_session, exclude_shorts, year)
     # The dashboard's own URL doubles as its share link (see the "Share your
     # dashboard" box) -- neither route this can be reached by has an ownership
     # check tying it to this browser's session, so anyone holding either kind of
     # link can already open it as is. canonical_dashboard_path prefers the
     # account's permanent /dashboard/<username>/ link when there is one, even if
-    # this particular request came in on the raw UUID route. Carries the shorts
-    # toggle's current state along -- sharing a filtered view should hand the
-    # recipient that same filtered view, not silently reset to the default.
+    # this particular request came in on the raw UUID route. Carries the shorts/
+    # year toggles' current state along -- sharing a filtered view should hand
+    # the recipient that same filtered view, not silently reset to the default.
     share_url = request.build_absolute_uri(import_session.canonical_dashboard_path())
+    params = []
     if exclude_shorts:
-        share_url += '?shorts=exclude'
+        params.append('shorts=exclude')
+    if year is not None:
+        params.append(f'year={year}')
+    if params:
+        share_url += '?' + '&'.join(params)
     context['share_url'] = share_url
     return render(request, 'stats/dashboard.html', context)
 

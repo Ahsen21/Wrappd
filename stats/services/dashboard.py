@@ -85,6 +85,22 @@ MIN_COUNT_FOR_AVERAGE = 2
 # appearances before an actor's average is as meaningful as a director's.
 MIN_COUNT_FOR_FAVORITE_DIRECTOR = 3
 MIN_COUNT_FOR_FAVORITE_ACTOR = 4
+# Year view's own, lower version of the two constants above -- a single year's
+# diary is a much smaller sample (tens of films, not hundreds) than the
+# all-time page's ratings.csv, so the same bar would rarely clear. Separate
+# constants rather than replacing the all-time ones, so all-time behavior is
+# untouched regardless of what these are tuned to. Starting values, not a
+# final answer -- see this feature's design plan for the reasoning and for
+# tuning them against real multi-year accounts.
+MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR = 2
+MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR = 3
+# Milestones (year view only, Watching Habits): round-number checkpoints
+# through the year's chronological log, e.g. "100th film". A fixed list
+# rather than every Nth multiple -- a prolific year (500+ logs) would
+# otherwise generate a dozen-plus milestone cards, most of them meaningless.
+# All end in a bare zero on purpose, so the card label can always say "Nth
+# film" without separate ordinal-suffix logic (1st/2nd/3rd).
+MILESTONE_THRESHOLDS = (50, 100, 200, 500, 1000)
 # The insight grid's runtime/decade tiles (_raw_axis_deltas, feeding
 # _rating_insights) need their own, stronger-than-MIN_COUNT_FOR_AVERAGE bars --
 # every rated film falls into exactly one runtime bucket and one decade, unlike
@@ -327,45 +343,296 @@ def _actor_rating_data(rated, watched_movies) -> tuple:
     return actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids
 
 
-def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
+# --- Year-view "most watched" aggregations -----------------------------------
+#
+# The all-time page's "most watched" side (top_genres/top_directors/top_actors/
+# country_distribution/language_distribution/release_year_distribution) is
+# sourced from watched_movies (WatchedEntry, a distinct-film count with no date
+# at all -- see _watched_movies). The year view has no dateless source to fall
+# back on, so it counts diary ROWS instead: every function below groups
+# year-filtered diary entries directly, deliberately NOT deduping by film --
+# see build_dashboard_context's year-scoping comment for why a same-year
+# rewatch counts twice here.
+#
+# The "highest rated" side needs no equivalent functions: _rating_by_genre/
+# _country/_language/_release_year and _taste_vs_crowd all read the same field
+# names (title, year, rating, movie) that RatingEntry and DiaryEntry share, so
+# build_dashboard_context just points `rated` at a year-filtered, rated-only
+# diary queryset for those, unchanged.
+
+def _top_genres_diary(diary) -> list:
+    """Diary-row count per genre, output shape ({'genres__name', 'count'})
+    matching the all-time top_genres exactly, so build_dashboard_context's
+    chart_data construction needs no branching by mode."""
+    rows = list(
+        diary.filter(movie__genres__isnull=False)
+        .values('movie__genres__name')
+        .annotate(count=Count('id'))
+        .order_by('-count')[:TOP_N]
+    )
+    for row in rows:
+        row['genres__name'] = row.pop('movie__genres__name')
+    return rows
+
+
+def _top_directors_diary(diary) -> list:
+    """Diary-row-counted equivalent of top_directors -- count and avg_rating both
+    come from the same year-filtered diary rows now (one query), instead of
+    count from watched_movies and avg_rating joined in separately from rated."""
+    rows = list(
+        diary.filter(movie__directors__isnull=False)
+        .values('movie__directors__name')
+        .annotate(
+            count=Count('id'), profile_path=Min('movie__directors__profile_path'),
+            director_tmdb_id=Min('movie__directors__tmdb_id'),
+            rated_count=Count('id', filter=Q(rating__isnull=False)), avg_rating=Avg('rating'),
+        )
+    )
+    for row in rows:
+        row['directors__name'] = row.pop('movie__directors__name')
+        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
+        if row.pop('rated_count') < MIN_COUNT_FOR_AVERAGE:
+            row['avg_rating'] = None
+    rows.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
+    return rows[:FAVORITE_PEOPLE_GRID_CAP]
+
+
+def _top_actors_diary(diary) -> tuple:
+    """Diary-row-counted equivalent of top_actors, plus the same
+    (actor_rating_lists, actor_profile_paths, actor_tmdb_ids) shape
+    _actor_rating_data returns -- _favorite_people's actor half can reuse these
+    directly, the same way it reuses _actor_rating_data's output in all-time
+    mode, without re-deriving cameo-filtered ratings a second time.
+
+    Cast is joined in Python per diary row rather than via a Movie-level
+    queryset (there is no diary-scoped analogue of watched_movies) -- a diary
+    with a normal year's volume (tens to a few hundred rows) makes this a small
+    amount of work, not a performance concern."""
+    rows = list(diary.exclude(movie__isnull=True).values('movie_id', 'rating'))
+    movie_ids = {row['movie_id'] for row in rows}
+    cameo_ids = _cameo_credit_ids(movie_ids)
+    credits_by_movie = defaultdict(list)
+    for movie_id, name, profile_path, person_tmdb_id in (
+        Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
+        .values_list('movie_id', 'person__name', 'person__profile_path', 'person__tmdb_id')
+    ):
+        credits_by_movie[movie_id].append((name, profile_path, person_tmdb_id))
+
+    counts = defaultdict(int)
+    actor_rating_lists = defaultdict(list)
+    actor_profile_paths = {}
+    actor_tmdb_ids = {}
+    for row in rows:
+        for name, profile_path, person_tmdb_id in credits_by_movie.get(row['movie_id'], []):
+            counts[name] += 1
+            actor_profile_paths[name] = profile_path
+            actor_tmdb_ids[name] = person_tmdb_id
+            if row['rating'] is not None:
+                actor_rating_lists[name].append(row['rating'])
+
+    top_actors = []
+    for name, count in counts.items():
+        ratings = actor_rating_lists.get(name, [])
+        top_actors.append({
+            'person__name': name,
+            'count': count,
+            'avg_rating': sum(ratings) / len(ratings) if len(ratings) >= MIN_COUNT_FOR_AVERAGE else None,
+            'profile_url': _tmdb_image_url(actor_profile_paths[name], 'w185'),
+            'actor_tmdb_id': actor_tmdb_ids[name],
+        })
+    top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
+    return top_actors[:FAVORITE_PEOPLE_GRID_CAP], actor_rating_lists, actor_profile_paths, actor_tmdb_ids
+
+
+def _films_by_country_diary(diary) -> list:
+    """Diary-row count per production country -- see _films_by_country's own
+    docstring for the multi-country-per-film counting rule, which applies the
+    same way here."""
+    ranked = list(
+        diary.filter(movie__countries__isnull=False)
+        .values('movie__countries__name')
+        .annotate(count=Count('id'))
+        .order_by('-count')[:TOP_N]
+    )
+    return [
+        {
+            'label': COUNTRY_NAME_OVERRIDES.get(row['movie__countries__name'], row['movie__countries__name']),
+            'count': row['count'],
+        }
+        for row in ranked
+    ]
+
+
+def _films_by_language_diary(diary) -> list:
+    """Diary-row count per original language."""
+    ranked = list(
+        diary.exclude(movie__isnull=True).exclude(movie__original_language='')
+        .values('movie__original_language')
+        .annotate(count=Count('id'))
+        .order_by('-count')[:TOP_N]
+    )
+    return [{'label': row['movie__original_language'], 'count': row['count']} for row in ranked]
+
+
+def _release_year_range_diary(diary):
+    """Same idea as _release_year_range, but from diary's own resolved movies
+    alone -- there's no separate watched_movies/rated union in year mode."""
+    years = set(diary.filter(movie__release_year__isnull=False).values_list('movie__release_year', flat=True))
+    return (min(years), max(years)) if years else None
+
+
+def _release_year_distribution_diary(diary, year_range) -> list:
+    """Diary-row count per release year -- see _release_year_distribution's own
+    docstring for the zero-filled, gap-free x-axis this mirrors."""
+    if year_range is None:
+        return []
+    counts = defaultdict(int)
+    for release_year in diary.filter(movie__release_year__isnull=False).values_list('movie__release_year', flat=True):
+        counts[release_year] += 1
+    return [{'year': year, 'count': counts.get(year, 0)} for year in range(year_range[0], year_range[1] + 1)]
+
+
+def _milestones(diary) -> list:
+    """The films that marked the year, in chronological order: the first watch,
+    round-number checkpoints (MILESTONE_THRESHOLDS) through the year's log, and
+    the last watch. "The Nth watch" counts every diary row in order -- a same-
+    year rewatch is its own entry here too, per this feature's rewatch-
+    weighting decision (see build_dashboard_context's own docstring), the same
+    as every other year-view stat.
+
+    Ordered by (watched_date, id) -- id as the tiebreak for two films logged on
+    the same date, since diary.csv carries no finer-grained time of day to
+    order them by. This makes "the Nth film" a deterministic pick (never
+    changes between requests) but not a claim about the true order two same-
+    day logs happened in -- there's no data to know that.
+
+    A year with just one log gets a single "Only watch" card instead of a
+    redundant First/Last pair on the same film. A milestone that would land
+    on the very last film is skipped -- "Last watch" already covers it, and a
+    second badge on the same poster would be a redundant, not additional,
+    fact."""
+    rows = list(diary.order_by('watched_date', 'id').values_list('title', 'year', 'watched_date', 'movie__poster_path'))
+    total = len(rows)
+    if total == 0:
+        return []
+
+    def _card(label, index):
+        title, film_year, watched_date, poster_path = rows[index]
+        return {
+            'label': label, 'title': title, 'year': film_year, 'date': watched_date,
+            'poster_url': _tmdb_image_url(poster_path, 'w342'),
+        }
+
+    if total == 1:
+        return [_card('Only watch', 0)]
+
+    milestones = [_card('First watch', 0)]
+    milestones += [
+        _card(f'{threshold}th film', threshold - 1) for threshold in MILESTONE_THRESHOLDS if threshold < total
+    ]
+    milestones.append(_card('Last watch', total - 1))
+    return milestones
+
+
+def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> dict:
+    """year=None is the all-time page (unchanged behavior). A specific calendar
+    year switches to the "Wrapped for a single year" view, whose sole source is
+    diary.csv -- RatingEntry/WatchedEntry/WatchlistEntry carry no watch date at
+    all, so there's no way to scope them to a year, and this file's usual
+    three-source split (see the module docstring) doesn't apply in year mode.
+    Concretely: `rated` is repointed at this year's diary rows that have a
+    rating instead of RatingEntry, which works unchanged for every function
+    that only reads (title, year, rating, movie) -- fields DiaryEntry and
+    RatingEntry share -- since those don't care which model the rows actually
+    came from. Only the "most watched" (count) side genuinely needs new logic
+    (see the _*_diary functions above build_dashboard_context), since watched_
+    movies (WatchedEntry) has no year-view equivalent at all.
+
+    A same-year rewatch counts as its own data point everywhere in year mode
+    (genre/director/actor/country/etc. counts and rating averages) rather than
+    being deduped to one row per film -- each diary row is its own vote, the
+    same way Spotify Wrapped counts total plays, not distinct songs.
+
+    Watchlist recommendations and Favorite films (profile.csv) have no year-
+    view equivalent and are simply absent (`recommendations`/`favorites` are
+    always `[]` in year mode) -- the template's existing
+    {% if recommendations %}/{% if favorites %} guards already hide their
+    section/hero strip for an empty list. The Highlights insight grid is
+    likewise dropped in year mode for now (`insights` is always the empty
+    shape) -- most of its sub-insights are RatingEntry-sourced and would each
+    need their own diary-row-counted variant; that's a big enough follow-up to
+    scope as its own pass rather than half-build here."""
     # _maybe_exclude_shorts is a no-op when the toggle is off -- every call site
     # below stays identical either way, rather than an `if exclude_shorts: ...`
     # branch at each one.
     _maybe_exclude_shorts = exclude_short_entries if exclude_shorts else (lambda queryset: queryset)
 
     diary_all = DiaryEntry.objects.filter(import_session=import_session)
-    rated_all = RatingEntry.objects.filter(import_session=import_session)
-    # TV-exclusion is tracked (excluded_tv_count/_titles below) against THIS
-    # intermediate stage specifically, not the final shorts-filtered diary/rated --
-    # otherwise a short film pulled out by the toggle would get miscounted as
-    # "couldn't be matched to TMDB" in that banner, which is about TV content, not
-    # runtime at all.
     diary_no_tv = exclude_tv_shows(diary_all)
-    rated_no_tv = exclude_tv_shows(rated_all)
     diary = _maybe_exclude_shorts(diary_no_tv)
-    rated = _maybe_exclude_shorts(rated_no_tv)
-    watched_movies = _watched_movies(import_session, diary, rated, exclude_shorts)
-    # Deduped by (title, year) like every other distinct-film count on this page -- a
-    # review or like logged against a rewatch shouldn't count twice.
-    reviews_count = (
-        _maybe_exclude_shorts(exclude_tv_shows(ReviewEntry.objects.filter(import_session=import_session)))
-        .exclude(review='').values('title', 'year').distinct().count()
+
+    # Every calendar year with at least one diary entry (after the shorts
+    # toggle, before any year narrowing below) -- for the year picker, so
+    # switching years always offers every option regardless of which one (if
+    # any) is currently active. Newest first, matching the heatmap's own
+    # default_year convention of favoring the most recent year.
+    available_years = sorted(
+        set(diary.annotate(y=ExtractYear('watched_date')).values_list('y', flat=True)), reverse=True,
     )
-    likes_count = (
-        _maybe_exclude_shorts(exclude_tv_shows(LikedFilmEntry.objects.filter(import_session=import_session)))
-        .values('title', 'year').distinct().count()
-    )
-    watchlist = _maybe_exclude_shorts(exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session)))
-    watchlist_count = watchlist.values('title', 'year').distinct().count()
-    # Distinct (title, year) pairs excluded from either source -- a title can be TV-
-    # flagged and present in only one of diary/ratings (e.g. rated but never diary-
-    # logged), so counting diary rows alone would undercount.
-    excluded_pairs = set(diary_all.values_list('title', 'year')) - set(diary_no_tv.values_list('title', 'year'))
-    excluded_pairs |= set(rated_all.values_list('title', 'year')) - set(rated_no_tv.values_list('title', 'year'))
+
+    if year is None:
+        rated_all = RatingEntry.objects.filter(import_session=import_session)
+        # TV-exclusion is tracked (excluded_tv_count/_titles below) against THIS
+        # intermediate stage specifically, not the final shorts-filtered diary/rated --
+        # otherwise a short film pulled out by the toggle would get miscounted as
+        # "couldn't be matched to TMDB" in that banner, which is about TV content, not
+        # runtime at all.
+        rated_no_tv = exclude_tv_shows(rated_all)
+        rated = _maybe_exclude_shorts(rated_no_tv)
+        watched_movies = _watched_movies(import_session, diary, rated, exclude_shorts)
+        # Distinct (title, year) pairs excluded from either source -- a title can be TV-
+        # flagged and present in only one of diary/ratings (e.g. rated but never diary-
+        # logged), so counting diary rows alone would undercount.
+        excluded_pairs = set(diary_all.values_list('title', 'year')) - set(diary_no_tv.values_list('title', 'year'))
+        excluded_pairs |= set(rated_all.values_list('title', 'year')) - set(rated_no_tv.values_list('title', 'year'))
+    else:
+        diary_all_year = diary_all.filter(watched_date__year=year)
+        diary_no_tv_year = diary_no_tv.filter(watched_date__year=year)
+        diary = diary.filter(watched_date__year=year)
+        rated = diary.exclude(rating__isnull=True)
+        watched_movies = None
+        # No RatingEntry side to union in here -- see this function's own
+        # docstring on why ratings.csv/watched.csv can't be year-scoped at all.
+        excluded_pairs = (
+            set(diary_all_year.values_list('title', 'year')) - set(diary_no_tv_year.values_list('title', 'year'))
+        )
     excluded_tv_count = len(excluded_pairs)
     excluded_tv_titles = sorted(
-        ({'title': title, 'year': year} for title, year in excluded_pairs), key=lambda e: e['title']
+        ({'title': title, 'year': film_year} for title, film_year in excluded_pairs), key=lambda e: e['title']
     )
+
+    # Deduped by (title, year) like every other distinct-film count on this page -- a
+    # review or like logged against a rewatch shouldn't count twice. Scoped by each
+    # model's own date field in year mode (both have one, unlike watchlist.csv's
+    # added_date -- see watchlist_count's own comment below) -- not joined through
+    # diary, since a like/review is its own recorded event, independent of whether
+    # that same film was also diary-logged that year.
+    reviews_qs = _maybe_exclude_shorts(exclude_tv_shows(ReviewEntry.objects.filter(import_session=import_session)))
+    likes_qs = _maybe_exclude_shorts(exclude_tv_shows(LikedFilmEntry.objects.filter(import_session=import_session)))
+    if year is not None:
+        reviews_qs = reviews_qs.filter(watched_date__year=year)
+        likes_qs = likes_qs.filter(date_liked__year=year)
+    reviews_count = reviews_qs.exclude(review='').values('title', 'year').distinct().count()
+    likes_count = likes_qs.values('title', 'year').distinct().count()
+
+    # Watchlist has no year-view equivalent -- it's a "what haven't you watched
+    # yet" list, a present-tense question that doesn't have a meaningful "as of
+    # 2022" reading even though watchlist.csv happens to carry an added_date.
+    # Computed all-time regardless of `year`; recommendations (below) is always
+    # [] in year mode instead, and watchlist_count is hidden by the template
+    # when a year is active rather than removed from the context here.
+    watchlist = _maybe_exclude_shorts(exclude_tv_shows(WatchlistEntry.objects.filter(import_session=import_session)))
+    watchlist_count = watchlist.values('title', 'year').distinct().count()
 
     films_per_year = list(
         diary.annotate(y=ExtractYear('watched_date'))
@@ -374,81 +641,111 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
         .order_by('y')
     )
 
-    # Sourced from rated (RatingEntry, i.e. ratings.csv), not diary -- one row per
-    # distinct rated film, so a heavily rewatched film doesn't inflate its rating's bar.
+    # Sourced from `rated` -- RatingEntry (ratings.csv) all-time, or this year's
+    # rated diary rows in year mode -- one row per distinct rated film either way
+    # (a same-year rewatch re-rated adds its own bar entry in year mode, per this
+    # function's own docstring on rewatch weighting).
     rating_distribution = list(
         rated.values('rating').annotate(count=Count('id')).order_by('rating')
     )
 
-    # "Most watched" counts distinct films (watched_movies, sourced from watched.csv),
-    # not diary rows -- a rewatch shouldn't inflate a genre/director/actor's count, and
-    # a film that's in watched.csv but was never diary-logged still needs to count.
-    top_genres = list(
-        watched_movies.filter(genres__isnull=False)
-        .values('genres__name')
-        .annotate(count=Count('tmdb_id'))
-        .order_by('-count')[:TOP_N]
-    )
-
-    # avg_rating is joined in separately from rated (RatingEntry, i.e. ratings.csv) --
-    # the "most watched" count and the "highest rated" average necessarily come from
-    # different sources (watched.csv has no rating column), so they're computed
-    # independently and merged by name. rating_count enforces MIN_COUNT_FOR_AVERAGE
-    # (a director with 5 watched films but only 1 rated shouldn't show a 1-data-point
-    # "average").
-    # max_rating feeds _watchlist_recommendations' peak-blended director delta (see
-    # PEAK_BLEND) -- not used by top_directors/favorite_people below, which only
-    # ever read rating_count/avg_rating, so this is a free addition for them.
-    director_ratings = {
-        row['movie__directors__name']: row
-        for row in rated.filter(movie__directors__isnull=False)
-        .values('movie__directors__name')
-        .annotate(rating_count=Count('id'), avg_rating=Avg('rating'), max_rating=Max('rating'))
-    }
-    # Sliced to TOP_N only after avg_rating is merged in below, not at the DB query
-    # level -- a tie in count has to be broken by avg_rating before truncating, or a
-    # higher-rated director could get cut in favor of a lower-rated one with the same
-    # watch count. profile_path uses Min() since grouping by name -- everyone in a
-    # given name group is the same Person, so it's just a way to carry one scalar
-    # value through a GROUP BY, not a real aggregation choice.
-    top_directors = list(
-        watched_movies.filter(directors__isnull=False)
-        .values('directors__name')
-        .annotate(
-            count=Count('tmdb_id'), profile_path=Min('directors__profile_path'),
-            director_tmdb_id=Min('directors__tmdb_id'),
+    if year is None:
+        # "Most watched" counts distinct films (watched_movies, sourced from watched.csv),
+        # not diary rows -- a rewatch shouldn't inflate a genre/director/actor's count, and
+        # a film that's in watched.csv but was never diary-logged still needs to count.
+        top_genres = list(
+            watched_movies.filter(genres__isnull=False)
+            .values('genres__name')
+            .annotate(count=Count('tmdb_id'))
+            .order_by('-count')[:TOP_N]
         )
-    )
-    for row in top_directors:
-        stats = director_ratings.get(row['directors__name'])
-        row['avg_rating'] = stats['avg_rating'] if stats and stats['rating_count'] >= MIN_COUNT_FOR_AVERAGE else None
-        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
-    top_directors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-    top_directors = top_directors[:FAVORITE_PEOPLE_GRID_CAP]
 
-    actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids = _actor_rating_data(
-        rated, watched_movies
-    )
-
-    top_actors = list(
-        Credit.objects.filter(movie__in=watched_movies)
-        .exclude(id__in=cameo_credit_ids)
-        .values('person__name')
-        .annotate(
-            count=Count('movie', distinct=True), profile_path=Min('person__profile_path'),
-            actor_tmdb_id=Min('person__tmdb_id'),
+        # avg_rating is joined in separately from rated (RatingEntry, i.e. ratings.csv) --
+        # the "most watched" count and the "highest rated" average necessarily come from
+        # different sources (watched.csv has no rating column), so they're computed
+        # independently and merged by name. rating_count enforces MIN_COUNT_FOR_AVERAGE
+        # (a director with 5 watched films but only 1 rated shouldn't show a 1-data-point
+        # "average").
+        # max_rating feeds _watchlist_recommendations' peak-blended director delta (see
+        # PEAK_BLEND) -- not used by top_directors/favorite_people below, which only
+        # ever read rating_count/avg_rating, so this is a free addition for them.
+        director_ratings = {
+            row['movie__directors__name']: row
+            for row in rated.filter(movie__directors__isnull=False)
+            .values('movie__directors__name')
+            .annotate(rating_count=Count('id'), avg_rating=Avg('rating'), max_rating=Max('rating'))
+        }
+        # Sliced to TOP_N only after avg_rating is merged in below, not at the DB query
+        # level -- a tie in count has to be broken by avg_rating before truncating, or a
+        # higher-rated director could get cut in favor of a lower-rated one with the same
+        # watch count. profile_path uses Min() since grouping by name -- everyone in a
+        # given name group is the same Person, so it's just a way to carry one scalar
+        # value through a GROUP BY, not a real aggregation choice.
+        top_directors = list(
+            watched_movies.filter(directors__isnull=False)
+            .values('directors__name')
+            .annotate(
+                count=Count('tmdb_id'), profile_path=Min('directors__profile_path'),
+                director_tmdb_id=Min('directors__tmdb_id'),
+            )
         )
-    )
-    for row in top_actors:
-        ratings = actor_rating_lists.get(row['person__name'], [])
-        row['avg_rating'] = sum(ratings) / len(ratings) if len(ratings) >= MIN_COUNT_FOR_AVERAGE else None
-        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
-    top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-    top_actors = top_actors[:FAVORITE_PEOPLE_GRID_CAP]
+        for row in top_directors:
+            stats = director_ratings.get(row['directors__name'])
+            row['avg_rating'] = (
+                stats['avg_rating'] if stats and stats['rating_count'] >= MIN_COUNT_FOR_AVERAGE else None
+            )
+            row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
+        top_directors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
+        top_directors = top_directors[:FAVORITE_PEOPLE_GRID_CAP]
+
+        actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids = _actor_rating_data(
+            rated, watched_movies
+        )
+        top_actors = list(
+            Credit.objects.filter(movie__in=watched_movies)
+            .exclude(id__in=cameo_credit_ids)
+            .values('person__name')
+            .annotate(
+                count=Count('movie', distinct=True), profile_path=Min('person__profile_path'),
+                actor_tmdb_id=Min('person__tmdb_id'),
+            )
+        )
+        for row in top_actors:
+            ratings = actor_rating_lists.get(row['person__name'], [])
+            row['avg_rating'] = sum(ratings) / len(ratings) if len(ratings) >= MIN_COUNT_FOR_AVERAGE else None
+            row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
+        top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
+        top_actors = top_actors[:FAVORITE_PEOPLE_GRID_CAP]
+
+        release_year_range = _release_year_range(watched_movies, rated)
+        release_year_distribution = _release_year_distribution(watched_movies, release_year_range)
+        country_distribution = _films_by_country(watched_movies)
+        language_distribution = _films_by_language(watched_movies)
+        films_watched_total = _films_watched_total(import_session, diary, rated, exclude_shorts)
+        min_favorite_director, min_favorite_actor = MIN_COUNT_FOR_FAVORITE_DIRECTOR, MIN_COUNT_FOR_FAVORITE_ACTOR
+    else:
+        # See the _*_diary functions above for why the year view needs its own
+        # "most watched" logic instead of reusing watched_movies -- there's no
+        # year-view equivalent of it, and these count diary rows (rewatches
+        # count separately, per this function's own rewatch-weighting note).
+        top_genres = _top_genres_diary(diary)
+        top_directors = _top_directors_diary(diary)
+        top_actors, actor_rating_lists, actor_profile_paths, actor_tmdb_ids = _top_actors_diary(diary)
+        release_year_range = _release_year_range_diary(diary)
+        release_year_distribution = _release_year_distribution_diary(diary, release_year_range)
+        country_distribution = _films_by_country_diary(diary)
+        language_distribution = _films_by_language_diary(diary)
+        films_watched_total = diary.values('title', 'year').distinct().count()
+        min_favorite_director, min_favorite_actor = (
+            MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR, MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR,
+        )
 
     # Sourced from rated (RatingEntry, i.e. ratings.csv), not diary -- this sits right
     # above the rating_distribution chart (also ratings.csv-sourced now), so both
     # describe the same set of distinct rated films rather than a rewatch-weighted one.
+    # (In year mode, `rated` is already the year-scoped, rated-only diary queryset --
+    # see this function's own docstring -- so this comment's "not diary" is an
+    # all-time-only distinction.)
     rated_count = rated.count()
     avg_rating = rated.aggregate(avg=Avg('rating'))['avg'] if rated_count >= MIN_COUNT_FOR_AVERAGE else None
     total_runtime_minutes = (
@@ -458,36 +755,58 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
 
     total_films = diary.count()
     unenriched_count = diary.filter(movie__isnull=True).count()
-    films_watched_total = _films_watched_total(import_session, diary, rated, exclude_shorts)
 
     taste = _taste_vs_crowd(rated)
     rating_by_genre = _rating_by_genre(rated)
-    release_year_range = _release_year_range(watched_movies, rated)
-    release_year_distribution = _release_year_distribution(watched_movies, release_year_range)
     rating_by_release_year = _rating_by_release_year(rated, release_year_range)
-    country_distribution = _films_by_country(watched_movies)
-    language_distribution = _films_by_language(watched_movies)
     rating_by_country = _rating_by_country(rated)
     rating_by_language = _rating_by_language(rated)
     rewatch = _rewatch_leaderboard(diary)
     calendar = _viewing_calendar(diary)
-    favorite_people = _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, avg_rating)
-    favorites = _favorite_films(import_session)
-    top_tags = _tag_distribution(diary)
-    axis_deltas = _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, rated_count)
-    recommendations = _watchlist_recommendations(
-        watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating, axis_deltas,
-        taste['generosity_score'], taste['rated_and_enriched_count'],
+    favorite_people = _favorite_people(
+        rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, avg_rating,
+        min_director=min_favorite_director, min_actor=min_favorite_actor,
     )
-    insights = _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total)
+    top_tags = _tag_distribution(diary)
+
+    if year is None:
+        favorites = _favorite_films(import_session)
+        axis_deltas = _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, rated_count)
+        recommendations = _watchlist_recommendations(
+            watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating, axis_deltas,
+            taste['generosity_score'], taste['rated_and_enriched_count'],
+        )
+        insights = _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total)
+        # Milestones is the year view's own card -- an all-time "first/last/
+        # 100th film ever" isn't the same kind of fact a Wrapped-style year
+        # recap is going for, so it's simply not computed here.
+        milestones = []
+    else:
+        # See this function's own docstring for why all three are simply
+        # absent in year mode -- the template's existing guards already hide
+        # each one's hero strip/nav link/section for an empty value.
+        favorites = []
+        recommendations = []
+        insights = {'featured': [], 'stats': []}
+        milestones = _milestones(diary)
+
     # First favorite with a resolved poster, used as the header banner's backdrop --
     # not necessarily favorites[0] itself, since an earlier favorite might not have
     # resolved to a Movie (and therefore have no poster) while a later one did.
+    # Naturally '' in year mode, since favorites is always [] there.
     hero_poster_url = next((f['movie'].poster_url for f in favorites if f['movie'] and f['movie'].poster_url), '')
 
     return {
         'import_session': import_session,
         'exclude_shorts': exclude_shorts,
+        'year': year,
+        'available_years': available_years,
+        # Threaded through so the Favorite Directors/Actors "needs at least N
+        # rated films" captions can read the value that's actually in effect --
+        # year mode uses a lower bar than all-time (see min_favorite_director/
+        # _actor's own assignment above).
+        'min_favorite_director': min_favorite_director,
+        'min_favorite_actor': min_favorite_actor,
         'total_films': total_films,
         'films_watched_total': films_watched_total,
         'films_rated': rated_count,
@@ -516,6 +835,7 @@ def build_dashboard_context(import_session, exclude_shorts=False) -> dict:
         'top_tags': top_tags,
         'insights': insights,
         'recommendations': recommendations,
+        'milestones': milestones,
         'chart_data': {
             'films_per_year': {
                 'labels': [str(row['y']) for row in films_per_year],
@@ -2053,6 +2373,15 @@ def _rewatch_leaderboard(diary) -> dict:
         # looks visibly softer than w342 even scaled down to the same final size.
         row['poster_url'] = _tmdb_image_url(row.pop('poster_path'), 'w342')
 
+    # FAVORITE_PEOPLE_GRID_CAP/.favs--six, not REWATCH_GRID_DISPLAY_CAP/.favs--eight
+    # like most_rewatched_films above -- this renders as the same clickable headshot
+    # grid as Favorite Directors (2 rows of 6, not 2 rows of 8), so it shares that
+    # grid's cap and image size (w185) rather than the poster grid's.
+    # count__gte=2, same "one occurrence isn't a pattern" bar as
+    # most_rewatched_films' own watch_count__gt=1 above -- a director credited
+    # on a single rewatched film shouldn't read as someone this person
+    # specifically rewatches, any more than a single rewatched film alone
+    # would.
     most_rewatched_directors = list(
         diary.filter(rewatch=True, movie__directors__isnull=False)
         .values('movie__directors__name')
@@ -2060,13 +2389,11 @@ def _rewatch_leaderboard(diary) -> dict:
             count=Count('id'), profile_path=Min('movie__directors__profile_path'),
             director_tmdb_id=Min('movie__directors__tmdb_id'),
         )
-        .order_by('-count')[:REWATCH_GRID_DISPLAY_CAP]
+        .filter(count__gte=2)
+        .order_by('-count')[:FAVORITE_PEOPLE_GRID_CAP]
     )
     for row in most_rewatched_directors:
-        # w342, not w185 -- same reasoning as most_rewatched_films' poster_url above:
-        # this now renders as a full .fav-card photo, not the small .person-thumb it
-        # was originally sized for.
-        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w342')
+        row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
 
     rewatch_qs = diary.filter(rewatch=True, rating__isnull=False)
     rewatch_avg = rewatch_qs.aggregate(avg=Avg('rating'))['avg'] if rewatch_qs.count() >= MIN_COUNT_FOR_AVERAGE else None
@@ -2199,18 +2526,22 @@ def _true_score(avg, count, k, overall_avg_rating, five_star_count=0) -> float:
     return score
 
 
-def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, overall_avg_rating) -> dict:
+def _favorite_people(
+    rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, overall_avg_rating,
+    min_director=MIN_COUNT_FOR_FAVORITE_DIRECTOR, min_actor=MIN_COUNT_FOR_FAVORITE_ACTOR,
+) -> dict:
     """Your highest-rated directors/actors -- an average-rating ranking, distinct from
     top_directors/top_actors which rank by how many films you've watched from them,
-    not how highly you rated them. Directors need 2+ rated films, actors need 4+ (see
-    MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR). actor_rating_lists/actor_profile_paths
-    are built once in build_dashboard_context (already cameo-excluded) and shared
-    with top_actors' own avg_rating column, so an actor's numbers agree across both
-    views.
+    not how highly you rated them. Directors need min_director+ rated films, actors
+    need min_actor+ (defaults: MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR -- the year view
+    passes its own, lower MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR/_ACTOR_YEAR instead, see
+    build_dashboard_context). actor_rating_lists/actor_profile_paths are built once in
+    build_dashboard_context (already cameo-excluded) and shared with top_actors' own
+    avg_rating column, so an actor's numbers agree across both views.
 
     overall_avg_rating can in principle be None (fewer than MIN_COUNT_FOR_AVERAGE
     rated films total) -- practically unreachable here, since qualifying for
-    favorite_directors/_actors at all requires at least MIN_COUNT_FOR_FAVORITE_*
+    favorite_directors/_actors at all requires at least min_director/min_actor
     rated films from one person alone, which already exceeds MIN_COUNT_FOR_AVERAGE.
     Defensive 0.0 fallback documents that rather than risking a crash on it."""
     overall_avg_rating = float(overall_avg_rating) if overall_avg_rating is not None else 0.0
@@ -2229,7 +2560,7 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_
             five_star_count=Count('id', filter=Q(rating=Decimal('5.0'))),
             director_tmdb_id=Min('movie__directors__tmdb_id'),
         )
-        .filter(count__gte=MIN_COUNT_FOR_FAVORITE_DIRECTOR)
+        .filter(count__gte=min_director)
     )
     for row in favorite_directors_all:
         row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
@@ -2251,7 +2582,7 @@ def _favorite_people(rated, actor_rating_lists, actor_profile_paths, actor_tmdb_
             'actor_tmdb_id': actor_tmdb_ids.get(name),
         }
         for name, ratings in actor_rating_lists.items()
-        if len(ratings) >= MIN_COUNT_FOR_FAVORITE_ACTOR
+        if len(ratings) >= min_actor
     ]
     for row in favorite_actors_all:
         row['true_score'] = _true_score(
