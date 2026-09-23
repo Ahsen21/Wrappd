@@ -457,18 +457,18 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(taste['underrates'][0]['delta'], Decimal('-2.0'))
 
     def test_taste_capped_at_grid_display_cap(self):
-        # Biggest over-rates/under-rates render as a 2-rows-of-8 poster grid
-        # (TASTE_GRID_DISPLAY_CAP=16), not TOP_N's 10.
+        # Biggest over-rates/under-rates render as a 2-rows-of-6 poster grid
+        # (TASTE_GRID_DISPLAY_CAP=12), not TOP_N's 10.
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(17):
+        for i in range(13):
             movie = Movie.objects.create(tmdb_id=3000 + i, title=f'Taste Film {i}', tmdb_rating=Decimal('5.0'))
             RatingEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/taste{i}', title=movie.title,
                 year=movie.release_year, rating=Decimal('5.0'), movie=movie,
             )
         taste = build_dashboard_context(session)['taste']
-        self.assertEqual(len(taste['overrates']), 16)
-        self.assertEqual(len(taste['underrates']), 16)
+        self.assertEqual(len(taste['overrates']), 12)
+        self.assertEqual(len(taste['underrates']), 12)
 
     def test_rating_by_genre(self):
         chart = build_dashboard_context(self.session)['chart_data']['rating_by_genre']
@@ -574,10 +574,10 @@ class DashboardNewStatsTests(TestCase):
         self.assertNotIn('Dir Y', director_names)
 
     def test_rewatch_leaderboard_capped_at_grid_display_cap(self):
-        # Most rewatched films renders as a 2-rows-of-8 poster grid
-        # (REWATCH_GRID_DISPLAY_CAP=16), not TOP_N's 10.
+        # Most rewatched films renders as a 2-rows-of-6 poster grid
+        # (REWATCH_GRID_DISPLAY_CAP=12), not TOP_N's 10.
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(17):
+        for i in range(13):
             movie = _make_movie(2000 + i, f'Rewatch Film {i}', 2020, 100, 'Drama')
             for _ in range(2):
                 DiaryEntry.objects.create(
@@ -585,7 +585,7 @@ class DashboardNewStatsTests(TestCase):
                     year=movie.release_year, watched_date='2024-01-01', movie=movie,
                 )
         rewatch = build_dashboard_context(session)['rewatch']
-        self.assertEqual(len(rewatch['most_rewatched_films']), 16)
+        self.assertEqual(len(rewatch['most_rewatched_films']), 12)
 
     def test_rewatch_leaderboard_directors_capped_at_favorite_people_grid_cap(self):
         # Most rewatched directors renders as the same 2-rows-of-6 clickable
@@ -1746,11 +1746,11 @@ class BuildCompareContextTests(TestCase):
         self.assertEqual(context['biggest_disagreements'][0]['title'], 'Shared Far')
 
     def test_disagreements_capped_at_grid_display_cap_but_total_stays_accurate(self):
-        # Most different ratings renders as a 2-rows-of-8 poster grid
-        # (GRID_DISPLAY_CAP=16), not the old table's TOP_N=10.
+        # Most different ratings renders as a 2-rows-of-6 poster grid
+        # (GRID_DISPLAY_CAP=12), not the old table's TOP_N=10.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(17):
+        for i in range(13):
             uri, title = f'https://boxd.it/gap{i}', f'Gap Film {i}'
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('5.0'),
@@ -1759,8 +1759,8 @@ class BuildCompareContextTests(TestCase):
                 import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('1.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['biggest_disagreements']), 16)
-        self.assertEqual(context['biggest_disagreements_total'], 17)
+        self.assertEqual(len(context['biggest_disagreements']), 12)
+        self.assertEqual(context['biggest_disagreements_total'], 13)
 
     def test_agreement_pct_uses_half_star_threshold(self):
         context = build_compare_context(self.session_a, self.session_b)
@@ -2484,13 +2484,15 @@ class SameDayLogsTests(TestCase):
         self.assertEqual(match['date'].isoformat(), '2024-03-01')
 
     def test_exact_matches_capped_at_grid_display_cap_not_top_n(self):
-        # Exact matches renders as the same .favs--eight poster grid as Same
-        # rating/Watchlist matches (GRID_DISPLAY_CAP=16), not same_day_logs' own
-        # SAME_DAY_LOGS_GRID_CAP=12 -- they're two different caps on the same
-        # build_compare_context call, easy to accidentally cross-wire.
+        # same_day_exact_matches shares GRID_DISPLAY_CAP with Same rating/Most
+        # different ratings/Watchlist matches (12), not same_day_logs' own
+        # SAME_DAY_LOGS_GRID_CAP (also 12, coincidentally, as of both caps'
+        # move off their old 16/12 split) -- they're two different constants
+        # on the same build_compare_context call, easy to accidentally
+        # cross-wire even though they land on the same number today.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(17):
+        for i in range(13):
             date = f'2024-05-{i + 1:02d}'
             DiaryEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/ea{i}', title=f'Exact Film {i}',
@@ -2501,8 +2503,8 @@ class SameDayLogsTests(TestCase):
                 year=2020, watched_date=date,
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['same_day_exact_matches']), 16)
-        self.assertEqual(context['same_day_exact_matches_total'], 17)
+        self.assertEqual(len(context['same_day_exact_matches']), 12)
+        self.assertEqual(context['same_day_exact_matches_total'], 13)
 
     def test_multiple_films_same_day_all_listed(self):
         session_a = ImportSession.objects.create(display_name='Alex')
@@ -4248,11 +4250,11 @@ class SameRatingTests(TestCase):
         self.assertEqual(titles, ['Alpha Tie', 'High Tie', 'Zeta Tie', 'Mid Tie', 'Low Tie'])
 
     def test_capped_at_grid_display_cap_but_total_stays_accurate(self):
-        # Same rating renders as a 2-rows-of-8 poster grid (GRID_DISPLAY_CAP=16), not
+        # Same rating renders as a 2-rows-of-6 poster grid (GRID_DISPLAY_CAP=12), not
         # the table-based TOP_N=10 lists elsewhere on the page.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(17):
+        for i in range(13):
             uri, title = f'https://boxd.it/tie{i}', f'Tie Film {i}'
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('4.0'),
@@ -4261,14 +4263,18 @@ class SameRatingTests(TestCase):
                 import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('4.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['same_rating']), 16)
-        self.assertEqual(context['same_rating_total'], 17)
+        self.assertEqual(len(context['same_rating']), 12)
+        self.assertEqual(context['same_rating_total'], 13)
 
     def test_displayed_subset_spreads_across_rating_tiers(self):
-        # 20 films tied at 5.0 would fill the whole 16-slot grid on their own if it
-        # were a plain top-16 slice -- the grid should instead pull from every tier
+        # 20 films tied at 5.0 would fill the whole 12-slot grid on their own if it
+        # were a plain top-12 slice -- the grid should instead pull from every tier
         # that has films (4.0 and 3.0 here), not just the oversized top one, while
-        # still displaying highest-to-lowest overall.
+        # still displaying highest-to-lowest overall. 4.0 is itself GRID_HIGH_RATING_
+        # THRESHOLD (>=, inclusive), so it shares the 9-slot high budget with 5.0
+        # (both fully absorb their small 3-film tier there via the same round-robin
+        # spread, leaving 5.0 the rest) -- only 3.0 falls into the separate low
+        # bucket, small enough (3 films) to be fully included in its own 3 slots.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         for rating, count in [(Decimal('5.0'), 20), (Decimal('4.0'), 3), (Decimal('3.0'), 3)]:
@@ -4282,23 +4288,22 @@ class SameRatingTests(TestCase):
                 )
         context = build_compare_context(session_a, session_b)
         same_rating = context['same_rating']
-        self.assertEqual(len(same_rating), 16)
+        self.assertEqual(len(same_rating), 12)
 
         ratings_shown = [f['rating_a'] for f in same_rating]
         self.assertIn(Decimal('4.0'), ratings_shown)
         self.assertIn(Decimal('3.0'), ratings_shown)
-        # Both lower tiers are small enough (3 each) to be fully included.
+        self.assertEqual(ratings_shown.count(Decimal('5.0')), 6)
         self.assertEqual(ratings_shown.count(Decimal('4.0')), 3)
         self.assertEqual(ratings_shown.count(Decimal('3.0')), 3)
-        self.assertEqual(ratings_shown.count(Decimal('5.0')), 10)
         # Still displayed highest-to-lowest despite the round-robin selection.
         self.assertEqual(ratings_shown, sorted(ratings_shown, reverse=True))
 
     def test_grid_weighted_toward_high_ratings(self):
-        # GRID_HIGH_RATING_SLOTS (10) of the 16 slots go to 4.0+ films, the rest to
+        # GRID_HIGH_RATING_SLOTS (8) of the 12 slots go to 4.0+ films, the rest to
         # whatever's below -- with plenty of films on both sides of that line (12
-        # each here), the split should land at exactly 10 high / 6 low, not an even
-        # 8/8 or a plain top-16 slice that's all 5.0s.
+        # each here), the split should land at exactly 8 high / 4 low, not an even
+        # 6/6 or a plain top-12 slice that's all 5.0s.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         for rating, count in [(Decimal('5.0'), 12), (Decimal('2.0'), 12)]:
@@ -4312,13 +4317,13 @@ class SameRatingTests(TestCase):
                 )
         context = build_compare_context(session_a, session_b)
         ratings_shown = [f['rating_a'] for f in context['same_rating']]
-        self.assertEqual(len(ratings_shown), 16)
-        self.assertEqual(ratings_shown.count(Decimal('5.0')), 10)
-        self.assertEqual(ratings_shown.count(Decimal('2.0')), 6)
+        self.assertEqual(len(ratings_shown), 12)
+        self.assertEqual(ratings_shown.count(Decimal('5.0')), 8)
+        self.assertEqual(ratings_shown.count(Decimal('2.0')), 4)
 
     def test_grid_low_tier_shortfall_reclaimed_by_high_tier(self):
-        # Only 2 films below 4.0 stars exist -- the other 14 slots should all go to
-        # 4.0+ films instead of leaving 4 slots empty.
+        # Only 2 films below 4.0 stars exist -- the other 10 slots should all go to
+        # 4.0+ films instead of leaving 2 slots empty.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         for rating, count in [(Decimal('4.5'), 20), (Decimal('2.0'), 2)]:
@@ -4332,9 +4337,9 @@ class SameRatingTests(TestCase):
                 )
         context = build_compare_context(session_a, session_b)
         ratings_shown = [f['rating_a'] for f in context['same_rating']]
-        self.assertEqual(len(ratings_shown), 16)
+        self.assertEqual(len(ratings_shown), 12)
         self.assertEqual(ratings_shown.count(Decimal('2.0')), 2)
-        self.assertEqual(ratings_shown.count(Decimal('4.5')), 14)
+        self.assertEqual(ratings_shown.count(Decimal('4.5')), 10)
 
 
 class RatingCurveTests(TestCase):
@@ -4388,11 +4393,11 @@ class WatchlistMatchesTests(TestCase):
         self.assertEqual([f['title'] for f in context['watchlist_matches']], ['Shared Watchlist Film'])
 
     def test_cap_and_total(self):
-        # Watchlist matches renders as a 2-rows-of-8 poster grid (GRID_DISPLAY_CAP=16),
+        # Watchlist matches renders as a 2-rows-of-6 poster grid (GRID_DISPLAY_CAP=12),
         # not the table-based TOP_N=10 lists elsewhere on the page.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(17):
+        for i in range(13):
             title = f'Watchlist Film {i}'
             WatchlistEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/a-w{i}', title=title, year=2020,
@@ -4401,8 +4406,8 @@ class WatchlistMatchesTests(TestCase):
                 import_session=session_b, letterboxd_uri=f'https://boxd.it/b-w{i}', title=title, year=2020,
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['watchlist_matches']), 16)
-        self.assertEqual(context['watchlist_matches_total'], 17)
+        self.assertEqual(len(context['watchlist_matches']), 12)
+        self.assertEqual(context['watchlist_matches_total'], 13)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')

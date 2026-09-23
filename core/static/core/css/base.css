@@ -943,34 +943,6 @@ h1, h2, h3, h4 { font-weight: 700; }
   transform: translateY(-2px);
 }
 
-/* Shared 2-rows-of-8 poster grid (a 16-item cap) -- every list on the site that's
-   capped at 16 uses this same class instead of a near-duplicate per section:
-   Director's Cut's Most rewatched films/directors and Biggest over-/under-rates,
-   and Double Feature's Same rating, Most different ratings, Watchlist matches, and
-   Same day exact matches (GRID_DISPLAY_CAP=16 in compare.py,
-   REWATCH_GRID_DISPLAY_CAP/TASTE_GRID_DISPLAY_CAP=16 in dashboard.py). flex-basis is
-   computed from the card's own width and the row's gap, rather than a fixed px
-   value, so it lands on exactly 8 per row regardless of the card's actual rendered
-   width (unlike a fixed max-width, which only *happens* to fit 8 at one particular
-   viewport width). Favorite Directors/Actors used to be here too, on both pages, but
-   moved to the smaller .favs--six below (12-item cap) instead. */
-.favs--eight { gap: 0.6rem; }
-.favs--eight .fav-card {
-  flex: 0 0 calc((100% - 7 * 0.6rem) / 8);
-  max-width: calc((100% - 7 * 0.6rem) / 8);
-}
-/* 8 columns is desktop-only math -- unwound to a 4x4 grid (2 even rows of 4 for the
-   16-item cap) at the same 700px breakpoint the rest of the site's responsive grids
-   use (.two-col/.hero-grid), and held at 4 all the way down to phone width rather
-   than stepping down further -- an 8-per-row grid put each poster under 30px wide on
-   a phone, unreadable and barely tappable, but 4x4 stays legible at any width. */
-@media (max-width: 700px) {
-  .favs--eight .fav-card {
-    flex: 0 0 calc((100% - 3 * 0.6rem) / 4);
-    max-width: calc((100% - 3 * 0.6rem) / 4);
-  }
-}
-
 /* For any grid of people rather than films -- headshots shrunk within their column
    and made actually circular (aspect-ratio 1/1 + border-radius 50%, overriding
    .fav-card img/.fav-placeholder's own 2:3 poster box -- border-radius:50% alone
@@ -988,8 +960,8 @@ h1, h2, h3, h4 { font-weight: 700; }
    than DOM position (e.g. p:first-of-type) -- these cards' rating/count line
    is one or two separate <p>s after the name, so a position-based selector
    would just as easily grab the wrong paragraph the moment that markup
-   changes shape. Not tied to any one column count (unlike .favs--eight) since
-   it layers onto any grid of people. */
+   changes shape. Not tied to any one column-count class itself -- it layers
+   onto any grid of people, whatever column count that grid uses. */
 .favs--headshots .fav-card img,
 .favs--headshots .fav-card .fav-placeholder {
   width: 85%;
@@ -1011,6 +983,18 @@ h1, h2, h3, h4 { font-weight: 700; }
    still varies shot to shot, and there's no face-detection data available from
    TMDB to do this per-image), just a better-on-average default than 50/50. */
 .favs--headshots .fav-card img { object-position: 50% 30%; }
+/* Same 85% shrink as headshots above, minus the circle crop -- .fav-card img's
+   own 100% default (still used as-is by the plain, unmodified .favs grid --
+   the hero's Favorites strip) looks oversized run edge to edge in .favs--six's
+   wider 6-across column, so poster grids get the same bit of breathing room
+   on either side headshots already get. Scoped to :not(.favs--headshots) so
+   it doesn't also apply width:85% on top of headshots' own rule above
+   (redundant, not conflicting, but no need to set it twice). */
+.favs--six:not(.favs--headshots) .fav-card img,
+.favs--six:not(.favs--headshots) .fav-card .fav-placeholder {
+  width: 90%;
+  margin: 0 auto;
+}
 .favs--headshots .fav-card .person-trigger,
 .favs--headshots .fav-card .shared-person-trigger {
   min-height: 44px;
@@ -1570,9 +1554,9 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 
 /* "X loved it, Y hasn't seen it" and Favorite directors' "Side by side" grids both
    sit in a half-width .two-col card, not the full-width card the site's shared
-   .favs--eight grid (Same rating, Watchlist matches, etc.) uses -- 3 rows of 4
+   .favs--six grid (Same rating, Watchlist matches, etc.) uses -- 3 rows of 4
    (GRID_DISPLAY_CAP_NARROW=12 in compare.py) fits that narrower card the way 2 rows
-   of 8 fits a full-width one, at a smaller card size (roughly half a full .fav-card)
+   of 6 fits a full-width one, at a smaller card size (roughly half a full .fav-card)
    since this is a denser grid than a plain .favs. */
 .favs--four .fav-card p { font-size: 0.75rem; }
 .compare-page .favs--four .fav-placeholder { font-size: 1.5rem; }
@@ -1592,22 +1576,36 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   max-width: calc((100% - 2 * 1rem) / 3);
 }
 
-/* Favorite Directors/Actors on both pages -- Double Feature's "Shared" grid and
-   Director's Cut's own Favorite Directors/Actors card (FAVORITE_PEOPLE_GRID_CAP in
-   dashboard.py, SHARED_PEOPLE_GRID_CAP in compare.py -- see either's comment for why
-   this isn't .favs--eight's shape). 2 rows of 6 on desktop, unwound to 4 rows of 3
-   on mobile rather than .favs--eight's own 4-columns-at-every-narrow-width behavior
-   -- a plain .favs--eight instinct here would leave an oddly sparse partial row
-   against this grid's 12-item cap. */
+/* Shared 2-rows-of-6 desktop shape (a 12-item cap) for every fixed poster/
+   headshot grid on the site -- headshot grids (Favorite Directors/Actors,
+   Most rewatched directors, Double Feature's Shared panel --
+   FAVORITE_PEOPLE_GRID_CAP in dashboard.py, SHARED_PEOPLE_GRID_CAP in
+   compare.py) and poster grids alike (Most rewatched films, Taste vs.
+   crowd's over-/under-rates, Watchlist recommendations --
+   REWATCH_GRID_DISPLAY_CAP/TASTE_GRID_DISPLAY_CAP/RECOMMENDATION_DISPLAY_CAP
+   in dashboard.py; Same rating, Most different ratings, Watchlist matches --
+   GRID_DISPLAY_CAP in compare.py). This used to be split across two classes
+   (.favs--eight for posters, .favs--six for headshots, at different column
+   counts and caps) until every poster grid on the site converged on this
+   same 12-item/6-column shape too, so .favs--eight was retired rather than
+   kept around for a shape nothing used anymore. Desktop is identical either
+   way (6 across); only the mobile unwind below differs, by whichever of
+   .favs--headshots or plain .favs--six matches -- a circular headshot reads
+   fine smaller (3 across), but a 2:3 poster wants more width per card, so it
+   unwinds to 4 across instead. */
 .favs--six { gap: 0.6rem; }
 .favs--six .fav-card {
   flex: 0 0 calc((100% - 5 * 0.6rem) / 6);
   max-width: calc((100% - 5 * 0.6rem) / 6);
 }
 @media (max-width: 700px) {
-  .favs--six .fav-card {
+  .favs--six.favs--headshots .fav-card {
     flex: 0 0 calc((100% - 2 * 0.6rem) / 3);
     max-width: calc((100% - 2 * 0.6rem) / 3);
+  }
+  .favs--six:not(.favs--headshots) .fav-card {
+    flex: 0 0 calc((100% - 3 * 0.6rem) / 4);
+    max-width: calc((100% - 3 * 0.6rem) / 4);
   }
 }
 

@@ -229,7 +229,7 @@
     </div>
     <h4>Biggest over-rates</h4>
     {% if taste.overrates %}
-      <div class="favs favs--eight">
+      <div class="favs favs--six">
         {% for film in taste.overrates %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -242,7 +242,7 @@
     {% endif %}
     <h4>Biggest under-rates</h4>
     {% if taste.underrates %}
-      <div class="favs favs--eight">
+      <div class="favs favs--six">
         {% for film in taste.underrates %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -436,7 +436,7 @@
     <div class="card">
       <h3>Milestones</h3>
       <p class="muted">The films that marked your year.</p>
-      <div class="favs favs--eight">
+      <div class="favs favs--six">
         {% for milestone in milestones %}
           <div class="fav-card">
             <span class="milestone-badge">{{ milestone.label }}</span>
@@ -514,7 +514,7 @@
   <div class="card">
     <h3>Most rewatched films</h3>
     {% if rewatch.most_rewatched_films %}
-      <div class="favs favs--eight">
+      <div class="favs favs--six">
         {% for film in rewatch.most_rewatched_films %}
           <div class="fav-card">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
@@ -554,7 +554,7 @@
   <div class="card">
     <h3>Watchlist recommendations</h3>
     <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
-    <div class="favs favs--eight">
+    <div class="favs favs--six">
       {% for rec in recommendations %}
         <div class="fav-card">
           {% if rec.movie.poster_url %}
