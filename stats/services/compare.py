@@ -27,19 +27,22 @@ TOP_N = 10
 # template, so the two can't quietly drift apart if the ring's radius ever changes.
 ALIGNMENT_GAUGE_RADIUS = 60
 ALIGNMENT_GAUGE_CIRCUMFERENCE = round(2 * math.pi * ALIGNMENT_GAUGE_RADIUS, 2)
-# Same rating and Watchlist matches render as a fixed-width poster grid (see the
-# site-wide .favs--eight in base.css), not a table -- capped at 2 full rows of 8 (16)
-# rather than TOP_N's 10, since 10 left an awkward sparse second row of 2.
-GRID_DISPLAY_CAP = 16
+# Same rating, Most different ratings, and Watchlist matches render as a
+# fixed-width poster grid (see the site-wide .favs--six in base.css), not a
+# table -- capped at 2 full rows of 6 (12) rather than TOP_N's 10, since 10
+# left an awkward sparse second row of 4.
+GRID_DISPLAY_CAP = 12
 # Top unseen (formerly "five-star exclusives") renders the same kind of poster grid,
 # but inside a .two-col half-width card rather than a full-width one -- 3 rows of 4
-# (12) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 8 fits a
+# (12) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 6 fits a
 # full-width one.
 GRID_DISPLAY_CAP_NARROW = 12
-# Favorite directors' "Shared" grid (see .favs--six in base.css) -- its own cap, not
-# GRID_DISPLAY_CAP or GRID_DISPLAY_CAP_NARROW, since it's neither of those grids'
-# shape: 2 rows of 6 on desktop (4 rows of 3 on mobile), full-width like
-# GRID_DISPLAY_CAP's grids but a different column count/cap than any of them.
+# Favorite directors' "Shared" grid -- its own cap, not GRID_DISPLAY_CAP or
+# GRID_DISPLAY_CAP_NARROW, even though all three now share both the same
+# .favs--six shape and the same value: this is a headshot grid (people), not
+# a poster grid (films), a different kind of card that could change its own
+# cap independently without implying anything about the poster grids' caps
+# (or vice versa).
 SHARED_PEOPLE_GRID_CAP = 12
 # Cap for the 'same_day_logs' context list -- no longer rendered directly (the
 # template shows the heatmap built from the uncapped same_day_logs_all instead),
@@ -53,8 +56,11 @@ TOP_UNSEEN_MIN_RATING = Decimal('4.0')
 # Same rating's grid is weighted toward higher ratings rather than an even spread --
 # up to GRID_HIGH_RATING_SLOTS of the GRID_DISPLAY_CAP slots go to 4.0+ tiers, the
 # rest to whatever's left (typically low-to-mid tiers, since same_rating_all is
-# already sorted highest-first). See _same_rating_display.
-GRID_HIGH_RATING_SLOTS = 10
+# already sorted highest-first). 8 of 12, not a straight carry-over of the old 10 of
+# 16 -- scaled down to roughly the same ~2/3 skew toward high ratings now that the
+# cap itself is smaller, rather than let the same absolute number eat a bigger share
+# of a smaller grid. See _same_rating_display.
+GRID_HIGH_RATING_SLOTS = 8
 GRID_HIGH_RATING_THRESHOLD = Decimal('4.0')
 # An average of a single shared rated film isn't meaningful -- avg_delta requires at
 # least this many shared rated films, or it's left out entirely.
@@ -1264,10 +1270,9 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'genre_agreement': genre_agreement,
         'watchlist_matches': watchlist_matches_ranked,
         'watchlist_matches_total': len(watchlist_eligible),
-        # SAME_DAY_LOGS_GRID_CAP, not GRID_DISPLAY_CAP -- same_day_logs renders as
-        # its own fixed-column grid (4x3 desktop, 6x2 mobile -- see that constant's
-        # own comment), not the site-wide .favs--eight poster grid, so the "2 rows of
-        # 8" reasoning behind GRID_DISPLAY_CAP doesn't apply here.
+        # SAME_DAY_LOGS_GRID_CAP, not GRID_DISPLAY_CAP -- own cap, kept independent
+        # of the poster grids' (see that constant's own comment for why this key
+        # isn't rendered directly either, same as same_day_exact_matches below).
         'same_day_logs': same_day_logs_all[:SAME_DAY_LOGS_GRID_CAP],
         'same_day_logs_total': len(same_day_logs_all),
         # Top-level, not just inside chart_data below -- same_day_heatmap.years
@@ -1275,10 +1280,11 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         # chart_data, which only exists client-side via json_script), the same
         # "in both places" split Director's Cut's own calendar.heatmap uses.
         'same_day_heatmap': same_day_heatmap,
-        # GRID_DISPLAY_CAP here, unlike same_day_logs just above -- Exact matches
-        # renders as the same fixed .favs--eight poster grid as Same rating/
-        # Watchlist matches/Most different ratings, so it gets their cap, not
-        # same_day_logs' SAME_DAY_LOGS_GRID_CAP.
+        # GRID_DISPLAY_CAP, sharing Same rating/Most different ratings/Watchlist
+        # matches' own cap -- not rendered as its own grid (the heatmap replaced
+        # the old day-grid display this fed; see same_day_logs' own comment
+        # above), but same_day_exact_matches_all's computation still feeds that
+        # heatmap, so this key is kept and still capped for its own test coverage.
         'same_day_exact_matches': same_day_exact_matches_all[:GRID_DISPLAY_CAP],
         'same_day_exact_matches_total': len(same_day_exact_matches_all),
         'top_unseen_a': top_unseen_a_all[:GRID_DISPLAY_CAP_NARROW],

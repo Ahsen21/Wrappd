@@ -60,17 +60,18 @@ LANGUAGE_FLAG_CODES = {
     'Bengali': 'BD', 'Serbian': 'RS', 'Croatian': 'HR', 'Bulgarian': 'BG', 'Slovak': 'SK',
 }
 TOP_N = 10
-# Most rewatched films/directors both render as a fixed poster grid (see .favs--eight
-# in base.css), not a table -- 2 rows of 8 (16) rather than TOP_N's 10, so the grid
-# fills evenly instead of leaving a sparse partial last row.
-REWATCH_GRID_DISPLAY_CAP = 16
-# Biggest over-rates/under-rates render as a fixed poster grid (see .favs--eight in
-# base.css), not a table -- 2 rows of 8 (16) rather than TOP_N's 10.
-TASTE_GRID_DISPLAY_CAP = 16
+# Most rewatched films renders as a fixed poster grid (see .favs--six in
+# base.css), not a table -- 2 rows of 6 (12) rather than TOP_N's 10, so the grid
+# fills evenly instead of leaving a sparse partial last row. (Most rewatched
+# directors is capped separately -- see FAVORITE_PEOPLE_GRID_CAP.)
+REWATCH_GRID_DISPLAY_CAP = 12
+# Biggest over-rates/under-rates render as a fixed poster grid (see .favs--six in
+# base.css), not a table -- 2 rows of 6 (12) rather than TOP_N's 10.
+TASTE_GRID_DISPLAY_CAP = 12
 # Favorite Directors/Actors render as a fixed poster grid (see .favs--six in
-# base.css -- shared with Double Feature's own Favorite directors/actors grids, not
-# .favs--eight's shape like Most rewatched/Taste vs. crowd above), not a table -- 12
-# rather than TOP_N's 10. Kept as its own constant per this file's established "a
+# base.css -- shared with Double Feature's own Favorite directors/actors grids and,
+# now, every other poster grid on this page too), not a table -- 12 rather than
+# TOP_N's 10. Kept as its own constant per this file's established "a
 # grid's cap is about filling its shape evenly, not about 'top N' ranking"
 # convention, even though it's not TOP_N-derived.
 FAVORITE_PEOPLE_GRID_CAP = 12
@@ -190,10 +191,10 @@ ADAPTIVE_WEIGHT_BLEND = 0.5
 # confidence-backed peak (many ratings in this category, one of them clearly
 # excellent) surface, not to chase every lucky single high rating.
 PEAK_BLEND = 0.35
-# Top-N cap for the "Recommended from your watchlist" grid -- .favs--eight's full
-# 2-rows-of-8 shape (4x4 on mobile), same convention as Most rewatched films/
+# Top-N cap for the "Recommended from your watchlist" grid -- .favs--six's full
+# 2-rows-of-6 shape (4x3 on mobile), same convention as Most rewatched films/
 # Biggest over-/under-rates.
-RECOMMENDATION_DISPLAY_CAP = 16
+RECOMMENDATION_DISPLAY_CAP = 12
 # A signal's delta has to clear this before it's worth naming as a "why" reason in
 # the UI -- otherwise a barely-above-baseline genre would clutter the tooltip
 # alongside a film's actually meaningful matches.
@@ -2367,16 +2368,17 @@ def _rewatch_leaderboard(diary) -> dict:
         .order_by('-watch_count')[:REWATCH_GRID_DISPLAY_CAP]
     )
     for row in most_rewatched_films:
-        # w342, not w185 -- this renders as a full poster card now (.favs--eight), not
+        # w342, not w185 -- this renders as a full poster card now (.favs--six), not
         # the small inline thumbnail it was originally sized for. TMDB's smaller
         # size tiers are more aggressively compressed at the source, so w185 still
         # looks visibly softer than w342 even scaled down to the same final size.
         row['poster_url'] = _tmdb_image_url(row.pop('poster_path'), 'w342')
 
-    # FAVORITE_PEOPLE_GRID_CAP/.favs--six, not REWATCH_GRID_DISPLAY_CAP/.favs--eight
-    # like most_rewatched_films above -- this renders as the same clickable headshot
-    # grid as Favorite Directors (2 rows of 6, not 2 rows of 8), so it shares that
-    # grid's cap and image size (w185) rather than the poster grid's.
+    # FAVORITE_PEOPLE_GRID_CAP, not REWATCH_GRID_DISPLAY_CAP, even though both are
+    # .favs--six now and happen to share the same value -- this renders as the
+    # same clickable headshot grid as Favorite Directors (headshots, w185), not
+    # most_rewatched_films' poster grid (w342) above, so it shares that card's
+    # own cap/image-size convention rather than coincidentally matching this one.
     # count__gte=2, same "one occurrence isn't a pattern" bar as
     # most_rewatched_films' own watch_count__gt=1 above -- a director credited
     # on a single rewatched film shouldn't read as someone this person
