@@ -602,6 +602,14 @@ a { color: var(--accent-2); }
     grid-template-columns: repeat(3, 1fr);
     gap: 0.6rem;
   }
+  /* Year view adds a 4th stat (days watched %) -- 4 across at this width
+     squeezes tighter than the 3-stat case was tuned for, so this switches to
+     a 2x2 grid instead. Detects the 4th stat itself rather than a class the
+     template would have to set, so this stays in sync automatically if the
+     count ever changes again. */
+  .grid--calendar-stats:has(.stat:nth-child(4)) {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 /* Double Feature's Rating distributions -- same reasoning as
    .grid--calendar-stats above, just 2 items instead of 3: .grid's own auto-fit

@@ -762,7 +762,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
     rating_by_country = _rating_by_country(rated)
     rating_by_language = _rating_by_language(rated)
     rewatch = _rewatch_leaderboard(diary)
-    calendar = _viewing_calendar(diary)
+    calendar = _viewing_calendar(diary, year)
     favorite_people = _favorite_people(
         rated, actor_rating_lists, actor_profile_paths, actor_tmdb_ids, avg_rating,
         min_director=min_favorite_director, min_actor=min_favorite_actor,
@@ -2429,7 +2429,7 @@ def _tag_distribution(diary) -> list:
     return [{'label': tag, 'count': count} for tag, count in ranked]
 
 
-def _viewing_calendar(diary) -> dict:
+def _viewing_calendar(diary, year=None) -> dict:
     busiest_months = list(
         diary.annotate(month=TruncMonth('watched_date'))
         .values('month')
@@ -2451,12 +2451,36 @@ def _viewing_calendar(diary) -> dict:
     dates = sorted(set(diary.values_list('watched_date', flat=True)))
     longest_streak, longest_gap = _streak_and_gap(dates)
 
+    # Days watched % (year view only, Watching Habits' 4th calendar stat) --
+    # needs a fixed, known-length denominator to mean anything ("42% of the
+    # year" reads as a real consistency stat), which only a single calendar
+    # year has. An all-time version would need "days since account start",
+    # an irregular, hard-to-picture number that isn't the same kind of fact.
+    #
+    # For the current, still-in-progress year, the denominator is days
+    # elapsed so far (today's ordinal day), not the full 365/366 -- dividing
+    # a partial year by its eventual full length would understate the
+    # percentage for every year until it's actually over. A past year uses
+    # its own full length as before. date(...).timetuple().tm_yday gives the
+    # ordinal day count either way (366 for a leap year's Dec 31, or today's
+    # position in the current year) -- simpler than importing the stdlib
+    # calendar module for one leap-year check.
+    days_watched_count = days_elapsed = days_watched_pct = None
+    if year is not None:
+        days_watched_count = len(dates)
+        today = date.today()
+        days_elapsed = today.timetuple().tm_yday if year == today.year else date(year, 12, 31).timetuple().tm_yday
+        days_watched_pct = round(days_watched_count / days_elapsed * 100)
+
     return {
         'busiest_month': busiest_month,
         'weekday_distribution': weekday_distribution,
         'longest_streak_days': longest_streak,
         'longest_gap_days': longest_gap,
         'heatmap': _viewing_heatmap(diary),
+        'days_watched_count': days_watched_count,
+        'days_elapsed': days_elapsed,
+        'days_watched_pct': days_watched_pct,
     }
 
 

@@ -235,6 +235,36 @@ class YearScopedDashboardContextTests(TestCase):
         self.assertEqual(build_dashboard_context(self.session)['milestones'], [])
         self.assertNotEqual(build_dashboard_context(self.session, year=2025)['milestones'], [])
 
+    def test_days_watched_pct_absent_in_all_time_present_in_year_mode(self):
+        all_time_calendar = build_dashboard_context(self.session)['calendar']
+        self.assertIsNone(all_time_calendar['days_watched_pct'])
+        self.assertIsNone(all_time_calendar['days_watched_count'])
+        self.assertIsNone(all_time_calendar['days_elapsed'])
+
+        # 2025 is a past year (this test fixture is fixed in time, unlike the
+        # real calendar), so the denominator is its full length: 3 distinct
+        # dates (Jan 5, Jun 5, Jul 1) out of 365 days in that (non-leap) year.
+        year_calendar = build_dashboard_context(self.session, year=2025)['calendar']
+        self.assertEqual(year_calendar['days_watched_count'], 3)
+        self.assertEqual(year_calendar['days_elapsed'], 365)
+        self.assertEqual(year_calendar['days_watched_pct'], round(3 / 365 * 100))
+
+    def test_days_watched_pct_accounts_for_a_leap_year(self):
+        # 2024's single diary row (Mar 1) is 1 of 366 days -- 2024 is a leap year.
+        calendar = build_dashboard_context(self.session, year=2024)['calendar']
+        self.assertEqual(calendar['days_watched_count'], 1)
+        self.assertEqual(calendar['days_elapsed'], 366)
+
+    @patch('stats.services.dashboard.date')
+    def test_days_watched_pct_uses_days_elapsed_so_far_for_the_current_year(self, mock_date):
+        # "Today" is Jun 30, 2025 (day 181 of a non-leap year) -- a still-in-
+        # progress 2025 should divide by 181, not the full 365, or the
+        # percentage would understate how consistently they've watched.
+        mock_date.today.return_value = date(2025, 6, 30)
+        mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+        calendar = build_dashboard_context(self.session, year=2025)['calendar']
+        self.assertEqual(calendar['days_elapsed'], 181)
+
 
 class MilestonesTests(TestCase):
     """_milestones (year view, Watching Habits) -- the first watch, round-number

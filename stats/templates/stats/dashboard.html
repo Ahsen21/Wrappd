@@ -457,6 +457,12 @@
       </div>
       <div class="stat"><div class="value">{{ calendar.longest_streak_days }}</div><div class="label">Longest streak (days)</div></div>
       <div class="stat"><div class="value">{{ calendar.longest_gap_days }}</div><div class="label">Longest dry spell (days)</div></div>
+      {% if year %}
+        <div class="stat">
+          <div class="value">{{ calendar.days_watched_pct }}%</div>
+          <div class="label">Days watched ({{ calendar.days_watched_count }}/{{ calendar.days_elapsed }})</div>
+        </div>
+      {% endif %}
     </div>
     <h4>Day of week</h4>
     <div class="weekday-chart">
