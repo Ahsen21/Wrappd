@@ -207,6 +207,40 @@ class DashboardViewTests(TestCase):
 
         self.assertFalse(response.context['exclude_shorts'])
 
+    def test_year_param_defaults_to_all_time(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}))
+
+        self.assertIsNone(response.context['year'])
+        self.assertNotIn('year=', response.context['share_url'])
+
+    def test_year_param_is_read_and_carried_into_the_share_url(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}), {'year': '2024'})
+
+        self.assertEqual(response.context['year'], 2024)
+        self.assertIn('year=2024', response.context['share_url'])
+
+    def test_a_non_integer_year_value_falls_back_to_all_time_rather_than_erroring(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}), {'year': 'nonsense'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['year'])
+
+    def test_shorts_and_year_both_carry_into_the_share_url_together(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(
+            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'exclude', 'year': '2024'}
+        )
+
+        self.assertIn('shorts=exclude', response.context['share_url'])
+        self.assertIn('year=2024', response.context['share_url'])
+
 
 class CompareViewTests(TestCase):
     def test_shorts_exclude_param_is_read(self):

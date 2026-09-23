@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -15,7 +15,15 @@ from imports.models import (
     WatchlistEntry,
 )
 from stats.services.compare import build_compare_context
-from stats.services.dashboard import build_dashboard_context
+from stats.services.dashboard import (
+    MILESTONE_THRESHOLDS,
+    MIN_COUNT_FOR_FAVORITE_ACTOR,
+    MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR,
+    MIN_COUNT_FOR_FAVORITE_DIRECTOR,
+    MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR,
+    _milestones,
+    build_dashboard_context,
+)
 from stats.services.person_filmography import build_person_filmography
 from tmdb.models import Country, Credit, Genre, Movie, Person, TitleYearLookup
 
@@ -83,6 +91,232 @@ class BuildDashboardContextTests(TestCase):
         context = build_dashboard_context(self.session)
         self.assertEqual(context['chart_data']['films_per_year']['labels'], ['2023', '2024'])
         self.assertEqual(context['chart_data']['films_per_year']['data'], [1, 1])
+
+
+class YearScopedDashboardContextTests(TestCase):
+    """Covers build_dashboard_context's year=<int> mode (the "Wrapped for a
+    single year" view) -- diary.csv is its sole source (see that function's own
+    docstring for why RatingEntry/WatchedEntry/WatchlistEntry can't be scoped
+    to a year at all), so this fixture spans two years with enough variety to
+    prove each card only reflects the selected year's diary rows, that a
+    same-year rewatch counts as its own data point rather than being deduped
+    to one row per film, and that Watchlist/Favorite films/Highlights are
+    absent in year mode."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+        self.director = Person.objects.create(tmdb_id=9001, name='Year Director')
+        self.actor = Person.objects.create(tmdb_id=9002, name='Year Actor')
+        genre_drama, _ = Genre.objects.get_or_create(tmdb_id=9101, defaults={'name': 'Drama'})
+        genre_comedy, _ = Genre.objects.get_or_create(tmdb_id=9102, defaults={'name': 'Comedy'})
+        country_usa, _ = Country.objects.get_or_create(code='US', defaults={'name': 'United States of America'})
+        country_uk, _ = Country.objects.get_or_create(code='GB', defaults={'name': 'United Kingdom'})
+
+        self.movie_a = Movie.objects.create(tmdb_id=101, title='2024 Film', release_year=2020, runtime_minutes=100)
+        self.movie_a.directors.add(self.director)
+        self.movie_a.genres.add(genre_drama)
+        self.movie_a.countries.add(country_usa)
+        Credit.objects.create(movie=self.movie_a, person=self.actor, order=0)
+
+        self.movie_b = Movie.objects.create(tmdb_id=102, title='2025 Film', release_year=2021, runtime_minutes=110)
+        self.movie_b.genres.add(genre_comedy)
+        self.movie_b.countries.add(country_uk)
+
+        # 2024: one log of movie_a.
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/2024a', title='2024 Film', year=2020,
+            watched_date='2024-03-01', rating=Decimal('4.0'), movie=self.movie_a,
+        )
+        # 2025: movie_a rewatched twice with different ratings -- the case that
+        # proves a same-year rewatch counts as two separate data points
+        # (genre/director/actor counts and rating averages), not one deduped
+        # film, per this feature's rewatch-weighting decision.
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/2025a', title='2024 Film', year=2020,
+            watched_date='2025-01-05', rating=Decimal('5.0'), movie=self.movie_a, rewatch=False,
+        )
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/2025b', title='2024 Film', year=2020,
+            watched_date='2025-06-05', rating=Decimal('3.0'), movie=self.movie_a, rewatch=True,
+        )
+        # 2025: a second, different film -- proves genre/country isolation
+        # between years (Comedy/UK only ever appear in 2025's breakdowns).
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/2025c', title='2025 Film', year=2021,
+            watched_date='2025-07-01', rating=Decimal('4.5'), movie=self.movie_b,
+        )
+
+        # Rated in ratings.csv but never diary-logged -- the acknowledged year-
+        # view gap (diary.csv is the sole source there, so a film with no diary
+        # row is invisible to every year) -- counts toward all-time totals but
+        # must never appear in any single year's numbers.
+        RatingEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/ratedonly', title='Rated Only Film',
+            year=2019, rating=Decimal('2.0'),
+        )
+        # A watchlist film and a declared favorite -- neither has a year-view
+        # equivalent (see build_dashboard_context's own docstring).
+        WatchlistEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/watchlisted', title='Watchlisted Film',
+            year=2022,
+        )
+        self.session.favorite_letterboxd_uris = ['https://boxd.it/2024a']
+        self.session.save()
+
+    def test_available_years_lists_every_year_with_diary_activity_newest_first(self):
+        context = build_dashboard_context(self.session)
+        self.assertEqual(context['available_years'], [2025, 2024])
+
+    def test_year_scopes_total_films_and_films_watched_total(self):
+        context_2024 = build_dashboard_context(self.session, year=2024)
+        self.assertEqual(context_2024['total_films'], 1)
+        self.assertEqual(context_2024['films_watched_total'], 1)
+
+        context_2025 = build_dashboard_context(self.session, year=2025)
+        # 3 diary rows (2 rewatches of "2024 Film" + 1 log of "2025 Film"), but
+        # only 2 distinct films.
+        self.assertEqual(context_2025['total_films'], 3)
+        self.assertEqual(context_2025['films_watched_total'], 2)
+
+        # The ratings.csv-only film never appears in any year.
+        context_2019 = build_dashboard_context(self.session, year=2019)
+        self.assertEqual(context_2019['total_films'], 0)
+
+    def test_rewatch_counts_as_its_own_data_point_toward_genre_and_director(self):
+        context = build_dashboard_context(self.session, year=2025)
+        drama_row = next(r for r in context['top_genres'] if r['genres__name'] == 'Drama')
+        self.assertEqual(drama_row['count'], 2)
+        director_row = next(r for r in context['top_directors'] if r['directors__name'] == 'Year Director')
+        self.assertEqual(director_row['count'], 2)
+        # Average of both 2025 ratings (5.0, 3.0), not a single per-film value.
+        self.assertEqual(director_row['avg_rating'], Decimal('4.0'))
+
+    def test_rewatch_counts_as_its_own_data_point_toward_actor(self):
+        context = build_dashboard_context(self.session, year=2025)
+        actor_row = next(r for r in context['top_actors'] if r['person__name'] == 'Year Actor')
+        self.assertEqual(actor_row['count'], 2)
+        self.assertEqual(actor_row['avg_rating'], Decimal('4.0'))
+
+    def test_country_distribution_is_year_isolated(self):
+        context_2024 = build_dashboard_context(self.session, year=2024)
+        self.assertEqual([row['label'] for row in context_2024['country_distribution']], ['USA'])
+        context_2025 = build_dashboard_context(self.session, year=2025)
+        self.assertEqual(sorted(row['label'] for row in context_2025['country_distribution']), ['UK', 'USA'])
+
+    def test_favorite_films_watchlist_and_insights_are_absent_in_year_mode(self):
+        context = build_dashboard_context(self.session, year=2025)
+        self.assertEqual(context['favorites'], [])
+        self.assertEqual(context['recommendations'], [])
+        self.assertEqual(context['insights'], {'featured': [], 'stats': []})
+        self.assertEqual(context['hero_poster_url'], '')
+
+    def test_year_view_uses_its_own_lower_favorite_people_threshold(self):
+        context = build_dashboard_context(self.session, year=2025)
+        self.assertEqual(context['min_favorite_director'], MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR)
+        # Year Director has exactly 2 rated logs in 2025 -- clears the year-view
+        # bar (2) but would not clear the all-time bar (3).
+        director_names = {r['movie__directors__name'] for r in context['favorite_people']['favorite_directors']}
+        self.assertIn('Year Director', director_names)
+
+        all_time_context = build_dashboard_context(self.session)
+        self.assertEqual(all_time_context['min_favorite_director'], MIN_COUNT_FOR_FAVORITE_DIRECTOR)
+        self.assertEqual(all_time_context['min_favorite_actor'], MIN_COUNT_FOR_FAVORITE_ACTOR)
+
+    def test_all_time_view_is_unaffected_by_year_scoping(self):
+        context = build_dashboard_context(self.session)
+        # All 4 diary rows count toward all-time totals, unlike any single year.
+        self.assertEqual(context['total_films'], 4)
+        self.assertIsNone(context['year'])
+
+    def test_milestones_absent_in_all_time_present_in_year_mode(self):
+        # Milestones is a year-view-only card -- see build_dashboard_context's
+        # own docstring on why an all-time "first/last film ever" isn't the
+        # same kind of Wrapped-style fact.
+        self.assertEqual(build_dashboard_context(self.session)['milestones'], [])
+        self.assertNotEqual(build_dashboard_context(self.session, year=2025)['milestones'], [])
+
+
+class MilestonesTests(TestCase):
+    """_milestones (year view, Watching Habits) -- the first watch, round-number
+    checkpoints (MILESTONE_THRESHOLDS), and the last watch of the year, in
+    chronological order."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+
+    def _log(self, n, date='2024-01-01', movie=None, rewatch=False):
+        return DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri=f'https://boxd.it/film{n}', title=f'Film {n}',
+            year=2020, watched_date=date, movie=movie, rewatch=rewatch,
+        )
+
+    def test_empty_diary_returns_no_milestones(self):
+        self.assertEqual(_milestones(DiaryEntry.objects.none()), [])
+
+    def test_a_single_log_gets_one_only_watch_card_not_a_redundant_pair(self):
+        self._log(1, date='2024-03-01')
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual([m['label'] for m in milestones], ['Only watch'])
+        self.assertEqual(milestones[0]['title'], 'Film 1')
+
+    def test_a_small_year_gets_only_first_and_last_no_milestone_thresholds(self):
+        for i, date in enumerate(['2024-01-01', '2024-02-01', '2024-03-01'], start=1):
+            self._log(i, date=date)
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual([m['label'] for m in milestones], ['First watch', 'Last watch'])
+        self.assertEqual(milestones[0]['title'], 'Film 1')
+        self.assertEqual(milestones[1]['title'], 'Film 3')
+
+    def test_a_threshold_exactly_at_the_last_film_is_not_shown_twice(self):
+        # Exactly MILESTONE_THRESHOLDS[0] (50) logs -- the 50th film IS the
+        # last film, so it should appear once (as "Last watch"), not also as
+        # a redundant "50th film" card for the same poster.
+        threshold = MILESTONE_THRESHOLDS[0]
+        start = date(2024, 1, 1)
+        for i in range(1, threshold + 1):
+            self._log(i, date=start + timedelta(days=i))
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual([m['label'] for m in milestones], ['First watch', 'Last watch'])
+
+    def test_a_threshold_one_past_the_last_film_shows_as_its_own_milestone(self):
+        threshold = MILESTONE_THRESHOLDS[0]
+        start = date(2024, 1, 1)
+        for i in range(1, threshold + 2):
+            self._log(i, date=start + timedelta(days=i))
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual([m['label'] for m in milestones], ['First watch', f'{threshold}th film', 'Last watch'])
+        # The Nth film (1-indexed) is exactly the film logged Nth.
+        self.assertEqual(next(m for m in milestones if m['label'] == f'{threshold}th film')['title'], f'Film {threshold}')
+
+    def test_a_rewatch_counts_as_its_own_position_in_the_chronological_order(self):
+        # Same "count every log" rule as every other year-view stat -- a
+        # same-year rewatch of Film 1 pushes Film 2's position back by one.
+        self._log(1, date='2024-01-01')
+        self._log(1, date='2024-02-01', rewatch=True)
+        self._log(2, date='2024-03-01')
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual(milestones[0]['title'], 'Film 1')
+        self.assertEqual(milestones[-1]['title'], 'Film 2')
+
+    def test_same_day_logs_break_ties_deterministically_by_creation_order(self):
+        # diary.csv carries no time of day -- two logs on the same date have no
+        # true order, so id (creation order) is the documented, deterministic
+        # tiebreak. Film A is created first here, so it's "first" despite
+        # sharing Film B's date.
+        entry_a = self._log('A', date='2024-01-01')
+        entry_b = self._log('B', date='2024-01-01')
+        self.assertLess(entry_a.id, entry_b.id)
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual(milestones[0]['title'], 'Film A')
+        self.assertEqual(milestones[-1]['title'], 'Film B')
+
+    def test_poster_url_falls_back_to_empty_string_for_an_unresolved_film(self):
+        movie = Movie.objects.create(tmdb_id=5001, title='Enriched Film', release_year=2020, poster_path='/poster.jpg')
+        self._log(1, date='2024-01-01', movie=movie)
+        self._log(2, date='2024-02-01', movie=None)
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertIn('image.tmdb.org', milestones[0]['poster_url'])
+        self.assertEqual(milestones[-1]['poster_url'], '')
 
 
 class DashboardNewStatsTests(TestCase):
@@ -166,9 +400,19 @@ class DashboardNewStatsTests(TestCase):
             import_session=self.session, letterboxd_uri='https://boxd.it/zeta', title='Zeta', year=2020,
             watched_date='2024-01-11', rewatch=False,
         )
+        # A second Dir X rewatch (Alpha again) -- most_rewatched_directors now
+        # requires at least 2 rewatches before a director shows up at all, so
+        # Dir X's single Jan 2 rewatch alone wouldn't qualify. Reuses Jan 3 (a
+        # date the distinct-dates set already has, from Beta's watch) rather
+        # than a new date, so this doesn't also change the streak/gap tests
+        # below, which assert exact values against the 5 original dates.
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/alpha', title='Alpha', year=1995,
+            watched_date='2024-01-03', rating=Decimal('5.0'), rewatch=True, movie=self.alpha,
+        )
 
     def test_avg_rating_sourced_from_ratings_not_diary(self):
-        # Alpha has 2 diary rows (a rewatch), both rating 5.0, but only 1 RatingEntry --
+        # Alpha has 3 diary rows (2 rewatches), all rating 5.0, but only 1 RatingEntry --
         # a diary-derived average would over-weight it. Expected: (5.0+1.0+4.0)/3.
         context = build_dashboard_context(self.session)
         self.assertAlmostEqual(float(context['avg_rating']), 10 / 3, places=4)
@@ -205,8 +449,8 @@ class DashboardNewStatsTests(TestCase):
         self.assertNotIn('Comedy', by_genre)
 
     def test_rating_distribution_sourced_from_ratings_not_diary(self):
-        # Alpha has 2 diary rows (a rewatch), both rating 5.0, but only 1 RatingEntry --
-        # the distribution must count it once, not twice.
+        # Alpha has 3 diary rows (2 rewatches), all rating 5.0, but only 1 RatingEntry --
+        # the distribution must count it once, not three times.
         chart_data = build_dashboard_context(self.session)['chart_data']['rating_distribution']
         by_rating = dict(zip(chart_data['labels'], chart_data['data']))
         self.assertEqual(by_rating['5.0'], 1)
@@ -219,7 +463,7 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(min(by_year), 1995)
         self.assertEqual(max(by_year), 2015)
         self.assertEqual(len(by_year), 21)
-        # Alpha (1995) has 2 diary rows (a rewatch) but should only count once.
+        # Alpha (1995) has 3 diary rows (2 rewatches) but should only count once.
         self.assertEqual(by_year[1995], 1)
         self.assertEqual(by_year[1998], 1)
         self.assertEqual(by_year[2015], 1)
@@ -281,15 +525,23 @@ class DashboardNewStatsTests(TestCase):
     def test_rewatch_leaderboard(self):
         rewatch = build_dashboard_context(self.session)['rewatch']
         self.assertEqual(rewatch['most_rewatched_films'][0]['title'], 'Alpha')
-        self.assertEqual(rewatch['most_rewatched_films'][0]['watch_count'], 2)
+        self.assertEqual(rewatch['most_rewatched_films'][0]['watch_count'], 3)
         self.assertEqual(rewatch['most_rewatched_directors'][0]['movie__directors__name'], 'Dir X')
+        self.assertEqual(rewatch['most_rewatched_directors'][0]['count'], 2)
         self.assertEqual(
             rewatch['most_rewatched_directors'][0]['director_tmdb_id'], Person.objects.get(name='Dir X').tmdb_id
         )
-        # Only 1 rated rewatch (Alpha) in this fixture -- below the count>=2 threshold,
-        # so rewatch_avg_rating is None rather than a single-film "average".
-        self.assertIsNone(rewatch['rewatch_avg_rating'])
+        # 2 rated rewatches of Alpha, both 5.0.
+        self.assertEqual(float(rewatch['rewatch_avg_rating']), 5.0)
         self.assertAlmostEqual(float(rewatch['first_watch_avg_rating']), 10 / 3, places=4)
+
+    def test_rewatch_leaderboard_excludes_a_director_with_only_one_rewatch(self):
+        # most_rewatched_directors requires at least 2 rewatches to appear at all
+        # -- Dir Y (Gamma's director) has zero rewatches here, and this fixture's
+        # own setUp comment explains why Dir X needed a second one added.
+        rewatch = build_dashboard_context(self.session)['rewatch']
+        director_names = {row['movie__directors__name'] for row in rewatch['most_rewatched_directors']}
+        self.assertNotIn('Dir Y', director_names)
 
     def test_rewatch_leaderboard_capped_at_grid_display_cap(self):
         # Most rewatched films renders as a 2-rows-of-8 poster grid
@@ -305,33 +557,45 @@ class DashboardNewStatsTests(TestCase):
         rewatch = build_dashboard_context(session)['rewatch']
         self.assertEqual(len(rewatch['most_rewatched_films']), 16)
 
-    def test_rewatch_leaderboard_directors_capped_at_grid_display_cap(self):
+    def test_rewatch_leaderboard_directors_capped_at_favorite_people_grid_cap(self):
+        # Most rewatched directors renders as the same 2-rows-of-6 clickable
+        # headshot grid as Favorite Directors (FAVORITE_PEOPLE_GRID_CAP=12),
+        # not most_rewatched_films' own 2-rows-of-8 poster grid.
         session = ImportSession.objects.create(display_name='Alex')
         for i in range(17):
             movie = _make_movie(2100 + i, f'Rewatch Dir Film {i}', 2020, 100, 'Drama', f'Rewatch Dir {i}')
-            DiaryEntry.objects.create(
-                import_session=session, letterboxd_uri=f'https://boxd.it/rwd{i}', title=movie.title,
-                year=movie.release_year, watched_date='2024-01-01', movie=movie, rewatch=True,
-            )
+            # 2 rewatch rows per director -- most_rewatched_directors requires at
+            # least 2 before a director appears at all, so a single row each
+            # wouldn't qualify for this cap test.
+            for j in range(2):
+                DiaryEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/rwd{i}-{j}', title=movie.title,
+                    year=movie.release_year, watched_date=f'2024-01-0{j + 1}', movie=movie, rewatch=True,
+                )
         rewatch = build_dashboard_context(session)['rewatch']
-        self.assertEqual(len(rewatch['most_rewatched_directors']), 16)
+        self.assertEqual(len(rewatch['most_rewatched_directors']), 12)
 
     def test_viewing_calendar(self):
         calendar = build_dashboard_context(self.session)['calendar']
         self.assertEqual(calendar['longest_streak_days'], 3)
         self.assertEqual(calendar['longest_gap_days'], 6)
-        self.assertEqual(calendar['busiest_month']['count'], 5)
+        # 6 diary rows total (the 2nd Dir X rewatch in setUp reuses Jan 3 rather
+        # than adding a 6th distinct date, so streak/gap above are unaffected,
+        # but this raw row count and Jan 3's own heatmap cell below do include it).
+        self.assertEqual(calendar['busiest_month']['count'], 6)
         total_weekday_count = sum(row['count'] for row in calendar['weekday_distribution'])
-        self.assertEqual(total_weekday_count, 5)
+        self.assertEqual(total_weekday_count, 6)
 
     def test_viewing_heatmap_buckets_by_year(self):
-        # All 5 diary entries in setUp are distinct 2024 dates -- one film each.
+        # 5 distinct 2024 dates -- Jan 3 has 2 diary rows (Beta's watch and Dir
+        # X's 2nd rewatch, added in setUp so most_rewatched_directors has
+        # something to show), every other date has 1.
         heatmap = build_dashboard_context(self.session)['calendar']['heatmap']
         self.assertEqual(heatmap['years'], [2024])
         self.assertEqual(heatmap['default_year'], 2024)
         self.assertEqual(
             heatmap['data']['2024'],
-            {'2024-01-01': 1, '2024-01-02': 1, '2024-01-03': 1, '2024-01-10': 1, '2024-01-11': 1},
+            {'2024-01-01': 1, '2024-01-02': 1, '2024-01-03': 2, '2024-01-10': 1, '2024-01-11': 1},
         )
 
     def test_viewing_heatmap_counts_multiple_films_same_day_and_spans_years(self):

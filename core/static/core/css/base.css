@@ -442,7 +442,22 @@ a { color: var(--accent-2); }
    has room and the toggle just drops to its own line on a narrow viewport
    instead of squeezing the eyebrow text. */
 .hero-top-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0 0 0.5rem; }
+/* Groups the year picker and the shorts toggle as one flex item on the far side
+   of .hero-top-row, so they wrap together as a pair on a narrow viewport rather
+   than each independently deciding when to drop to their own line. */
+.hero-top-row-controls { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+/* Reuses .toggle-group/.toggle-btn's pill styling (same as the heatmap's own
+   year toggle below) on real <a> links rather than JS-toggled <button>s -- a
+   full page reload per year, not a client-side swap, since every stat here is
+   server-aggregated (see _render_dashboard's own comment on why exclude_shorts
+   works the same way). Margin reset since .toggle-group's own margin-bottom
+   (spacing before a chart) doesn't apply to this inline hero placement. */
+.year-picker { margin-bottom: 0; }
+.year-picker .toggle-btn { text-decoration: none; }
 .hero h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0; }
+/* Muted, lighter-weight than the name/"stats" text next to it -- a secondary
+   detail (which year) rather than a second headline competing with the h1. */
+.hero-heading-year { color: var(--muted); font-weight: 500; }
 /* The include/exclude short films (under 60 min) toggle, top-right of the hero on
    both Director's Cut and Double Feature -- a GET-param link (?shorts=exclude),
    not an instant client-side switch, since every stat on both pages is computed
@@ -878,6 +893,21 @@ h1, h2, h3, h4 { font-weight: 700; }
   font-size: 2.5rem;
 }
 .fav-card p { margin: 0.5rem 0 0; font-size: 0.9rem; }
+/* Milestones (year view only) -- an outline pill above the poster naming which
+   milestone this card is ("First watch", "50th film", ...), since unlike every
+   other .fav-card grid on the page, each card here is a genuinely different
+   kind of fact rather than a repeated stat about the same kind of thing. */
+.milestone-badge {
+  display: inline-block;
+  border: 1px solid var(--accent-2);
+  color: var(--accent-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  margin-bottom: 0.5rem;
+}
 
 /* Only cards containing a .person-trigger (Favorite Directors/Actors, Most
    rewatched directors) or, same reasoning, a .shared-person-trigger (Double
@@ -942,17 +972,16 @@ h1, h2, h3, h4 { font-weight: 700; }
    (.stat-of-day-headshot, .person-trigger avatars) is already circular, so this
    brings Favorite Directors/Actors and Most
    rewatched directors in line with that rather than being the one rectangular
-   exception. 2 lines' height reserved for the name below it regardless of whether
-   it actually wraps, whether that name is plain text (Most rewatched directors)
-   or a clickable .person-trigger (Favorite Directors/Actors) -- without the
-   reservation, a 1-line name ("Sam Raimi") leaves less space above the next line
-   than a 2-line one, so that line lands at a different height card to card
-   instead of aligning across the row. Named for the name, specifically
-   (.fav-name), rather than matched by DOM position (e.g. p:first-of-type) --
-   Favorite Directors/Actors' rating/count line is two separate <p>s, not one, so
-   a position-based selector would just as easily grab the wrong paragraph the
-   moment that markup changes shape. Not tied to any one column count (unlike
-   .favs--eight) since it layers onto any grid of people. */
+   exception. 2 lines' height reserved for the name below it regardless of
+   whether it actually wraps -- without the reservation, a 1-line name ("Sam
+   Raimi") leaves less space above the next line than a 2-line one, so that
+   line lands at a different height card to card instead of aligning across
+   the row. Matched by class (.person-trigger/.shared-person-trigger) rather
+   than DOM position (e.g. p:first-of-type) -- these cards' rating/count line
+   is one or two separate <p>s after the name, so a position-based selector
+   would just as easily grab the wrong paragraph the moment that markup
+   changes shape. Not tied to any one column count (unlike .favs--eight) since
+   it layers onto any grid of people. */
 .favs--headshots .fav-card img,
 .favs--headshots .fav-card .fav-placeholder {
   width: 85%;
@@ -974,7 +1003,6 @@ h1, h2, h3, h4 { font-weight: 700; }
    still varies shot to shot, and there's no face-detection data available from
    TMDB to do this per-image), just a better-on-average default than 50/50. */
 .favs--headshots .fav-card img { object-position: 50% 30%; }
-.favs--headshots .fav-card .fav-name,
 .favs--headshots .fav-card .person-trigger,
 .favs--headshots .fav-card .shared-person-trigger {
   min-height: 44px;
