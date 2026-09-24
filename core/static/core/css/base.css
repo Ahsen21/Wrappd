@@ -442,18 +442,31 @@ a { color: var(--accent-2); }
    has room and the toggle just drops to its own line on a narrow viewport
    instead of squeezing the eyebrow text. */
 .hero-top-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0 0 0.5rem; }
-/* Groups the year picker and the shorts toggle as one flex item on the far side
-   of .hero-top-row, so they wrap together as a pair on a narrow viewport rather
-   than each independently deciding when to drop to their own line. */
+/* Holds the shorts toggle on the far side of .hero-top-row. */
 .hero-top-row-controls { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 /* Reuses .toggle-group/.toggle-btn's pill styling (same as the heatmap's own
    year toggle below) on real <a> links rather than JS-toggled <button>s -- a
    full page reload per year, not a client-side swap, since every stat here is
    server-aggregated (see _render_dashboard's own comment on why exclude_shorts
    works the same way). Margin reset since .toggle-group's own margin-bottom
-   (spacing before a chart) doesn't apply to this inline hero placement. */
-.year-picker { margin-bottom: 0; }
+   (spacing before a chart) doesn't apply to this inline hero placement -- the
+   doubled-up .toggle-group.year-picker selector is needed to actually win that
+   override, since .toggle-group is declared later in this file and an equal-
+   specificity single-class selector loses to source order, not just specificity.
+   margin-left: auto pushes it (the last item in .hero-heading's flex row, after
+   the share button which stays put next to the h1) to the right edge, landing
+   under the shorts toggle above -- the only other thing on .hero-top-row's own
+   right side. */
+.toggle-group.year-picker { margin-bottom: 0; margin-left: auto; }
 .year-picker .toggle-btn { text-decoration: none; }
+/* On a narrow viewport the picker wraps onto its own line below the h1/share
+   row (.hero-heading's flex-wrap) -- the margin-left: auto that right-aligns it
+   next to the shorts toggle on desktop would otherwise also push it to the right
+   on its own wrapped line, when it should just sit flush left like everything
+   else in the hero on mobile. */
+@media (max-width: 700px) {
+  .toggle-group.year-picker { margin-left: 0; }
+}
 .hero h1 { font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0; }
 /* Muted, lighter-weight than the name/"stats" text next to it -- a secondary
    detail (which year) rather than a second headline competing with the h1. */
