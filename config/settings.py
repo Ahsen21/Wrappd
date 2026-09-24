@@ -203,3 +203,29 @@ TMDB_ENRICHMENT_CONCURRENCY = config('TMDB_ENRICHMENT_CONCURRENCY', default=8, c
 # for multipart overhead) so oversized files are rejected before they're fully buffered.
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE + (1 * 1024 * 1024)
 FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE + (1 * 1024 * 1024)
+
+# Django's own default logging config only prints exceptions to the console when
+# DEBUG=True -- with DEBUG=False (production) it tries to email ADMINS instead, which
+# isn't configured here, so a 500's traceback would otherwise go nowhere visible.
+# gunicorn captures stdout/stderr and Render surfaces it in the Logs tab, so a plain
+# console handler here is what actually makes production errors debuggable.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
