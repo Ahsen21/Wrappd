@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 
@@ -8,6 +9,20 @@ from .services.compare import build_compare_context
 from .services.dashboard import build_dashboard_context
 from .services.insight_films import VALID_KINDS, build_insight_films
 from .services.person_filmography import build_person_filmography
+
+# build_dashboard_context is expensive (dozens of queries, real wall-clock cost on
+# Render's free-tier CPU) but its output only changes when a NEW import replaces
+# this session -- a READY session's own data never mutates in place under the
+# current architecture (enrichment runs to completion before READY, and a TMDB
+# "not found" result is cached permanently, never retried). A fresh upload gets a
+# brand-new ImportSession id, so it naturally gets a fresh cache key -- there's no
+# explicit invalidation to do. The TTL below is a safety net, not the reason this
+# is safe to cache.
+DASHBOARD_CONTEXT_CACHE_TTL = 3600  # seconds
+
+
+def _dashboard_cache_key(import_session, exclude_shorts, year):
+    return f'dashboard_context:{import_session.id}:{exclude_shorts}:{year}'
 
 
 def _render_dashboard(request, import_session):
@@ -29,7 +44,11 @@ def _render_dashboard(request, import_session):
         year = int(year_param) if year_param else None
     except ValueError:
         year = None
-    context = build_dashboard_context(import_session, exclude_shorts, year)
+    cache_key = _dashboard_cache_key(import_session, exclude_shorts, year)
+    context = cache.get(cache_key)
+    if context is None:
+        context = build_dashboard_context(import_session, exclude_shorts, year)
+        cache.set(cache_key, context, DASHBOARD_CONTEXT_CACHE_TTL)
     # The dashboard's own URL doubles as its share link (see the "Share your
     # dashboard" box) -- neither route this can be reached by has an ownership
     # check tying it to this browser's session, so anyone holding either kind of
