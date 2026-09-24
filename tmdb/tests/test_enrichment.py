@@ -341,8 +341,26 @@ class EnrichImportSessionTests(TransactionTestCase):
         lookup = TitleYearLookup.objects.get(title="The Queen's Gambit", year=2020)
         self.assertIsNone(lookup.movie)
         self.assertTrue(lookup.is_tv_show)
-        # Confirmed-TV entries never get a Movie assigned.
-        self.assertIsNone(session.diary_entries.get().movie)
+        # Confirmed-TV entries never get a Movie assigned, but do get flagged
+        # directly (denormalized from the lookup -- see DiaryEntry.is_tv_show).
+        entry = session.diary_entries.get()
+        self.assertIsNone(entry.movie)
+        self.assertTrue(entry.is_tv_show)
+
+    def test_tv_flag_is_not_set_when_resolved_as_a_real_movie(self):
+        session = _make_session_with_diary('Oppenheimer', 2023)
+
+        with requests_mock.Mocker() as m:
+            m.get('https://api.themoviedb.org/3/search/movie', json={'results': [{
+                'id': 872585, 'title': 'Oppenheimer', 'original_title': 'Oppenheimer',
+                'release_date': '2023-07-19', 'vote_average': 8.2,
+            }]})
+            m.get('https://api.themoviedb.org/3/movie/872585', json={'runtime': 180, 'credits': {}})
+            enrich_import_session(session)
+
+        entry = session.diary_entries.get()
+        self.assertEqual(entry.movie_id, 872585)
+        self.assertFalse(entry.is_tv_show)
 
     def test_tv_search_failure_does_not_cache_anything(self):
         session = _make_session_with_diary('Uncertain Title', 2021)

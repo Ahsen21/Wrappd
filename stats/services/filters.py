@@ -1,17 +1,22 @@
 """Shared filtering helpers used by both dashboard.py and compare.py."""
 
-from django.db.models import Exists, OuterRef, Q
-
-from tmdb.models import TitleYearLookup
+from django.db.models import Q
 
 
 def exclude_tv_shows(queryset):
     """Excludes rows whose (title, year) was confirmed as TV via a TMDB TV-search
     follow-up (see tmdb/services/enrichment.py's _resolve_and_cache) -- Letterboxd
     lets people log some TV content (limited series, specials) alongside films, and
-    these stats are about films."""
-    tv_match = TitleYearLookup.objects.filter(title=OuterRef('title'), year=OuterRef('year'), is_tv_show=True)
-    return queryset.exclude(Exists(tv_match))
+    these stats are about films.
+
+    `queryset` must be of an entry model carrying its own is_tv_show field (set at
+    enrichment time from TitleYearLookup.is_tv_show -- see DiaryEntry.is_tv_show's
+    docstring). A plain indexed-boolean exclude, not a per-query correlated subquery
+    against TitleYearLookup -- this used to run that subquery fresh in every one of
+    the dozens of separate aggregation queries a single dashboard/compare page
+    issues; denormalizing the flag onto each row means every one of those queries
+    pays a cheap local filter instead."""
+    return queryset.exclude(is_tv_show=True)
 
 
 # A film with a confirmed runtime under this counts as a "short" for the
