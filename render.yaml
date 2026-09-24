@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: wrappd
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    startCommand: "gunicorn config.wsgi"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.7
+      - key: DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
