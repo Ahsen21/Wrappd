@@ -4,6 +4,7 @@ Django settings for config project.
 
 from pathlib import Path
 
+import dj_database_url
 from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -39,6 +40,12 @@ TMDB_API_KEY = config('TMDB_API_KEY', default='')
 # proxies, which are the only things that can set this header in practice.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
+# Only enforced when DEBUG=False (ngrok tunnel, Render) -- local `runserver` over plain
+# HTTP has no proxy in front of it, so forcing these there would break it.
+SECURE_SSL_REDIRECT = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
 
 # Application definition
 
@@ -59,6 +66,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -90,17 +98,26 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-        # SQLite only allows one writer at a time. The default ~5s busy timeout is too
-        # short for a long enrichment run (many small writes) happening alongside the
-        # dev server's own per-request writes (e.g. session middleware) -- raise it so
-        # SQLite waits for the lock to clear instead of raising "database is locked".
-        'OPTIONS': {'timeout': 30},
+# Local dev has no DATABASE_URL and stays on SQLite; production (Render) sets
+# DATABASE_URL to a Neon Postgres connection string.
+DATABASE_URL = config('DATABASE_URL', default='')
+
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.config(default=DATABASE_URL, conn_max_age=600)
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+            # SQLite only allows one writer at a time. The default ~5s busy timeout is too
+            # short for a long enrichment run (many small writes) happening alongside the
+            # dev server's own per-request writes (e.g. session middleware) -- raise it so
+            # SQLite waits for the lock to clear instead of raising "database is locked".
+            'OPTIONS': {'timeout': 30},
+        }
+    }
 
 
 # Password validation
@@ -138,6 +155,19 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# WhiteNoise serves static files directly from the app process, so no separate
+# static-file host/CDN is needed on Render's free tier. CompressedManifestStaticFilesStorage
+# gzips files and fingerprints filenames for far-future caching.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
