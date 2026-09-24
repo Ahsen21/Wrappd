@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
-    startCommand: "gunicorn config.wsgi"
+    startCommand: "gunicorn config.wsgi --timeout 300"
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.7
