@@ -11,20 +11,6 @@
     <div class="hero-top-row">
       <p class="hero-eyebrow">Director's Cut</p>
       <div class="hero-top-row-controls">
-        {% if available_years %}
-          <div class="toggle-group year-picker">
-            <a
-              href="{{ request.path }}{% if exclude_shorts %}?shorts=exclude{% endif %}"
-              class="toggle-btn{% if not year %} active{% endif %}"
-            >All time</a>
-            {% for y in available_years %}
-              <a
-                href="?year={{ y }}{% if exclude_shorts %}&shorts=exclude{% endif %}"
-                class="toggle-btn{% if y == year %} active{% endif %}"
-              >{{ y }}</a>
-            {% endfor %}
-          </div>
-        {% endif %}
         <a
           href="{% if exclude_shorts %}{{ request.path }}{% if year %}?year={{ year }}{% endif %}{% else %}?shorts=exclude{% if year %}&year={{ year }}{% endif %}{% endif %}"
           class="shorts-toggle{% if exclude_shorts %} shorts-toggle--on{% endif %}"
@@ -48,6 +34,20 @@
           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
         </svg>
       </button>
+      {% if available_years %}
+        <div class="toggle-group year-picker">
+          <a
+            href="{{ request.path }}{% if exclude_shorts %}?shorts=exclude{% endif %}"
+            class="toggle-btn{% if not year %} active{% endif %}"
+          >All time</a>
+          {% for y in available_years %}
+            <a
+              href="?year={{ y }}{% if exclude_shorts %}&shorts=exclude{% endif %}"
+              class="toggle-btn{% if y == year %} active{% endif %}"
+            >{{ y }}</a>
+          {% endfor %}
+        </div>
+      {% endif %}
     </div>
     <script>
       (function () {
