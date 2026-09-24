@@ -20,7 +20,7 @@ from decimal import Decimal
 from itertools import combinations
 
 from django.db.models import Avg, Count, Max, Min, Q, Sum
-from django.db.models.functions import ExtractWeekDay, ExtractYear, TruncMonth
+from django.db.models.functions import ExtractYear
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
 from stats.services.filters import (
@@ -786,8 +786,9 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
     # (In year mode, `rated` is already the year-scoped, rated-only diary queryset --
     # see this function's own docstring -- so this comment's "not diary" is an
     # all-time-only distinction.)
-    rated_count = rated.count()
-    avg_rating = rated.aggregate(avg=Avg('rating'))['avg'] if rated_count >= MIN_COUNT_FOR_AVERAGE else None
+    rated_stats = rated.aggregate(count=Count('id'), avg=Avg('rating'))
+    rated_count = rated_stats['count']
+    avg_rating = rated_stats['avg'] if rated_count >= MIN_COUNT_FOR_AVERAGE else None
     total_runtime_minutes = (
         diary.filter(movie__runtime_minutes__isnull=False).aggregate(total=Sum('movie__runtime_minutes'))['total']
         or 0
@@ -1885,25 +1886,42 @@ def _favorite_actor_duo_insight(rated, avg_rating, actors_by_movie) -> list:
 
     actors_by_movie is passed in, not fetched here -- see _favorite_pairing_
     insight's own comment on why (shared with it, computed once by
-    _featured_insights)."""
+    _featured_insights).
+
+    Pre-filters each movie's cast to actors appearing in at least
+    MIN_COUNT_FOR_PAIRING of this person's rated films before generating pairs --
+    a large ensemble cast makes every pair of its members via combinations(), an
+    O(cast_size^2) blowup per movie, but an actor who appears in fewer films than
+    the threshold can never reach it as half of a pair either (every one of a
+    pair's shared films is also each actor's own film, so a pair's count can't
+    exceed either actor's individual count) -- excluding them first is lossless,
+    not an approximation, and collapses most movies' cast lists down to just their
+    handful of recurring names instead of every credited actor."""
     if avg_rating is None:
         return []
     avg_rating = float(avg_rating)
 
-    rated = rated.exclude(movie__isnull=True)
+    rated_rows = list(rated.exclude(movie__isnull=True).values_list('movie_id', 'rating'))
+
+    appearance_counts = defaultdict(int)
+    for movie_id, _rating in rated_rows:
+        for name, _photo, _person_id in actors_by_movie.get(movie_id, []):
+            appearance_counts[name] += 1
+    frequent_actors = {name for name, count in appearance_counts.items() if count >= MIN_COUNT_FOR_PAIRING}
 
     pair_ratings = defaultdict(list)
     # First-seen (photo, tmdb id) per actor name -- see _favorite_pairing_insight's
     # own pair_meta comment. The ids feed the tile's click-through modal.
     pair_meta = {}
-    for movie_id, rating in rated.values_list('movie_id', 'rating'):
+    for movie_id, rating in rated_rows:
         # dict.setdefault, not set() -- dedupes a movie's cast by name (a person
         # can't appear twice in the same combinations() pass) while keeping each
         # name's (photo, id) alongside it, then sorted() on the items still
         # orders by name first, same as the plain-name sort this replaced.
         unique_cast = {}
         for name, photo, person_id in actors_by_movie.get(movie_id, []):
-            unique_cast.setdefault(name, (photo, person_id))
+            if name in frequent_actors:
+                unique_cast.setdefault(name, (photo, person_id))
         for (actor_a, (photo_a, id_a)), (actor_b, (photo_b, id_b)) in combinations(sorted(unique_cast.items()), 2):
             key = (actor_a, actor_b)
             pair_ratings[key].append(float(rating))
@@ -2459,25 +2477,40 @@ def _tag_distribution(diary) -> list:
 
 
 def _viewing_calendar(diary, year=None) -> dict:
-    busiest_months = list(
-        diary.annotate(month=TruncMonth('watched_date'))
-        .values('month')
-        .annotate(count=Count('id'))
-        .order_by('-count')[:1]
-    )
-    busiest_month = busiest_months[0] if busiest_months else None
+    """Busiest month, weekday distribution, streak/gap, and the heatmap
+    (_viewing_heatmap) are all just different groupings of the same underlying
+    watched_date column -- fetched once here as a plain list rather than as 4
+    separate DB-side aggregations (TruncMonth, ExtractWeekDay, a distinct dates
+    list, and the heatmap's own date+count query), each of which used to pay its
+    own round trip over the exact same rows."""
+    watched_dates = list(diary.values_list('watched_date', flat=True))
 
-    weekday_rows = list(
-        diary.annotate(weekday=ExtractWeekDay('watched_date'))
-        .values('weekday')
-        .annotate(count=Count('id'))
-        .order_by('weekday')
-    )
+    month_counts = defaultdict(int)
+    weekday_counts = defaultdict(int)
+    date_counts = defaultdict(int)
+    for watched_date in watched_dates:
+        month_counts[watched_date.replace(day=1)] += 1
+        # Match WEEKDAY_NAMES' keys, which follow Django's ExtractWeekDay
+        # convention (1=Sunday ... 7=Saturday) -- Python's own date.weekday()
+        # uses a different one (0=Monday ... 6=Sunday), so this converts rather
+        # than reusing the raw value.
+        weekday_counts[((watched_date.weekday() + 1) % 7) + 1] += 1
+        date_counts[watched_date] += 1
+
+    busiest_month = None
+    if month_counts:
+        # Ties broken toward the earliest month -- deterministic, rather than
+        # whatever order the DB happened to return rows in (which the previous
+        # ORDER BY -count with no secondary key never actually guaranteed either).
+        month, count = min(month_counts.items(), key=lambda item: (-item[1], item[0]))
+        busiest_month = {'month': month, 'count': count}
+
     weekday_distribution = [
-        {'label': WEEKDAY_NAMES[row['weekday']], 'count': row['count']} for row in weekday_rows
+        {'label': WEEKDAY_NAMES[weekday], 'count': weekday_counts[weekday]}
+        for weekday in sorted(weekday_counts)
     ]
 
-    dates = sorted(set(diary.values_list('watched_date', flat=True)))
+    dates = sorted(date_counts)
     longest_streak, longest_gap = _streak_and_gap(dates)
 
     # Days watched % (year view only, Watching Habits' 4th calendar stat) --
@@ -2506,24 +2539,26 @@ def _viewing_calendar(diary, year=None) -> dict:
         'weekday_distribution': weekday_distribution,
         'longest_streak_days': longest_streak,
         'longest_gap_days': longest_gap,
-        'heatmap': _viewing_heatmap(diary),
+        'heatmap': _viewing_heatmap(date_counts),
         'days_watched_count': days_watched_count,
         'days_elapsed': days_elapsed,
         'days_watched_pct': days_watched_pct,
     }
 
 
-def _viewing_heatmap(diary) -> dict:
+def _viewing_heatmap(date_counts) -> dict:
     """Per-day watch counts bucketed by year, for the calendar-heatmap grid in the
     Viewing calendar card. The grid itself is laid out client-side (see
     dashboard.html's heatmap script) rather than computed here -- this just hands
     over {year: {'YYYY-MM-DD': count}} plus which years actually have data, so a
-    year with zero entries never shows up as an empty toggle option."""
-    rows = diary.values('watched_date').annotate(count=Count('id'))
+    year with zero entries never shows up as an empty toggle option.
+
+    date_counts (watched_date -> count) is passed in, already computed by
+    _viewing_calendar from the one shared fetch of this diary's watched_dates --
+    see that function's own docstring for why this no longer queries itself."""
     by_year = defaultdict(dict)
-    for row in rows:
-        watched_date = row['watched_date']
-        by_year[watched_date.year][watched_date.isoformat()] = row['count']
+    for watched_date, count in date_counts.items():
+        by_year[watched_date.year][watched_date.isoformat()] = count
 
     # Oldest -> newest, so the year toggle reads left-to-right chronologically --
     # default_year (the most recent) is taken from the end of this list rather than
@@ -2832,8 +2867,9 @@ def home_summary(import_session) -> dict:
     different definition of "watched" living on this page alone."""
     diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
-    rated_count = rated.count()
-    avg_rating = float(rated.aggregate(avg=Avg('rating'))['avg']) if rated_count >= MIN_COUNT_FOR_AVERAGE else None
+    rated_stats = rated.aggregate(count=Count('id'), avg=Avg('rating'))
+    rated_count = rated_stats['count']
+    avg_rating = float(rated_stats['avg']) if rated_count >= MIN_COUNT_FOR_AVERAGE else None
     watched_movies = _watched_movies(import_session, diary, rated)
     return {
         'films_watched_total': _films_watched_total(import_session, diary, rated),
