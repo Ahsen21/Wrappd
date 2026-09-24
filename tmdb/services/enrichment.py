@@ -9,10 +9,11 @@ same film watched by many different users costs exactly one API call, ever.
 import logging
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from django.conf import settings
 from django.conf.locale import LANG_INFO
-from django.db import transaction
+from django.db import IntegrityError, connection, transaction
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
 from tmdb.models import Country, Credit, Genre, Movie, Person, TitleYearLookup
@@ -21,6 +22,18 @@ from tmdb.services.client import TMDBClientError, get_movie_details, search_movi
 logger = logging.getLogger(__name__)
 
 ENTRY_MODELS = (DiaryEntry, RatingEntry, WatchlistEntry, LikedFilmEntry, WatchedEntry, ReviewEntry)
+
+
+def _safe_get_or_create(model, defaults=None, **kwargs):
+    """get_or_create, but safe when two enrichment threads race to create the same
+    row (e.g. two different films sharing a genre/country/director/TMDB id) -- Django's
+    own get_or_create isn't race-safe against a concurrent insert of the same key, and
+    raises IntegrityError instead of just fetching what the other thread just created."""
+    try:
+        with transaction.atomic():
+            return model.objects.get_or_create(defaults=defaults, **kwargs)
+    except IntegrityError:
+        return model.objects.get(**kwargs), False
 
 
 def enrich_import_session_fully(import_session, cap=None):
@@ -75,6 +88,11 @@ def enrich_import_session(import_session, cap=None):
     import, up to `cap` *new* TMDB lookups (cache hits don't count against the cap).
     Safe to call again later to pick up where a capped run left off -- see
     enrich_import_session_fully, which does exactly that.
+
+    New lookups (real TMDB calls) run concurrently, up to TMDB_ENRICHMENT_CONCURRENCY
+    at a time -- these are network-bound, not CPU-bound, so this cuts wall-clock time
+    roughly proportionally to the concurrency level without increasing the number of
+    requests made. Already-cached pairs are cheap DB reads and stay sequential.
     """
     cap = settings.TMDB_ENRICHMENT_CAP if cap is None else cap
 
@@ -85,21 +103,41 @@ def enrich_import_session(import_session, cap=None):
             .values_list('title', 'year')
             .distinct()
         )
+    pairs = {(title, year) for title, year in pairs if title}
 
-    lookups_used = 0
+    resolved = {}
+    to_look_up = []
     for title, year in pairs:
-        if not title:
-            continue
-
         lookup = TitleYearLookup.objects.filter(title=title, year=year).first()
-        if lookup is None:
-            if lookups_used >= cap:
-                continue  # cap reached this round; leave unresolved for a follow-up run
-            lookup = _resolve_and_cache(title, year)
-            lookups_used += 1
+        if lookup is not None:
+            resolved[(title, year)] = lookup
+        else:
+            to_look_up.append((title, year))
+    to_look_up = to_look_up[:cap]  # cap reached; the rest is left for a follow-up run
 
-        if lookup is not None and lookup.movie_id is not None:
+    if to_look_up:
+        max_workers = min(settings.TMDB_ENRICHMENT_CONCURRENCY, len(to_look_up))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_resolve_and_cache_threaded, title, year): (title, year) for title, year in to_look_up}
+            for future in as_completed(futures):
+                pair = futures[future]
+                lookup = future.result()
+                if lookup is not None:
+                    resolved[pair] = lookup
+
+    for (title, year), lookup in resolved.items():
+        if lookup.movie_id is not None:
             _assign_movie_to_entries(import_session, title, year, lookup.movie_id)
+
+
+def _resolve_and_cache_threaded(title, year):
+    """Runs in a worker thread -- Django lazily opens a DB connection per thread and
+    won't close it when the thread pool shuts down, so this closes it explicitly to
+    avoid leaking connections across repeated enrichment runs."""
+    try:
+        return _resolve_and_cache(title, year)
+    finally:
+        connection.close()
 
 
 def _assign_movie_to_entries(import_session, title, year, movie_id):
@@ -183,7 +221,7 @@ def _resolve_and_cache(title, year):
     doesn't actually match the title) means 'not found'."""
     override_tmdb_id = KNOWN_TITLE_ALIASES.get((title, year))
     if override_tmdb_id is not None:
-        movie, created = Movie.objects.get_or_create(tmdb_id=override_tmdb_id, defaults={'title': title})
+        movie, created = _safe_get_or_create(Movie, tmdb_id=override_tmdb_id, defaults={'title': title})
         if created:
             _populate_details(movie)
         lookup, _ = TitleYearLookup.objects.get_or_create(title=title, year=year, defaults={'movie': movie})
@@ -235,7 +273,8 @@ def _resolve_and_cache(title, year):
         return TitleYearLookup.objects.create(title=title, year=year, movie=None, is_tv_show=bool(tv_result))
 
     tmdb_id = result['id']
-    movie, created = Movie.objects.get_or_create(
+    movie, created = _safe_get_or_create(
+        Movie,
         tmdb_id=tmdb_id,
         defaults={
             'title': result.get('title', '') or title,
@@ -270,14 +309,14 @@ def _populate_details(movie):
 
     genres = []
     for genre_data in details.get('genres', []):
-        genre, _ = Genre.objects.get_or_create(tmdb_id=genre_data['id'], defaults={'name': genre_data['name']})
+        genre, _ = _safe_get_or_create(Genre, tmdb_id=genre_data['id'], defaults={'name': genre_data['name']})
         genres.append(genre)
     movie.genres.set(genres)
 
     countries = []
     for country_data in details.get('production_countries', []):
-        country, _ = Country.objects.get_or_create(
-            code=country_data['iso_3166_1'], defaults={'name': country_data.get('name', '')}
+        country, _ = _safe_get_or_create(
+            Country, code=country_data['iso_3166_1'], defaults={'name': country_data.get('name', '')}
         )
         countries.append(country)
     movie.countries.set(countries)
@@ -329,7 +368,8 @@ def _populate_directors(movie, crew):
     for director_data in crew:
         if director_data.get('job') != 'Director':
             continue
-        director, _ = Person.objects.get_or_create(
+        director, _ = _safe_get_or_create(
+            Person,
             tmdb_id=director_data['id'],
             defaults={'name': director_data.get('name', ''), 'profile_path': director_data.get('profile_path') or ''},
         )
@@ -346,11 +386,13 @@ def _populate_cast(movie, cast):
     watched' count -- the same class of bug as the single-director FK before it became
     a many-to-many field)."""
     for entry in cast:
-        person, _ = Person.objects.get_or_create(
+        person, _ = _safe_get_or_create(
+            Person,
             tmdb_id=entry['id'],
             defaults={'name': entry.get('name', ''), 'profile_path': entry.get('profile_path') or ''},
         )
-        Credit.objects.get_or_create(
+        _safe_get_or_create(
+            Credit,
             movie=movie,
             person=person,
             defaults={'character_name': entry.get('character', '') or '', 'order': entry.get('order', 0)},

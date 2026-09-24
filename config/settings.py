@@ -193,6 +193,12 @@ MAX_ZIP_ENTRY_COUNT = 2000
 # Cap on new TMDB lookups performed synchronously during a single upload request.
 TMDB_ENRICHMENT_CAP = 150
 
+# How many TMDB lookups to run concurrently (thread pool, since these are network-bound
+# calls). TMDB tolerates a reasonable amount of concurrency, and _get already retries
+# with backoff on 429 -- this just shortens the wall-clock time for a bulk enrichment
+# run without raising the total number of requests made.
+TMDB_ENRICHMENT_CONCURRENCY = config('TMDB_ENRICHMENT_CONCURRENCY', default=8, cast=int)
+
 # Keep Django's own upload-parsing ceiling in line with our own cap (with headroom
 # for multipart overhead) so oversized files are rejected before they're fully buffered.
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE + (1 * 1024 * 1024)
