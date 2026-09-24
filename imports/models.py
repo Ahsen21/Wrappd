@@ -158,6 +158,13 @@ class DiaryEntry(models.Model):
     rewatch = models.BooleanField(default=False)
     tags = models.CharField(max_length=500, blank=True)
     movie = models.ForeignKey(Movie, null=True, blank=True, on_delete=models.SET_NULL, related_name='diary_entries')
+    # Denormalized from TitleYearLookup.is_tv_show at enrichment time -- see that
+    # field's own docstring for what confirms TV vs. just unmatched. Lets
+    # exclude_tv_shows() (stats/services/filters.py) filter with a plain indexed
+    # boolean instead of a per-query correlated subquery against TitleYearLookup,
+    # which used to run once per aggregation across the whole dashboard/compare
+    # build -- dozens of times per page load.
+    is_tv_show = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('import_session', 'letterboxd_uri', 'watched_date')
@@ -176,6 +183,8 @@ class RatingEntry(models.Model):
     year = models.PositiveSmallIntegerField(null=True, blank=True)
     rating = models.DecimalField(max_digits=2, decimal_places=1)
     movie = models.ForeignKey(Movie, null=True, blank=True, on_delete=models.SET_NULL, related_name='rating_entries')
+    # See DiaryEntry.is_tv_show's docstring.
+    is_tv_show = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('import_session', 'letterboxd_uri')
@@ -195,6 +204,8 @@ class WatchlistEntry(models.Model):
     movie = models.ForeignKey(
         Movie, null=True, blank=True, on_delete=models.SET_NULL, related_name='watchlist_entries'
     )
+    # See DiaryEntry.is_tv_show's docstring.
+    is_tv_show = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('import_session', 'letterboxd_uri')
@@ -212,6 +223,8 @@ class WatchedEntry(models.Model):
     title = models.CharField(max_length=500)
     year = models.PositiveSmallIntegerField(null=True, blank=True)
     movie = models.ForeignKey(Movie, null=True, blank=True, on_delete=models.SET_NULL, related_name='watched_entries')
+    # See DiaryEntry.is_tv_show's docstring.
+    is_tv_show = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('import_session', 'letterboxd_uri')
@@ -231,6 +244,8 @@ class LikedFilmEntry(models.Model):
     movie = models.ForeignKey(
         Movie, null=True, blank=True, on_delete=models.SET_NULL, related_name='liked_film_entries'
     )
+    # See DiaryEntry.is_tv_show's docstring.
+    is_tv_show = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('import_session', 'letterboxd_uri')
@@ -252,6 +267,8 @@ class ReviewEntry(models.Model):
     rating = models.DecimalField(max_digits=2, decimal_places=1, null=True, blank=True)
     review = models.TextField(blank=True)
     movie = models.ForeignKey(Movie, null=True, blank=True, on_delete=models.SET_NULL, related_name='review_entries')
+    # See DiaryEntry.is_tv_show's docstring.
+    is_tv_show = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('import_session', 'letterboxd_uri', 'watched_date')

@@ -1226,17 +1226,18 @@ class TvShowExclusionTests(TestCase):
         )
         DiaryEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
-            watched_date='2024-01-02', rating=Decimal('2.0'),
+            watched_date='2024-01-02', rating=Decimal('2.0'), is_tv_show=True,
         )
         RatingEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
-            rating=Decimal('2.0'),
+            rating=Decimal('2.0'), is_tv_show=True,
         )
         WatchedEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/real', title='Real Film', year=2021,
         )
         WatchedEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
+            is_tv_show=True,
         )
 
     def test_dashboard_excludes_confirmed_tv_from_counts_and_ratings(self):
@@ -1270,7 +1271,7 @@ class TvShowExclusionTests(TestCase):
         )
         RatingEntry.objects.create(
             import_session=other, letterboxd_uri='https://boxd.it/tv-b', title='Some TV Show', year=2020,
-            rating=Decimal('5.0'),
+            rating=Decimal('5.0'), is_tv_show=True,
         )
 
         context = build_compare_context(self.session, other)
@@ -2564,11 +2565,11 @@ class SameDayLogsTests(TestCase):
         TitleYearLookup.objects.create(title='Some TV Show', year=2020, movie=None, is_tv_show=True)
         DiaryEntry.objects.create(
             import_session=session_a, letterboxd_uri='https://boxd.it/tv-a', title='Some TV Show', year=2020,
-            watched_date='2024-01-01',
+            watched_date='2024-01-01', is_tv_show=True,
         )
         DiaryEntry.objects.create(
             import_session=session_b, letterboxd_uri='https://boxd.it/tv-b', title='Some TV Show', year=2020,
-            watched_date='2024-01-01',
+            watched_date='2024-01-01', is_tv_show=True,
         )
         context = build_compare_context(session_a, session_b)
         self.assertEqual(context['same_day_logs'], [])
@@ -3077,7 +3078,7 @@ class FavoritePairingInsightTests(TestCase):
     _dashboard_insights' own wiring)."""
 
     def test_reports_the_best_recurring_pairing_above_threshold(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor, _ = Person.objects.get_or_create(tmdb_id=8001, defaults={'name': 'Star Actor'})
@@ -3097,14 +3098,14 @@ class FavoritePairingInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_pairing_insight(rated, avg_rating)
+        insights = _favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         self.assertEqual(len(insights), 1)
         self.assertIn('Favorite Director + Star Actor', insights[0]['text'])
         self.assertIn('3 films', insights[0]['text'])
         self.assertEqual(insights[0]['label'], 'Favorite actor/director duo')
 
     def test_duo_carries_each_persons_own_headshot(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         Person.objects.get_or_create(
             tmdb_id=hash('Headshot Director') % 10_000,
@@ -3129,7 +3130,7 @@ class FavoritePairingInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_pairing_insight(rated, avg_rating)
+        insights = _favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         duo = insights[0]['duo']
         self.assertEqual(duo['a']['name'], 'Headshot Director')
         self.assertIn('/director.jpg', duo['a']['image'])
@@ -3137,7 +3138,7 @@ class FavoritePairingInsightTests(TestCase):
         self.assertIn('/actor.jpg', duo['b']['image'])
 
     def test_duo_image_is_none_without_a_profile_path(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor, _ = Person.objects.get_or_create(tmdb_id=8011, defaults={'name': 'No Photo Actor'})
@@ -3156,13 +3157,13 @@ class FavoritePairingInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_pairing_insight(rated, avg_rating)
+        insights = _favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         duo = insights[0]['duo']
         self.assertIsNone(duo['a']['image'])
         self.assertIsNone(duo['b']['image'])
 
     def test_a_single_shared_film_does_not_count_as_a_collaboration(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor, _ = Person.objects.get_or_create(tmdb_id=8002, defaults={'name': 'One-Off Actor'})
@@ -3180,10 +3181,10 @@ class FavoritePairingInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        self.assertEqual(_favorite_pairing_insight(rated, avg_rating), [])
+        self.assertEqual(_favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True)))), [])
 
     def test_cameo_actors_are_excluded_from_pairing(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         cameo, _ = Person.objects.get_or_create(tmdb_id=8003, defaults={'name': 'Cameo Actor'})
@@ -3205,10 +3206,10 @@ class FavoritePairingInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        self.assertEqual(_favorite_pairing_insight(rated, avg_rating), [])
+        self.assertEqual(_favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True)))), [])
 
     def test_best_pairing_below_threshold_is_not_reported(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor, _ = Person.objects.get_or_create(tmdb_id=8004, defaults={'name': 'Average Actor'})
@@ -3227,12 +3228,12 @@ class FavoritePairingInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        self.assertEqual(_favorite_pairing_insight(rated, avg_rating), [])
+        self.assertEqual(_favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True)))), [])
 
     def test_returns_empty_when_avg_rating_is_none(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
-        self.assertEqual(_favorite_pairing_insight(RatingEntry.objects.none(), None), [])
+        self.assertEqual(_favorite_pairing_insight(RatingEntry.objects.none(), None, {}), [])
 
 
 class FavoriteActorDuoInsightTests(TestCase):
@@ -3241,7 +3242,7 @@ class FavoriteActorDuoInsightTests(TestCase):
     director x actor."""
 
     def test_reports_the_best_recurring_pairing_above_threshold(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor_a, _ = Person.objects.get_or_create(tmdb_id=8500, defaults={'name': 'Star One'})
@@ -3262,7 +3263,7 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        insights = _favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         self.assertEqual(len(insights), 1)
         self.assertIn('Star One', insights[0]['text'])
         self.assertIn('Star Two', insights[0]['text'])
@@ -3270,7 +3271,7 @@ class FavoriteActorDuoInsightTests(TestCase):
         self.assertEqual(insights[0]['label'], 'Favorite actor duo')
 
     def test_duo_carries_each_actors_own_headshot(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         actor_a, _ = Person.objects.get_or_create(
             tmdb_id=8510, defaults={'name': 'Headshot One', 'profile_path': '/one.jpg'},
@@ -3295,7 +3296,7 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        insights = _favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         duo = insights[0]['duo']
         self.assertEqual(duo['a']['name'], 'Headshot One')
         self.assertIn('/one.jpg', duo['a']['image'])
@@ -3303,7 +3304,7 @@ class FavoriteActorDuoInsightTests(TestCase):
         self.assertIn('/two.jpg', duo['b']['image'])
 
     def test_duo_image_is_none_without_a_profile_path(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         actor_a, _ = Person.objects.get_or_create(tmdb_id=8512, defaults={'name': 'No Photo One'})
         actor_b, _ = Person.objects.get_or_create(tmdb_id=8513, defaults={'name': 'No Photo Two'})
@@ -3324,7 +3325,7 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        insights = _favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         duo = insights[0]['duo']
         self.assertIsNone(duo['a']['image'])
         self.assertIsNone(duo['b']['image'])
@@ -3332,7 +3333,7 @@ class FavoriteActorDuoInsightTests(TestCase):
     def test_pair_key_is_order_independent(self):
         """Billing order can flip film to film -- the pair still has to count as
         one recurring pairing, not two separate under-counted ones."""
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor_a, _ = Person.objects.get_or_create(tmdb_id=8502, defaults={'name': 'Alpha Actor'})
@@ -3353,12 +3354,12 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insights = _favorite_actor_duo_insight(rated, avg_rating)
+        insights = _favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))
         self.assertEqual(len(insights), 1)
         self.assertIn('3 films', insights[0]['text'])
 
     def test_two_shared_films_do_not_count_as_a_pairing(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor_a, _ = Person.objects.get_or_create(tmdb_id=8504, defaults={'name': 'One Actor'})
@@ -3379,10 +3380,10 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating), [])
+        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True)))), [])
 
     def test_cameo_actors_are_excluded_from_pairing(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         lead, _ = Person.objects.get_or_create(tmdb_id=8506, defaults={'name': 'Lead Actor'})
@@ -3403,10 +3404,10 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating), [])
+        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True)))), [])
 
     def test_best_pairing_below_threshold_is_not_reported(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
         session = ImportSession.objects.create(display_name='Alex')
         actor_a, _ = Person.objects.get_or_create(tmdb_id=8508, defaults={'name': 'Mid Actor A'})
@@ -3427,12 +3428,12 @@ class FavoriteActorDuoInsightTests(TestCase):
             )
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating), [])
+        self.assertEqual(_favorite_actor_duo_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True)))), [])
 
     def test_returns_empty_when_avg_rating_is_none(self):
-        from stats.services.dashboard import _favorite_actor_duo_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_actor_duo_insight
 
-        self.assertEqual(_favorite_actor_duo_insight(RatingEntry.objects.none(), None), [])
+        self.assertEqual(_favorite_actor_duo_insight(RatingEntry.objects.none(), None, {}), [])
 
 
 class FavoriteGenreComboInsightTests(TestCase):
@@ -4364,7 +4365,7 @@ class RatingCurveTests(TestCase):
         TitleYearLookup.objects.create(title='Some TV Show', year=2020, movie=None, is_tv_show=True)
         RatingEntry.objects.create(
             import_session=session_a, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
-            rating=Decimal('5.0'),
+            rating=Decimal('5.0'), is_tv_show=True,
         )
         RatingEntry.objects.create(
             import_session=session_a, letterboxd_uri='https://boxd.it/real', title='Real Film', year=2021,
@@ -4415,9 +4416,11 @@ class WatchlistMatchesTests(TestCase):
         TitleYearLookup.objects.create(title='Some TV Show', year=2020, movie=None, is_tv_show=True)
         WatchlistEntry.objects.create(
             import_session=session_a, letterboxd_uri='https://boxd.it/tv-a', title='Some TV Show', year=2020,
+            is_tv_show=True,
         )
         WatchlistEntry.objects.create(
             import_session=session_b, letterboxd_uri='https://boxd.it/tv-b', title='Some TV Show', year=2020,
+            is_tv_show=True,
         )
         context = build_compare_context(session_a, session_b)
         self.assertEqual(context['watchlist_matches'], [])
@@ -4891,7 +4894,7 @@ class TopUnseenByOtherTests(TestCase):
         TitleYearLookup.objects.create(title='Some TV Show', year=2020, movie=None, is_tv_show=True)
         RatingEntry.objects.create(
             import_session=session_a, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
-            rating=Decimal('5.0'),
+            rating=Decimal('5.0'), is_tv_show=True,
         )
         context = build_compare_context(session_a, session_b)
         self.assertNotIn('Some TV Show', [f['title'] for f in context['top_unseen_a']])
@@ -4947,7 +4950,7 @@ class PersonFilmographyTests(TestCase):
         TitleYearLookup.objects.create(title='Some TV Show', year=2020, movie=None, is_tv_show=True)
         RatingEntry.objects.create(
             import_session=session, letterboxd_uri='https://boxd.it/tv', title='Some TV Show', year=2020,
-            rating=Decimal('5.0'), movie=movie,
+            rating=Decimal('5.0'), movie=movie, is_tv_show=True,
         )
         result = build_person_filmography(session, director, 'director')
         self.assertEqual(result['films'], [])
@@ -5170,24 +5173,24 @@ class InsightDrillKeysTests(TestCase):
         return session
 
     def test_pairing_insight_carries_a_pairing_drill_with_both_person_ids(self):
-        from stats.services.dashboard import _favorite_pairing_insight
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight
 
         session = self._session_with_pairing()
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        drill = _favorite_pairing_insight(rated, avg_rating)[0]['drill']
+        drill = _favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))[0]['drill']
         self.assertEqual(drill['kind'], 'pairing')
         director = Person.objects.get(name='Duo Director')
         self.assertEqual(drill['p1'], director.tmdb_id)
         self.assertEqual(drill['p2'], 9500)
 
     def test_featured_card_passes_the_drill_dict_through(self):
-        from stats.services.dashboard import _favorite_pairing_insight, _featured_card
+        from stats.services.dashboard import _actors_by_movie_cast, _favorite_pairing_insight, _featured_card
 
         session = self._session_with_pairing()
         rated = RatingEntry.objects.filter(import_session=session)
         avg_rating = rated.aggregate(avg=Avg('rating'))['avg']
-        insight = _favorite_pairing_insight(rated, avg_rating)[0]
+        insight = _favorite_pairing_insight(rated, avg_rating, _actors_by_movie_cast(set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))))[0]
         card = _featured_card(insight)
         self.assertEqual(card['drill'], insight['drill'])
 

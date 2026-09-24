@@ -128,6 +128,8 @@ def enrich_import_session(import_session, cap=None):
     for (title, year), lookup in resolved.items():
         if lookup.movie_id is not None:
             _assign_movie_to_entries(import_session, title, year, lookup.movie_id)
+        elif lookup.is_tv_show:
+            _mark_entries_as_tv_show(import_session, title, year)
 
 
 def _resolve_and_cache_threaded(title, year):
@@ -145,6 +147,17 @@ def _assign_movie_to_entries(import_session, title, year, movie_id):
         model.objects.filter(
             import_session=import_session, title=title, year=year, movie__isnull=True
         ).update(movie_id=movie_id)
+
+
+def _mark_entries_as_tv_show(import_session, title, year):
+    """Denormalizes TitleYearLookup.is_tv_show onto every matching entry -- see
+    DiaryEntry.is_tv_show's docstring for why. Mirrors _assign_movie_to_entries'
+    shape; a confirmed-TV pair never gets a movie_id (see _resolve_and_cache), so
+    this is the only field these entries get from a TV-confirmed lookup."""
+    for model in ENTRY_MODELS:
+        model.objects.filter(
+            import_session=import_session, title=title, year=year, movie__isnull=True
+        ).update(is_tv_show=True)
 
 
 def _normalize_title(title: str) -> str:

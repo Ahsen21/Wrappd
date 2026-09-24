@@ -276,10 +276,12 @@ def _rounded_or_unrated(avg_rating):
 
 def _cameo_credit_ids(movie_ids) -> set:
     """Credit ids that count as a cameo under CAMEO_RELATIVE_BILLING_THRESHOLD /
-    MIN_CAST_SIZE_FOR_CAMEO_FILTER, for the given movie ids. Excluded from every
-    actor stat -- 'most watched', its avg-rating column, and 'highest rated' all
-    share this same exclusion set, so an actor's numbers stay consistent across
-    every view rather than counting cameos in one place and not another."""
+    MIN_CAST_SIZE_FOR_CAMEO_FILTER, for the given movie ids. Used where only the
+    exclusion set itself is needed (a person-scoped filter -- see
+    insight_films.py/person_filmography.py) rather than a movie's full cast list;
+    see _actors_by_movie_cast for the single-fetch cast-list equivalent every
+    call site in this file uses instead, since fetching a cast list already
+    implies knowing its cameos along the way."""
     cast_sizes = defaultdict(int)
     rows = list(Credit.objects.filter(movie_id__in=movie_ids).values_list('id', 'movie_id', 'order'))
     for _, movie_id, _ in rows:
@@ -291,6 +293,38 @@ def _cameo_credit_ids(movie_ids) -> set:
         if cast_sizes[movie_id] >= MIN_CAST_SIZE_FOR_CAMEO_FILTER
         and order / cast_sizes[movie_id] >= CAMEO_RELATIVE_BILLING_THRESHOLD
     }
+
+
+def _actors_by_movie_cast(movie_ids) -> dict:
+    """Non-cameo cast per movie -- movie_id -> [(person_name, profile_path,
+    person_id), ...] -- under CAMEO_RELATIVE_BILLING_THRESHOLD / MIN_CAST_SIZE_FOR_
+    CAMEO_FILTER, for the given movie ids. Excluded from every actor stat across
+    the whole file -- 'most watched', its avg-rating column, 'highest rated', and
+    every actor-pairing insight all share this same exclusion, so an actor's
+    numbers stay consistent across every view rather than counting cameos in one
+    place and not another.
+
+    One Credit+Person fetch, with cast size (for cameo exclusion) computed from
+    the same rows -- every call site here used to fetch credit ids once just to
+    size casts, then fetch the actual cast a second time excluding those ids; this
+    does it in one query instead, the same consolidation _actor_rating_data uses
+    for its own per-actor aggregates (see that function for the aggregate-shaped
+    equivalent of this cast-list shape)."""
+    rows = list(
+        Credit.objects.filter(movie_id__in=movie_ids)
+        .values_list('movie_id', 'person__name', 'person__profile_path', 'person_id', 'order')
+    )
+    cast_sizes = defaultdict(int)
+    for movie_id, *_rest in rows:
+        cast_sizes[movie_id] += 1
+
+    actors_by_movie = defaultdict(list)
+    for movie_id, name, profile_path, person_id, order in rows:
+        size = cast_sizes[movie_id]
+        if size >= MIN_CAST_SIZE_FOR_CAMEO_FILTER and order / size >= CAMEO_RELATIVE_BILLING_THRESHOLD:
+            continue
+        actors_by_movie[movie_id].append((name, profile_path, person_id))
+    return actors_by_movie
 
 
 def _watched_movies(import_session, diary, rated, exclude_shorts=False):
@@ -315,33 +349,47 @@ def _watched_movies(import_session, diary, rated, exclude_shorts=False):
 
 
 def _actor_rating_data(rated, watched_movies) -> tuple:
-    """Non-cameo per-actor rating lists/profile paths/tmdb ids, shared by
-    top_actors' avg_rating column and _favorite_people's favorite_actors (so an
-    actor's "highest rated" and "most watched" numbers can never disagree about
-    which of their appearances actually count) -- also called directly by the
-    home screen's stat-of-the-day pool (_stat_of_the_day), which only needs
-    favorite_actors and not the rest of build_dashboard_context.
+    """Non-cameo per-actor rating lists/profile paths/tmdb ids/watch counts, shared
+    by top_actors (both its count and avg_rating columns) and _favorite_people's
+    favorite_actors (so an actor's "highest rated" and "most watched" numbers can
+    never disagree about which of their appearances actually count) -- also called
+    directly by the home screen's stat-of-the-day pool (_stat_of_the_day), which
+    only needs favorite_actors and not the rest of build_dashboard_context.
 
-    Also returns cameo_credit_ids, since build_dashboard_context's own
-    top_actors query needs the same exclusion set and shouldn't compute it
-    twice."""
-    cameo_credit_ids = _cameo_credit_ids(
-        set(watched_movies.values_list('tmdb_id', flat=True))
-        | set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))
-    )
+    One Credit+Person fetch for the whole watched-or-rated movie set, with cast
+    size (for cameo exclusion), rating lists, and watch counts all derived from it
+    in Python -- replaces what used to be 3 separate Credit queries (one to size
+    casts for cameo detection, one filtered to rated movies for ratings, one
+    filtered to watched movies for counts) that each scanned overlapping rows
+    across overlapping movie sets. Same single-fetch shape _top_actors_diary
+    already uses for the year view."""
+    watched_movie_ids = set(watched_movies.values_list('tmdb_id', flat=True))
     rated_ratings_by_movie = dict(rated.exclude(movie__isnull=True).values_list('movie_id', 'rating'))
+    movie_ids = watched_movie_ids | set(rated_ratings_by_movie)
+
+    rows = list(
+        Credit.objects.filter(movie_id__in=movie_ids)
+        .values_list('movie_id', 'person__name', 'person__profile_path', 'person__tmdb_id', 'order')
+    )
+    cast_sizes = defaultdict(int)
+    for movie_id, *_rest in rows:
+        cast_sizes[movie_id] += 1
+
     actor_rating_lists = defaultdict(list)
     actor_profile_paths = {}
     actor_tmdb_ids = {}
-    for person_name, movie_id, profile_path, person_tmdb_id in (
-        Credit.objects.filter(movie_id__in=rated_ratings_by_movie)
-        .exclude(id__in=cameo_credit_ids)
-        .values_list('person__name', 'movie_id', 'person__profile_path', 'person__tmdb_id')
-    ):
-        actor_rating_lists[person_name].append(rated_ratings_by_movie[movie_id])
+    actor_watch_counts = defaultdict(set)
+    for movie_id, person_name, profile_path, person_tmdb_id, order in rows:
+        size = cast_sizes[movie_id]
+        if size >= MIN_CAST_SIZE_FOR_CAMEO_FILTER and order / size >= CAMEO_RELATIVE_BILLING_THRESHOLD:
+            continue  # cameo, excluded from every actor stat
         actor_profile_paths[person_name] = profile_path
         actor_tmdb_ids[person_name] = person_tmdb_id
-    return actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids
+        if movie_id in rated_ratings_by_movie:
+            actor_rating_lists[person_name].append(rated_ratings_by_movie[movie_id])
+        if movie_id in watched_movie_ids:
+            actor_watch_counts[person_name].add(movie_id)
+    return actor_rating_lists, actor_profile_paths, actor_tmdb_ids, actor_watch_counts
 
 
 # --- Year-view "most watched" aggregations -----------------------------------
@@ -411,13 +459,7 @@ def _top_actors_diary(diary) -> tuple:
     amount of work, not a performance concern."""
     rows = list(diary.exclude(movie__isnull=True).values('movie_id', 'rating'))
     movie_ids = {row['movie_id'] for row in rows}
-    cameo_ids = _cameo_credit_ids(movie_ids)
-    credits_by_movie = defaultdict(list)
-    for movie_id, name, profile_path, person_tmdb_id in (
-        Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
-        .values_list('movie_id', 'person__name', 'person__profile_path', 'person__tmdb_id')
-    ):
-        credits_by_movie[movie_id].append((name, profile_path, person_tmdb_id))
+    credits_by_movie = _actors_by_movie_cast(movie_ids)
 
     counts = defaultdict(int)
     actor_rating_lists = defaultdict(list)
@@ -699,22 +741,19 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         top_directors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
         top_directors = top_directors[:FAVORITE_PEOPLE_GRID_CAP]
 
-        actor_rating_lists, actor_profile_paths, actor_tmdb_ids, cameo_credit_ids = _actor_rating_data(
+        actor_rating_lists, actor_profile_paths, actor_tmdb_ids, actor_watch_counts = _actor_rating_data(
             rated, watched_movies
         )
-        top_actors = list(
-            Credit.objects.filter(movie__in=watched_movies)
-            .exclude(id__in=cameo_credit_ids)
-            .values('person__name')
-            .annotate(
-                count=Count('movie', distinct=True), profile_path=Min('person__profile_path'),
-                actor_tmdb_id=Min('person__tmdb_id'),
-            )
-        )
-        for row in top_actors:
-            ratings = actor_rating_lists.get(row['person__name'], [])
-            row['avg_rating'] = sum(ratings) / len(ratings) if len(ratings) >= MIN_COUNT_FOR_AVERAGE else None
-            row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
+        top_actors = []
+        for name, movie_ids_for_actor in actor_watch_counts.items():
+            ratings = actor_rating_lists.get(name, [])
+            top_actors.append({
+                'person__name': name,
+                'count': len(movie_ids_for_actor),
+                'actor_tmdb_id': actor_tmdb_ids.get(name),
+                'avg_rating': sum(ratings) / len(ratings) if len(ratings) >= MIN_COUNT_FOR_AVERAGE else None,
+                'profile_url': _tmdb_image_url(actor_profile_paths.get(name, ''), 'w185'),
+            })
         top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
         top_actors = top_actors[:FAVORITE_PEOPLE_GRID_CAP]
 
@@ -1359,16 +1398,9 @@ def _watchlist_recommendations(
     )
     candidate_movie_ids = {entry.movie_id for entry in candidates}
     # Cast, not just genre/director, needs its own pass -- computed once for every
-    # candidate up front (same _cameo_credit_ids reused elsewhere) rather than one
-    # query per film in the loop below.
-    candidate_cameo_ids = _cameo_credit_ids(candidate_movie_ids)
-    actors_by_movie = defaultdict(list)
-    for movie_id, person_name in (
-        Credit.objects.filter(movie_id__in=candidate_movie_ids)
-        .exclude(id__in=candidate_cameo_ids)
-        .values_list('movie_id', 'person__name')
-    ):
-        actors_by_movie[movie_id].append(person_name)
+    # candidate up front (same _actors_by_movie_cast reused elsewhere) rather than
+    # one query per film in the loop below.
+    actors_by_movie = _actors_by_movie_cast(candidate_movie_ids)
 
     scored = []
     seen_movie_ids = set()
@@ -1388,7 +1420,7 @@ def _watchlist_recommendations(
         for director in movie.directors.all():
             if director.name in director_deltas:
                 components.append(('director', director.name, director_deltas[director.name]))
-        for actor_name in actors_by_movie.get(movie.tmdb_id, []):
+        for actor_name, _profile_path, _person_id in actors_by_movie.get(movie.tmdb_id, []):
             if actor_name in actor_deltas:
                 components.append(('actor', actor_name, actor_deltas[actor_name]))
         for country in movie.countries.all():
@@ -1749,7 +1781,7 @@ def _rating_insights(axis_deltas: dict, slots: list, decade_best_films: dict = N
     return insights
 
 
-def _favorite_pairing_insight(rated, avg_rating) -> list:
+def _favorite_pairing_insight(rated, avg_rating, actors_by_movie) -> list:
     """0 or 1 insight about this person's best-rated recurring director-actor
     collaboration -- e.g. "Denis Villeneuve + Timothée Chalamet — 4 films, 4.8★".
     One tile in the combined insight grid (see _dashboard_insights) -- a pairing
@@ -1757,6 +1789,12 @@ def _favorite_pairing_insight(rated, avg_rating) -> list:
     two-person co-occurrence, a different shape of fact entirely), so it's
     computed separately from _rating_insights' slot machinery rather than folded
     into it.
+
+    actors_by_movie (movie_id -> [(name, profile_path, person_id), ...], from
+    _actors_by_movie_cast) is passed in rather than fetched here -- this and
+    _favorite_actor_duo_insight both run against the exact same rated-movie cast
+    data, so _featured_insights fetches it once and shares it between them
+    instead of each issuing its own identical Credit query.
 
     Raw average, not confidence-shrunk/peak-blended -- same "checkable against
     the real numbers" reasoning as _raw_axis_deltas. Only considers pairs sharing
@@ -1780,22 +1818,11 @@ def _favorite_pairing_insight(rated, avg_rating) -> list:
     avg_rating = float(avg_rating)
 
     rated = rated.exclude(movie__isnull=True)
-    movie_ids = set(rated.values_list('movie_id', flat=True))
-    # Cast, not just directors, needs its own pass -- computed once up front (same
-    # _cameo_credit_ids reused elsewhere) rather than a query per film below.
-    cameo_ids = _cameo_credit_ids(movie_ids)
 
     directors_by_movie = defaultdict(list)
     for entry in rated.select_related('movie').prefetch_related('movie__directors'):
         for director in entry.movie.directors.all():
             directors_by_movie[entry.movie_id].append((director.name, director.profile_path, director.tmdb_id))
-
-    actors_by_movie = defaultdict(list)
-    for movie_id, name, profile_path, person_id in (
-        Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
-        .values_list('movie_id', 'person__name', 'person__profile_path', 'person_id')
-    ):
-        actors_by_movie[movie_id].append((name, profile_path, person_id))
 
     pair_ratings = defaultdict(list)
     # First-seen (photos, tmdb ids) for each (director, actor) key -- neither
@@ -1828,7 +1855,7 @@ def _favorite_pairing_insight(rated, avg_rating) -> list:
     }]
 
 
-def _favorite_actor_duo_insight(rated, avg_rating) -> list:
+def _favorite_actor_duo_insight(rated, avg_rating, actors_by_movie) -> list:
     """0 or 1 insight about this person's best-rated recurring on-screen actor
     pairing -- e.g. "Timothée Chalamet + Zendaya — 3 films, 4.8★". Same shape and
     reasoning as _favorite_pairing_insight (director+actor), just actor x actor
@@ -1854,21 +1881,16 @@ def _favorite_actor_duo_insight(rated, avg_rating) -> list:
     _favorite_pairing_insight's own comment on this same shape.
 
     Returns [] if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated
-    films -- no baseline to compare against)."""
+    films -- no baseline to compare against).
+
+    actors_by_movie is passed in, not fetched here -- see _favorite_pairing_
+    insight's own comment on why (shared with it, computed once by
+    _featured_insights)."""
     if avg_rating is None:
         return []
     avg_rating = float(avg_rating)
 
     rated = rated.exclude(movie__isnull=True)
-    movie_ids = set(rated.values_list('movie_id', flat=True))
-    cameo_ids = _cameo_credit_ids(movie_ids)
-
-    actors_by_movie = defaultdict(list)
-    for movie_id, name, profile_path, person_id in (
-        Credit.objects.filter(movie_id__in=movie_ids).exclude(id__in=cameo_ids)
-        .values_list('movie_id', 'person__name', 'person__profile_path', 'person_id')
-    ):
-        actors_by_movie[movie_id].append((name, profile_path, person_id))
 
     pair_ratings = defaultdict(list)
     # First-seen (photo, tmdb id) per actor name -- see _favorite_pairing_insight's
@@ -2319,9 +2341,14 @@ def _featured_insights(diary, rated, avg_rating) -> list:
     raw_deltas = _raw_axis_deltas(rated, avg_rating)
     decade_best_films = _best_film_per_bucket(rated, 'release_year', _decade_bucket, tie_break='stable_random')
     runtime_best_films = _best_film_per_bucket(rated, 'runtime_minutes', _runtime_bucket, tie_break='runtime')
+    # Fetched once and shared: _favorite_pairing_insight and _favorite_actor_duo_insight
+    # both need the exact same rated-movie cast data, so this avoids issuing the same
+    # Credit query twice.
+    rated_movie_ids = set(rated.exclude(movie__isnull=True).values_list('movie_id', flat=True))
+    actors_by_movie = _actors_by_movie_cast(rated_movie_ids)
     return (
-        _favorite_pairing_insight(rated, avg_rating)
-        + _favorite_actor_duo_insight(rated, avg_rating)
+        _favorite_pairing_insight(rated, avg_rating, actors_by_movie)
+        + _favorite_actor_duo_insight(rated, avg_rating, actors_by_movie)
         + _favorite_genre_combo_insight(rated, avg_rating)
         + _rating_insights(raw_deltas, _AXIS_INSIGHT_SLOTS, decade_best_films, runtime_best_films)
         + _hidden_gem_insight(rated, avg_rating)
