@@ -2,7 +2,7 @@ import re
 from unittest import mock
 
 import requests_mock
-from django.test import TestCase, override_settings
+from django.test import TransactionTestCase, override_settings
 
 from imports.models import DiaryEntry, ImportSession
 from tmdb.models import Country, Credit, Movie, TitleYearLookup
@@ -18,7 +18,13 @@ def _make_session_with_diary(title, year, uri='https://boxd.it/x'):
 
 
 @override_settings(TMDB_API_KEY='test-key')
-class EnrichImportSessionTests(TestCase):
+class EnrichImportSessionTests(TransactionTestCase):
+    """TransactionTestCase, not TestCase: enrich_import_session runs real TMDB
+    lookups in worker threads, each with its own DB connection that autocommits
+    outside the main test thread's transaction. Under plain TestCase (rollback-based
+    isolation), a worker thread's writes would escape the rollback and leak into
+    later tests -- TransactionTestCase truncates tables between tests instead, which
+    correctly cleans up regardless of which connection wrote the data."""
     def test_cache_hit_with_no_match_skips_api_call_entirely(self):
         TitleYearLookup.objects.create(title='Foo', year=2020, movie=None)
         session = _make_session_with_diary('Foo', 2020)
