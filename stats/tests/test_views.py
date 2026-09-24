@@ -1,12 +1,15 @@
 import json
 from datetime import timedelta
 from decimal import Decimal
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 
 from imports.models import ImportSession, RatingEntry
+from stats.services.dashboard import build_dashboard_context
 from tmdb.models import Credit, Movie, Person
 
 User = get_user_model()
@@ -239,6 +242,61 @@ class DashboardViewTests(TestCase):
         )
 
         self.assertIn('shorts=exclude', response.context['share_url'])
+        self.assertIn('year=2024', response.context['share_url'])
+
+
+class DashboardCachingTests(TestCase):
+    """build_dashboard_context is expensive -- see stats/views.py's own comment on
+    DASHBOARD_CONTEXT_CACHE_TTL for why a READY session's result is safe to cache.
+    Clears the cache before/after each test since Django's LocMemCache is a single
+    process-wide store the test DB's rollback-per-test isolation doesn't touch."""
+
+    def setUp(self):
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_second_request_for_the_same_session_does_not_recompute(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+        url = reverse('stats:dashboard', kwargs={'session_id': session.id})
+
+        with mock.patch('stats.views.build_dashboard_context', wraps=build_dashboard_context) as mocked:
+            self.client.get(url)
+            self.client.get(url)
+            self.assertEqual(mocked.call_count, 1)
+
+    def test_different_shorts_or_year_params_are_cached_separately(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+        url = reverse('stats:dashboard', kwargs={'session_id': session.id})
+
+        with mock.patch('stats.views.build_dashboard_context', wraps=build_dashboard_context) as mocked:
+            self.client.get(url)
+            self.client.get(url, {'shorts': 'exclude'})
+            self.client.get(url, {'year': '2024'})
+            self.assertEqual(mocked.call_count, 3)
+
+    def test_a_different_session_is_not_served_from_another_sessions_cache_entry(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
+
+        response_a = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session_a.id}))
+        response_b = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session_b.id}))
+
+        self.assertEqual(response_a.context['import_session'], session_a)
+        self.assertEqual(response_b.context['import_session'], session_b)
+
+    def test_cached_context_does_not_leak_a_stale_share_url_into_later_requests(self):
+        # share_url is request-built (request.build_absolute_uri) and added AFTER
+        # the cacheable context is fetched -- a naive cache of the whole context,
+        # or a cache hit that got mutated in place, could leak one request's
+        # share_url into another's response.
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+        url = reverse('stats:dashboard', kwargs={'session_id': session.id})
+
+        self.client.get(url)  # populates the cache
+        response = self.client.get(url, {'year': '2024'})  # cache miss (different key) -- fresh share_url
+
         self.assertIn('year=2024', response.context['share_url'])
 
 
