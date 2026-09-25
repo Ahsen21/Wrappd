@@ -2168,10 +2168,20 @@ def _rewatch_drift_insights(diary) -> list:
     same reasoning as _rewatch_leaderboard: a rewatch's diary row can get a
     different boxd.it short link than the original watch, but title/year is a
     safe "same film" key either way, resolved or not. Only diary entries with a
-    logged rating count -- not every one has one."""
+    logged rating count -- not every one has one.
+
+    Ordered by (watched_date, id) -- watched_date has no time component, so two
+    logs of the same film on the same calendar day (a same-day rewatch, or a
+    corrected entry added as a new log) would otherwise have no deterministic
+    "which one is first"; id (creation order) breaks the tie, same convention
+    _milestones uses for the same reason. Each film's own entries come out of
+    this query already in the right order, so no separate Python-side sort is
+    needed to find first/last."""
     ratings_by_film = defaultdict(list)
-    for title, year, watched_date, rating, movie_id in diary.filter(rating__isnull=False).values_list(
-        'title', 'year', 'watched_date', 'rating', 'movie_id'
+    for title, year, watched_date, rating, movie_id in (
+        diary.filter(rating__isnull=False)
+        .order_by('watched_date', 'id')
+        .values_list('title', 'year', 'watched_date', 'rating', 'movie_id')
     ):
         ratings_by_film[(title, year)].append((watched_date, float(rating), movie_id))
 
@@ -2179,7 +2189,6 @@ def _rewatch_drift_insights(diary) -> list:
     for (title, year), entries in ratings_by_film.items():
         if len(entries) < 2:
             continue
-        entries.sort(key=lambda entry: entry[0])
         first_rating = entries[0][1]
         last_rating = entries[-1][1]
         drift = last_rating - first_rating

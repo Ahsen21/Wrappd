@@ -3873,6 +3873,29 @@ class RatingPatternInsightsTests(TestCase):
             'Downgrade Film' in i['text'] and i['label'] == 'Biggest rewatch decrease' for i in insights
         ))
 
+    def test_same_day_rewatch_tiebreaks_by_creation_order(self):
+        # watched_date has no time component, so two logs of the same film on the
+        # same calendar day need a real tiebreak for "which one is first" -- id
+        # (creation order) is that tiebreak, same convention _milestones uses.
+        # Without it, first/last (and so the reported direction) would depend on
+        # whatever arbitrary order the DB happened to return matching rows in.
+        from stats.services.dashboard import _rewatch_drift_insights
+
+        session = ImportSession.objects.create(display_name='Alex')
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/sd1', title='Same Day Film', year=2000,
+            watched_date='2020-06-01', rating=Decimal('2.0'),
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/sd2', title='Same Day Film', year=2000,
+            watched_date='2020-06-01', rating=Decimal('5.0'), rewatch=True,
+        )
+        diary = DiaryEntry.objects.filter(import_session=session)
+        insights = _rewatch_drift_insights(diary)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['label'], 'Biggest rewatch increase')
+        self.assertEqual(insights[0]['text'], 'Same Day Film: 2.0★ → 5.0★')
+
     def test_rewatch_drift_ignores_small_changes_and_single_watches(self):
         from stats.services.dashboard import _rewatch_drift_insights
 
