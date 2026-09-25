@@ -3822,7 +3822,7 @@ class RatingPatternInsightsTests(TestCase):
             watched_date='2022-01-01', rating=Decimal('5.0'), rewatch=True, movie=movie,
         )
         diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_drift_insights(diary)
+        insights = _rewatch_drift_insights(diary, RatingEntry.objects.none())
         self.assertEqual(len(insights), 1)
         self.assertEqual(insights[0]['image'], movie.poster_url)
         self.assertEqual(insights[0]['icon'], '🔁')
@@ -3840,7 +3840,7 @@ class RatingPatternInsightsTests(TestCase):
             watched_date='2022-01-01', rating=Decimal('5.0'), rewatch=True,
         )
         diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_drift_insights(diary)
+        insights = _rewatch_drift_insights(diary, RatingEntry.objects.none())
         self.assertEqual(len(insights), 1)
         self.assertIsNone(insights[0]['image'])
 
@@ -3865,7 +3865,7 @@ class RatingPatternInsightsTests(TestCase):
             watched_date='2022-01-01', rating=Decimal('1.0'), rewatch=True,
         )
         diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_drift_insights(diary)
+        insights = _rewatch_drift_insights(diary, RatingEntry.objects.none())
         self.assertTrue(any(
             'Upgrade Film' in i['text'] and i['label'] == 'Biggest rewatch increase' for i in insights
         ))
@@ -3891,10 +3891,62 @@ class RatingPatternInsightsTests(TestCase):
             watched_date='2020-06-01', rating=Decimal('5.0'), rewatch=True,
         )
         diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_drift_insights(diary)
+        insights = _rewatch_drift_insights(diary, RatingEntry.objects.none())
         self.assertEqual(len(insights), 1)
         self.assertEqual(insights[0]['label'], 'Biggest rewatch increase')
         self.assertEqual(insights[0]['text'], 'Same Day Film: 2.0★ → 5.0★')
+
+    def test_current_rating_overrides_a_stale_diary_rewatch_rating(self):
+        # Confirmed for real: a film logged 4.0 first watch, then 4.5 on rewatch --
+        # but since edited down to 4.0 as the current Letterboxd rating without a
+        # new diary log. Trusting the stale 4.5 diary value reports this as an
+        # increase; it should read as unchanged (drift 0, no insight at all) once
+        # the current ratings.csv value is used instead.
+        from stats.services.dashboard import _rewatch_drift_insights
+
+        session = ImportSession.objects.create(display_name='Alex')
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/e1', title='Edited Film', year=2024,
+            watched_date='2024-07-19', rating=Decimal('4.0'),
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/e2', title='Edited Film', year=2024,
+            watched_date='2024-08-05', rating=Decimal('4.5'), rewatch=True,
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/e3', title='Edited Film', year=2024,
+            rating=Decimal('4.0'),
+        )
+        diary = DiaryEntry.objects.filter(import_session=session)
+        rated = RatingEntry.objects.filter(import_session=session)
+        self.assertEqual(_rewatch_drift_insights(diary, rated), [])
+
+    def test_current_rating_used_for_drift_direction_when_it_disagrees_with_the_diary(self):
+        # Same setup as the stale-rewatch case above, but the current rating has
+        # moved even further than the diary's own last log ever showed -- the
+        # reported drift should be against the current rating (2.0), not the
+        # diary's last logged value (4.5).
+        from stats.services.dashboard import _rewatch_drift_insights
+
+        session = ImportSession.objects.create(display_name='Alex')
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/f1', title='Fell Off Film', year=2024,
+            watched_date='2024-01-01', rating=Decimal('4.0'),
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/f2', title='Fell Off Film', year=2024,
+            watched_date='2024-06-01', rating=Decimal('4.5'), rewatch=True,
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/f3', title='Fell Off Film', year=2024,
+            rating=Decimal('2.0'),
+        )
+        diary = DiaryEntry.objects.filter(import_session=session)
+        rated = RatingEntry.objects.filter(import_session=session)
+        insights = _rewatch_drift_insights(diary, rated)
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]['label'], 'Biggest rewatch decrease')
+        self.assertEqual(insights[0]['text'], 'Fell Off Film: 4.0★ → 2.0★')
 
     def test_rewatch_drift_ignores_small_changes_and_single_watches(self):
         from stats.services.dashboard import _rewatch_drift_insights
@@ -3913,7 +3965,7 @@ class RatingPatternInsightsTests(TestCase):
             watched_date='2020-01-01', rating=Decimal('5.0'),
         )
         diary = DiaryEntry.objects.filter(import_session=session)
-        self.assertEqual(_rewatch_drift_insights(diary), [])
+        self.assertEqual(_rewatch_drift_insights(diary, RatingEntry.objects.none()), [])
 
     def _diary_pool(self, session, ratings, rewatch):
         tag = 'rw' if rewatch else 'fw'
@@ -4021,7 +4073,7 @@ class RatingPatternInsightsTests(TestCase):
         )
 
         diary = DiaryEntry.objects.filter(import_session=session)
-        insights = _rewatch_drift_insights(diary)
+        insights = _rewatch_drift_insights(diary, RatingEntry.objects.none())
         self.assertEqual(len(insights), 2)
         self.assertIn('Up Film', insights[0]['text'])
         self.assertEqual(insights[0]['label'], 'Biggest rewatch increase')
