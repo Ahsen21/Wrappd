@@ -2160,10 +2160,10 @@ def _languages_explored_insight(watched_movies) -> list:
     }]
 
 
-def _rewatch_drift_insights(diary) -> list:
+def _rewatch_drift_insights(diary, rated) -> list:
     """Up to 2 insights about how a rewatched film's rating changed between the
-    first time it was logged and the most recent -- the single biggest upgrade and
-    the single biggest downgrade, each only included if it clears
+    first time it was logged and where things stand now -- the single biggest
+    upgrade and the single biggest downgrade, each only included if it clears
     RECOMMENDATION_REASON_THRESHOLD. Grouped by (title, year), not movie_id --
     same reasoning as _rewatch_leaderboard: a rewatch's diary row can get a
     different boxd.it short link than the original watch, but title/year is a
@@ -2176,7 +2176,23 @@ def _rewatch_drift_insights(diary) -> list:
     "which one is first"; id (creation order) breaks the tie, same convention
     _milestones uses for the same reason. Each film's own entries come out of
     this query already in the right order, so no separate Python-side sort is
-    needed to find first/last."""
+    needed to find first/last.
+
+    The "most recent" side of the comparison prefers ratings.csv's current rating
+    for the film over the last diary log's own value, when the two disagree -- a
+    diary log's rating is frozen at the moment it was logged, but Letterboxd lets
+    someone edit their star rating for a film later without adding a new diary
+    row, and ratings.csv always reflects whatever that current value is. Confirmed
+    for real: a film rewatched and logged at 4.5, but since edited down to 4.0,
+    showed as an "increase" (using the stale 4.5) when it should read as the
+    decrease the person's actual current rating reflects. first_rating still has
+    to come from the diary though -- ratings.csv has no history, so it can't
+    answer "what did you think at the very first watch"."""
+    current_ratings = {
+        (title, year): float(rating)
+        for title, year, rating in rated.exclude(rating__isnull=True).values_list('title', 'year', 'rating')
+    }
+
     ratings_by_film = defaultdict(list)
     for title, year, watched_date, rating, movie_id in (
         diary.filter(rating__isnull=False)
@@ -2190,7 +2206,7 @@ def _rewatch_drift_insights(diary) -> list:
         if len(entries) < 2:
             continue
         first_rating = entries[0][1]
-        last_rating = entries[-1][1]
+        last_rating = current_ratings.get((title, year), entries[-1][1])
         drift = last_rating - first_rating
         if drift != 0:
             # Any entry in the group with a resolved movie works for the poster --
@@ -2379,7 +2395,7 @@ def _featured_insights(diary, rated, avg_rating) -> list:
         + _favorite_genre_combo_insight(rated, avg_rating)
         + _rating_insights(raw_deltas, _AXIS_INSIGHT_SLOTS, decade_best_films, runtime_best_films)
         + _hidden_gem_insight(rated, avg_rating)
-        + _rewatch_drift_insights(diary)
+        + _rewatch_drift_insights(diary, rated)
     )
 
 
