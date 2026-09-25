@@ -75,6 +75,11 @@ TASTE_GRID_DISPLAY_CAP = 12
 # grid's cap is about filling its shape evenly, not about 'top N' ranking"
 # convention, even though it's not TOP_N-derived.
 FAVORITE_PEOPLE_GRID_CAP = 12
+# Same "grid's cap is about filling its shape evenly" convention as
+# FAVORITE_PEOPLE_GRID_CAP above -- the "{{ year }} Releases" grid (year view
+# only) is its own constant rather than reusing that one, since they're
+# unrelated features that just happen to currently share a value.
+SAME_YEAR_RELEASES_GRID_CAP = 12
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
 # rather than asserting a fake average.
@@ -577,6 +582,82 @@ def _milestones(diary) -> list:
     return milestones
 
 
+def _same_year_releases(diary, year, films_watched_total, import_session) -> dict:
+    """How caught up this person was on the year's own new releases -- every
+    diary row logged in `year` whose movie also released in `year` (an
+    unresolved film, movie__isnull=True, can never match, so this only ever
+    covers enriched films).
+
+    count/pct are distinct-film numbers ("23 films, 18% of what you watched"),
+    matching the existing films_watched_total hero stat's own "Films watched"
+    framing -- a same-year rewatch shouldn't inflate "how many new releases did
+    you get to" the way it deliberately does for the count-every-log stats
+    elsewhere in year mode. avg_rating/rating_distribution stay diary-only/
+    per-log (a same-year rewatch's own re-rating is its own data point there),
+    for the same "count every log" reasoning as every other rating-shaped
+    year-view stat -- see build_dashboard_context's own docstring.
+
+    The grid is the one exception: each film's displayed rating prefers
+    ratings.csv's current rating over the diary's own logged value, when the
+    two disagree -- same "a diary log's rating is frozen at logging time, but
+    Letterboxd lets you edit it later without touching the diary" reasoning
+    _rewatch_drift_insights uses. year mode otherwise never touches RatingEntry
+    at all (see this function's own architecture note in build_dashboard_context
+    on why ratings.csv can't be year-scoped) -- this queries it directly rather
+    than reusing the `rated` parameter other year-view functions take, since
+    that's been repointed to a diary queryset by the time it reaches here.
+    Falls back to the diary's own best rating among this year's logs of the
+    film (same Max() "which log represents this film" pattern
+    _actor_rating_data uses) when no ratings.csv entry exists at all, and
+    that's also what determines which film is dropped if two tie for the last
+    grid slot -- there's no rewatch-count or alphabetical tiebreak beyond
+    whatever order the query happens to return."""
+    same_year = diary.filter(movie__release_year=year)
+    count = same_year.values('title', 'year').distinct().count()
+    pct = round(count / films_watched_total * 100) if films_watched_total else 0
+
+    rated_same_year = same_year.exclude(rating__isnull=True)
+    rated_count = rated_same_year.count()
+    avg_rating = rated_same_year.aggregate(avg=Avg('rating'))['avg'] if rated_count >= MIN_COUNT_FOR_AVERAGE else None
+
+    rating_distribution = list(rated_same_year.values('rating').annotate(count=Count('id')).order_by('rating'))
+
+    # No movie__release_year filter here -- matched by (title, year) alone, same
+    # as _rewatch_drift_insights' own current-rating lookup, not joined through
+    # each RatingEntry's own resolved movie. Requiring that join would silently
+    # drop a real match whenever a title/year pair resolved on the diary side
+    # but, for whatever reason, didn't resolve the same way on the ratings.csv
+    # side -- title/year is already this codebase's established "same film"
+    # key regardless of resolution state (see _rewatch_leaderboard's own
+    # comment on why).
+    current_ratings = {
+        (title, film_year): float(rating)
+        for title, film_year, rating in RatingEntry.objects.filter(import_session=import_session)
+        .exclude(rating__isnull=True).values_list('title', 'year', 'rating')
+    }
+
+    films = list(
+        rated_same_year.values('title', 'year')
+        .annotate(rating=Max('rating'), poster_path=Min('movie__poster_path'))
+    )
+    for film in films:
+        film['rating'] = current_ratings.get((film['title'], film['year']), float(film['rating']))
+        film['poster_url'] = _tmdb_image_url(film.pop('poster_path'), 'w342')
+    films.sort(key=lambda f: f['rating'], reverse=True)
+    films = films[:SAME_YEAR_RELEASES_GRID_CAP]
+
+    return {
+        'count': count,
+        'pct': pct,
+        'avg_rating': avg_rating,
+        'rating_distribution': {
+            'labels': [str(row['rating']) for row in rating_distribution],
+            'data': [row['count'] for row in rating_distribution],
+        },
+        'films': films,
+    }
+
+
 def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> dict:
     """year=None is the all-time page (unchanged behavior). A specific calendar
     year switches to the "Wrapped for a single year" view, whose sole source is
@@ -691,6 +772,20 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
     rating_distribution = list(
         rated.values('rating').annotate(count=Count('id')).order_by('rating')
     )
+    # "First watches" toggle for the chart above (and its own "Average rating"
+    # line), year mode only -- rated is RatingEntry (ratings.csv) in all-time
+    # mode, which has one row per film and no rewatch concept at all, so
+    # there's nothing to toggle there.
+    rating_distribution_first_watch = []
+    avg_rating_first_watch = None
+    if year is not None:
+        first_watch_qs = rated.filter(rewatch=False)
+        first_watch_stats = first_watch_qs.aggregate(count=Count('id'), avg=Avg('rating'))
+        rating_distribution_first_watch = list(
+            first_watch_qs.values('rating').annotate(count=Count('id')).order_by('rating')
+        )
+        if first_watch_stats['count'] >= MIN_COUNT_FOR_AVERAGE:
+            avg_rating_first_watch = first_watch_stats['avg']
 
     if year is None:
         # "Most watched" counts distinct films (watched_movies, sourced from watched.csv),
@@ -818,10 +913,13 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
             taste['generosity_score'], taste['rated_and_enriched_count'],
         )
         insights = _dashboard_insights(diary, rated, avg_rating, watched_movies, likes_count, films_watched_total)
-        # Milestones is the year view's own card -- an all-time "first/last/
-        # 100th film ever" isn't the same kind of fact a Wrapped-style year
-        # recap is going for, so it's simply not computed here.
+        # Milestones and same_year_releases are the year view's own cards -- an
+        # all-time "first/last/100th film ever" isn't the same kind of fact a
+        # Wrapped-style year recap is going for, and "this year's releases" has
+        # no meaning at all without a year to scope it to, so neither is
+        # computed here.
         milestones = []
+        same_year_releases = None
     else:
         # See this function's own docstring for why all three are simply
         # absent in year mode -- the template's existing guards already hide
@@ -830,6 +928,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         recommendations = []
         insights = {'featured': [], 'stats': []}
         milestones = _milestones(diary)
+        same_year_releases = _same_year_releases(diary, year, films_watched_total, import_session)
 
     # First favorite with a resolved poster, used as the header banner's backdrop --
     # not necessarily favorites[0] itself, since an earlier favorite might not have
@@ -877,6 +976,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         'insights': insights,
         'recommendations': recommendations,
         'milestones': milestones,
+        'same_year_releases': same_year_releases,
         'chart_data': {
             'films_per_year': {
                 'labels': [str(row['y']) for row in films_per_year],
@@ -886,6 +986,18 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
                 'labels': [str(row['rating']) for row in rating_distribution],
                 'data': [row['count'] for row in rating_distribution],
             },
+            'rating_distribution_first_watch': {
+                'labels': [str(row['rating']) for row in rating_distribution_first_watch],
+                'data': [row['count'] for row in rating_distribution_first_watch],
+            },
+            # Plain scalars, not {labels, data} -- feeds the "Average rating"
+            # text next to the chart above, which the All watches/First watches
+            # toggle also updates (see that toggle's own JS handler).
+            'avg_rating': float(avg_rating) if avg_rating is not None else None,
+            'avg_rating_first_watch': float(avg_rating_first_watch) if avg_rating_first_watch is not None else None,
+            'same_year_rating_distribution': (
+                same_year_releases['rating_distribution'] if same_year_releases else {'labels': [], 'data': []}
+            ),
             'top_genres': {
                 'labels': [row['genres__name'] for row in top_genres],
                 'data': [row['count'] for row in top_genres],
