@@ -131,7 +131,10 @@
   </div>
 
   <nav class="section-nav">
-    <a href="#ratings" class="section-nav-link active" data-section="ratings">Ratings</a>
+    {% if year %}
+      <a href="#same-year-releases" class="section-nav-link active" data-section="same-year-releases">{{ year }} Releases</a>
+    {% endif %}
+    <a href="#ratings" class="section-nav-link{% if not year %} active{% endif %}" data-section="ratings">Ratings</a>
     <a href="#what-you-watch" class="section-nav-link" data-section="what-you-watch">What You Watch</a>
     <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
     <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
@@ -140,6 +143,45 @@
       <a href="#watchlist" class="section-nav-link" data-section="watchlist">Watchlist</a>
     {% endif %}
   </nav>
+
+  {% if year %}
+    <div class="jump-target" id="same-year-releases">
+    <h2 class="section-heading"><span class="section-heading-tick">{{ year }} Releases</span></h2>
+    <p class="muted">How caught up you were on {{ year }}'s new releases.</p>
+
+    {% if same_year_releases.count %}
+      <div class="card">
+        <h3>Ratings</h3>
+        <p class="muted">
+          <strong>{{ same_year_releases.count }} films ({{ same_year_releases.pct }}%)</strong> of everything you watched
+          &mdash; average <strong>{% if same_year_releases.avg_rating %}{{ same_year_releases.avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong>
+        </p>
+        <canvas id="sameYearRatingDistributionChart"></canvas>
+      </div>
+
+
+      <div class="card">
+        <h3>Your favorite films of {{ year }} </h3>
+        {% if same_year_releases.films %}
+          <div class="favs favs--six">
+            {% for film in same_year_releases.films %}
+              <div class="fav-card">
+                {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+                <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty-state">None rated yet</p>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="card">
+        <p class="empty-state">No {{ year }} releases logged yet.</p>
+      </div>
+    {% endif %}
+    </div>
+  {% endif %}
 
   <div class="jump-target" id="ratings">
   <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
@@ -209,7 +251,13 @@
 
   <div class="card">
     <h3>Rating distribution</h3>
-    <p class="muted">Average rating: <strong>{% if avg_rating %}{{ avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong></p>
+    {% if year %}
+      <div class="toggle-group" data-chart-toggle="ratingDistribution">
+        <button type="button" class="toggle-btn active" data-view="all">All watches</button>
+        <button type="button" class="toggle-btn" data-view="first-watch">First watches</button>
+      </div>
+    {% endif %}
+    <p class="muted">Average rating: <strong id="ratingDistributionAvg">{% if avg_rating %}{{ avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong></p>
     <canvas id="ratingDistributionChart"></canvas>
   </div>
 
@@ -677,11 +725,42 @@
       });
     {% endif %}
 
-    new Chart(document.getElementById('ratingDistributionChart'), {
+    const ratingDistributionChart = new Chart(document.getElementById('ratingDistributionChart'), {
       type: 'bar',
       data: { labels: chartData.rating_distribution.labels, datasets: [{ label: 'Films', data: chartData.rating_distribution.data, backgroundColor: '#40bcf4', hoverBackgroundColor: lighten('#40bcf4', 40), borderRadius: 4 }] },
       options: { scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } }, plugins: { legend: { display: false } } }
     });
+
+    {% if year %}
+      // All watches vs. first watches only -- unlike the Most watched/Highest
+      // rated toggles above (which swap between two different MEASURES, count
+      // vs. average, and relabel the axis accordingly), both states here are
+      // the same measure (a count of films per star rating), just filtered by
+      // rewatch status -- so this is a plain data swap, not a reuse of
+      // wireMostWatchedToggle.
+      document.querySelectorAll('[data-chart-toggle="ratingDistribution"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="ratingDistribution"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const firstWatch = btn.dataset.view === 'first-watch';
+          const source = firstWatch ? chartData.rating_distribution_first_watch : chartData.rating_distribution;
+          ratingDistributionChart.data.labels = source.labels;
+          ratingDistributionChart.data.datasets[0].data = source.data;
+          ratingDistributionChart.update();
+
+          const avg = firstWatch ? chartData.avg_rating_first_watch : chartData.avg_rating;
+          document.getElementById('ratingDistributionAvg').textContent = avg !== null ? avg.toFixed(2) + ' ★' : '—';
+        });
+      });
+    {% endif %}
+
+    {% if year and same_year_releases.count %}
+      new Chart(document.getElementById('sameYearRatingDistributionChart'), {
+        type: 'bar',
+        data: { labels: chartData.same_year_rating_distribution.labels, datasets: [{ label: 'Films', data: chartData.same_year_rating_distribution.data, backgroundColor: '#40bcf4', hoverBackgroundColor: lighten('#40bcf4', 40), borderRadius: 4 }] },
+        options: { scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } }, plugins: { legend: { display: false } } }
+      });
+    {% endif %}
 
     const genresChart = new Chart(document.getElementById('genresChart'), {
       type: 'bar',

@@ -21,7 +21,9 @@ from stats.services.dashboard import (
     MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR,
     MIN_COUNT_FOR_FAVORITE_DIRECTOR,
     MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR,
+    SAME_YEAR_RELEASES_GRID_CAP,
     _milestones,
+    _same_year_releases,
     build_dashboard_context,
 )
 from stats.services.person_filmography import build_person_filmography
@@ -347,6 +349,206 @@ class MilestonesTests(TestCase):
         milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
         self.assertIn('image.tmdb.org', milestones[0]['poster_url'])
         self.assertEqual(milestones[-1]['poster_url'], '')
+
+
+class SameYearReleasesTests(TestCase):
+    """_same_year_releases (year view, its own top-of-page section) -- how caught
+    up this person was on the selected year's own new releases: diary rows whose
+    movie also released in that same year."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+
+    def _log(self, uri, title, movie, date='2024-06-01', rating=None, rewatch=False):
+        return DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri=uri, title=title, year=movie.release_year if movie else None,
+            watched_date=date, movie=movie, rating=Decimal(str(rating)) if rating is not None else None,
+            rewatch=rewatch,
+        )
+
+    def test_only_films_released_in_the_selected_year_count(self):
+        this_year = Movie.objects.create(tmdb_id=7001, title='New Release', release_year=2024)
+        older = Movie.objects.create(tmdb_id=7002, title='Old Catalog Film', release_year=2010)
+        self._log('https://boxd.it/a', 'New Release', this_year, rating=4.0)
+        self._log('https://boxd.it/b', 'Old Catalog Film', older, rating=5.0)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=2, import_session=self.session)
+        self.assertEqual(result['count'], 1)
+        self.assertEqual([f['title'] for f in result['films']], ['New Release'])
+
+    def test_count_and_pct_are_distinct_films_not_diary_rows(self):
+        # Same "count every log" rule as every other rating-shaped year-view stat
+        # applies to avg_rating/rating_distribution/the grid, but count/pct are
+        # explicitly a distinct-film number (matching films_watched_total's own
+        # "Films watched" framing) -- a same-year rewatch shouldn't inflate "how
+        # many new releases did you get to" the way it deliberately does elsewhere.
+        movie = Movie.objects.create(tmdb_id=7003, title='Rewatched New Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Rewatched New Release', movie, date='2024-03-01', rating=3.0)
+        self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=4.0, rewatch=True)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(result['count'], 1)
+        self.assertEqual(result['pct'], 100)
+
+    def test_avg_rating_and_distribution_count_every_log_including_rewatches(self):
+        # Unlike count/pct above -- avg_rating/rating_distribution follow the
+        # same "a same-year rewatch's re-rating is its own data point" rule as
+        # every other rating-shaped year-view stat.
+        movie = Movie.objects.create(tmdb_id=7004, title='Rewatched New Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Rewatched New Release', movie, date='2024-03-01', rating=3.0)
+        self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=5.0, rewatch=True)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(result['avg_rating'], 4.0)
+        self.assertEqual(result['rating_distribution'], {'labels': ['3.0', '5.0'], 'data': [1, 1]})
+
+    def test_avg_rating_is_none_below_the_minimum_count(self):
+        movie = Movie.objects.create(tmdb_id=7005, title='Lone Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Lone Release', movie, rating=4.0)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertIsNone(result['avg_rating'])
+
+    def test_grid_rating_prefers_the_current_rating_over_a_stale_diary_value(self):
+        # Confirmed for real: a 2024 release logged at 4.5, but since edited down
+        # to 3.5 as the current Letterboxd rating without a new diary log --
+        # the grid should show the current 3.5, not the stale diary 4.5. A
+        # second, unedited film keeps this above MIN_COUNT_FOR_AVERAGE so
+        # avg_rating is meaningful to check too.
+        movie = Movie.objects.create(tmdb_id=7009, title='Edited Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Edited Release', movie, rating=4.5)
+        RatingEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/b', title='Edited Release', year=2024,
+            rating=Decimal('3.5'),
+        )
+        other_movie = Movie.objects.create(tmdb_id=7011, title='Unedited Release', release_year=2024)
+        self._log('https://boxd.it/c', 'Unedited Release', other_movie, rating=4.5)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=2, import_session=self.session)
+        edited = next(f for f in result['films'] if f['title'] == 'Edited Release')
+        self.assertEqual(edited['rating'], 3.5)
+        # avg_rating stays diary-based (4.5 + 4.5) / 2 -- confirms the fix is
+        # scoped to the grid, not the diary-only "how you rated things as you
+        # watched them" stats above it.
+        self.assertEqual(result['avg_rating'], Decimal('4.5'))
+
+    def test_grid_falls_back_to_the_diary_rating_when_ratings_csv_has_no_entry(self):
+        movie = Movie.objects.create(tmdb_id=7010, title='Never Edited Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Never Edited Release', movie, rating=4.5)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(result['films'][0]['rating'], 4.5)
+
+    def test_grid_dedupes_a_rewatched_release_to_its_best_rating(self):
+        movie = Movie.objects.create(
+            tmdb_id=7006, title='Rewatched New Release', release_year=2024, poster_path='/p.jpg',
+        )
+        self._log('https://boxd.it/a', 'Rewatched New Release', movie, date='2024-03-01', rating=3.0)
+        self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=4.5, rewatch=True)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(len(result['films']), 1)
+        self.assertEqual(float(result['films'][0]['rating']), 4.5)
+
+    def test_grid_sorted_highest_rated_first_and_capped(self):
+        for i in range(SAME_YEAR_RELEASES_GRID_CAP + 3):
+            movie = Movie.objects.create(tmdb_id=7100 + i, title=f'Film {i}', release_year=2024)
+            # Descending ratings as i increases would make Film 0 the highest --
+            # instead rate Film 0 lowest and the last one highest, so a bug that
+            # accidentally kept insertion order rather than sorting by rating
+            # would fail this assertion.
+            self._log(f'https://boxd.it/f{i}', f'Film {i}', movie, rating=1.0 + (i % 5) * 0.5)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=SAME_YEAR_RELEASES_GRID_CAP + 3, import_session=self.session)
+        self.assertEqual(len(result['films']), SAME_YEAR_RELEASES_GRID_CAP)
+        ratings = [float(f['rating']) for f in result['films']]
+        self.assertEqual(ratings, sorted(ratings, reverse=True))
+
+    def test_unrated_watches_are_excluded_from_avg_and_grid_but_not_count(self):
+        movie = Movie.objects.create(tmdb_id=7007, title='Unrated New Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Unrated New Release', movie, rating=None)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(result['count'], 1)
+        self.assertIsNone(result['avg_rating'])
+        self.assertEqual(result['films'], [])
+
+    def test_empty_when_nothing_from_that_year_was_watched(self):
+        older = Movie.objects.create(tmdb_id=7008, title='Old Catalog Film', release_year=2010)
+        self._log('https://boxd.it/a', 'Old Catalog Film', older, rating=5.0)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(result['count'], 0)
+        self.assertEqual(result['pct'], 0)
+        self.assertIsNone(result['avg_rating'])
+        self.assertEqual(result['films'], [])
+
+    def test_unresolved_films_never_match_since_they_have_no_release_year(self):
+        self._log('https://boxd.it/a', 'Unresolved Film', movie=None, rating=4.0)
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+
+        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        self.assertEqual(result['count'], 0)
+
+
+class RatingDistributionFirstWatchToggleTests(TestCase):
+    """build_dashboard_context's chart_data.rating_distribution_first_watch --
+    the "First watches" toggle state for the Ratings section's main
+    distribution chart, year mode only (see its own comment on why there's no
+    all-time equivalent: RatingEntry/ratings.csv has no rewatch concept)."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+
+    def _log(self, uri, title, rating, date='2024-06-01', rewatch=False):
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri=uri, title=title, year=2024,
+            watched_date=date, rating=Decimal(str(rating)), rewatch=rewatch,
+        )
+
+    def test_first_watch_distribution_excludes_rewatches(self):
+        self._log('https://boxd.it/a', 'Film A', 3.0, rewatch=False)
+        self._log('https://boxd.it/b', 'Film B', 4.0, rewatch=False)
+        self._log('https://boxd.it/c', 'Film C', 5.0, rewatch=True)
+
+        context = build_dashboard_context(self.session, year=2024)
+
+        self.assertEqual(context['chart_data']['rating_distribution'], {'labels': ['3.0', '4.0', '5.0'], 'data': [1, 1, 1]})
+        self.assertEqual(
+            context['chart_data']['rating_distribution_first_watch'], {'labels': ['3.0', '4.0'], 'data': [1, 1]},
+        )
+        # avg_rating (all 3) vs. avg_rating_first_watch (just the 2 first
+        # watches) -- the toggle's own "Average rating" text swap.
+        self.assertAlmostEqual(context['chart_data']['avg_rating'], 4.0)
+        self.assertAlmostEqual(context['chart_data']['avg_rating_first_watch'], 3.5)
+
+    def test_avg_rating_first_watch_is_none_below_the_minimum_count(self):
+        # Only 1 first-watch entry -- below MIN_COUNT_FOR_AVERAGE, same gate
+        # avg_rating itself already respects.
+        self._log('https://boxd.it/a', 'Film A', 3.0, rewatch=False)
+        self._log('https://boxd.it/b', 'Film B', 5.0, rewatch=True)
+
+        context = build_dashboard_context(self.session, year=2024)
+
+        self.assertIsNone(context['chart_data']['avg_rating_first_watch'])
+
+    def test_empty_in_all_time_mode(self):
+        self._log('https://boxd.it/a', 'Film A', 3.0, rewatch=False)
+
+        context = build_dashboard_context(self.session)
+
+        self.assertEqual(context['chart_data']['rating_distribution_first_watch'], {'labels': [], 'data': []})
+        self.assertIsNone(context['chart_data']['avg_rating_first_watch'])
 
 
 class DashboardNewStatsTests(TestCase):
