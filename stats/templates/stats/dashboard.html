@@ -138,7 +138,9 @@
     <a href="#what-you-watch" class="section-nav-link" data-section="what-you-watch">What You Watch</a>
     <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
     <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
-    <a href="#rewatches" class="section-nav-link" data-section="rewatches">Rewatches</a>
+    {% if not year %}
+      <a href="#rewatches" class="section-nav-link" data-section="rewatches">Rewatches</a>
+    {% endif %}
     {% if recommendations %}
       <a href="#watchlist" class="section-nav-link" data-section="watchlist">Watchlist</a>
     {% endif %}
@@ -496,6 +498,34 @@
     </div>
   {% endif %}
 
+  {% if year %}
+    {% comment %}
+    Rewatches only gets its own section in all-time mode, where it has two
+    cards (Most rewatched films + Most rewatched directors, below). Year mode
+    drops the directors card (a director credited on one rewatched film
+    doesn't mean much on its own for a single year) and folds the sole
+    remaining card in here instead, renamed to match this section's general
+    "how you watch" framing rather than a rewatch-specific one. Placed right
+    after Milestones -- both are "which films stood out" cards, before Viewing
+    calendar/Most used tags' "how you watch" ones.
+    {% endcomment %}
+    <div class="card">
+      <h3>Most watched films</h3>
+      {% if rewatch.most_rewatched_films %}
+        <div class="favs favs--six">
+          {% for film in rewatch.most_rewatched_films %}
+            <div class="fav-card">
+              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+              <p class="muted">{{ film.watch_count }}×</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No rewatches yet</p>
+      {% endif %}
+    </div>
+  {% endif %}
+
   <div class="card">
     <h3>Viewing calendar</h3>
     <div class="grid grid--calendar-stats">
@@ -556,9 +586,10 @@
   </div>
   </div>
 
+  {% if not year %}
   <div class="jump-target" id="rewatches">
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Rewatches</span></h2>
-  <p class="muted">Your most rewatched films and directors{% if year %} in {{ year }}{% endif %}.</p>
+  <p class="muted">Your most rewatched films and directors.</p>
   <div class="card">
     <h3>Most rewatched films</h3>
     {% if rewatch.most_rewatched_films %}
@@ -592,8 +623,9 @@
     {% endif %}
   </div>
   </div>
+  {% endif %}
 
-  {% include 'stats/_person_drill_modal.html' with session_id=import_session.id %}
+  {% include 'stats/_person_drill_modal.html' with session_id=import_session.id year=year %}
 
   {% if recommendations %}
   <div class="jump-target" id="watchlist">

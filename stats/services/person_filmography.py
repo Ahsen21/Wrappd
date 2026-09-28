@@ -9,18 +9,28 @@ than re-implementing them a third time."""
 from django.db.models import Max
 
 from imports.models import DiaryEntry, RatingEntry
-from stats.services.dashboard import _cameo_credit_ids, _watched_movies
+from stats.services.dashboard import _cameo_credit_ids, _deduped_diary_films, _watched_movies
 from stats.services.filters import exclude_tv_shows
 from tmdb.models import Credit
 
 
-def build_person_filmography(import_session, person, role) -> dict:
+def build_person_filmography(import_session, person, role, year=None) -> dict:
     """Every film this session has watched that `person` directed (role='director')
     or acted in, non-cameo (role='actor') -- with whatever rating info this session
     has for it. A film only watched via watched.csv (no rating, no diary log) still
     appears, with rating=None, matching the same _watched_movies-based count already
     shown next to this person's name in Most Watched Directors/Actors -- excluding
-    those here would silently show fewer films than that count implied."""
+    those here would silently show fewer films than that count implied.
+
+    year=<int> scopes this to a single calendar year, matching the dashboard's own
+    year view -- every Favorite Directors/Actors (and Most Rewatched Directors)
+    card this modal is triggered from already shows year-scoped, distinct-film
+    counts there (see build_dashboard_context's own docstring on
+    _deduped_diary_films), so its drill-down modal has to agree with that count
+    rather than silently listing this person's films from every year."""
+    if year is not None:
+        return _build_person_filmography_year(import_session, person, role, year)
+
     diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session))
     watched_movies = _watched_movies(import_session, diary, rated)
@@ -64,6 +74,41 @@ def build_person_filmography(import_session, person, role) -> dict:
         })
 
     # Highest rated first, unrated last, title as the tiebreak.
+    films.sort(key=lambda f: (f['rating'] is None, -float(f['rating'] or 0), f['title']))
+
+    return {'person_name': person.name, 'role': role, 'films': films}
+
+
+def _build_person_filmography_year(import_session, person, role, year) -> dict:
+    """year-scoped equivalent of build_person_filmography above -- same
+    _deduped_diary_films this person's own dashboard card was built from (one
+    entry per distinct film watched that year, most recent watch wins, current
+    ratings.csv rating preferred), not a fresh watched_movies/rated query, so a
+    same-year rewatch can't make a film (or its rating) disagree with what the
+    card that opened this modal already showed."""
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session, watched_date__year=year))
+    films_data = _deduped_diary_films(diary, import_session)
+
+    if role == 'director':
+        person_films = [f for f in films_data if f['movie'] and person in f['movie'].directors.all()]
+    else:
+        movie_ids = {f['movie'].tmdb_id for f in films_data if f['movie']}
+        cameo_ids = _cameo_credit_ids(movie_ids)
+        non_cameo_movie_ids = set(
+            Credit.objects.filter(person=person, movie_id__in=movie_ids)
+            .exclude(id__in=cameo_ids).values_list('movie_id', flat=True)
+        )
+        person_films = [f for f in films_data if f['movie'] and f['movie'].tmdb_id in non_cameo_movie_ids]
+
+    films = [
+        {
+            'title': f['movie'].title,
+            'year': f['movie'].release_year,
+            'poster_url': f['movie'].poster_url,
+            'rating': str(f['rating']) if f['rating'] is not None else None,
+        }
+        for f in person_films
+    ]
     films.sort(key=lambda f: (f['rating'] is None, -float(f['rating'] or 0), f['title']))
 
     return {'person_name': person.name, 'role': role, 'films': films}
