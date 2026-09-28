@@ -252,6 +252,28 @@ def _avg_or_none(values) -> float | None:
     return float(sum(values) / len(values))
 
 
+# Every half-star rating Letterboxd allows -- the x-axis every rating-distribution
+# bar chart on this page (all-time/year Rating distribution + its First watches
+# toggle, {year} Releases' own chart) shares. Same values as compare.py's own
+# RATING_BUCKETS (not imported -- see that file's own comment on why it
+# reimplements dashboard.py's constants rather than importing them).
+RATING_BUCKETS = [Decimal(v) for v in ('0.5', '1.0', '1.5', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0')]
+
+
+def _rating_distribution_chart(rated_qs) -> dict:
+    """A rating-distribution bar chart's {labels, data}, zero-filled across every
+    RATING_BUCKETS value rather than just the ratings that happen to have a film
+    in them -- a year (or grid) with no 0.5s shouldn't silently compress the
+    x-axis down to whatever ratings it does have, the same "gap-free axis"
+    reasoning _release_year_distribution's own continuous-year-range fill
+    already applies. Empty rated_qs still returns every bucket, all zero."""
+    counts_by_rating = {row['rating']: row['count'] for row in rated_qs.values('rating').annotate(count=Count('id'))}
+    return {
+        'labels': [str(bucket) for bucket in RATING_BUCKETS],
+        'data': [counts_by_rating.get(bucket, 0) for bucket in RATING_BUCKETS],
+    }
+
+
 def _tmdb_image_url(path: str, size: str) -> str:
     """Builds a TMDB image URL from a raw path string, e.g. Movie.poster_path or
     Person.profile_path pulled via .values()/Min() aggregation rather than a model
@@ -698,7 +720,7 @@ def _same_year_releases(diary, year, films_watched_total, deduped_films) -> dict
     rated_same_year = same_year.exclude(rating__isnull=True)
     rated_count = rated_same_year.count()
     avg_rating = rated_same_year.aggregate(avg=Avg('rating'))['avg'] if rated_count >= MIN_COUNT_FOR_AVERAGE else None
-    rating_distribution = list(rated_same_year.values('rating').annotate(count=Count('id')).order_by('rating'))
+    rating_distribution = _rating_distribution_chart(rated_same_year)
 
     same_year_films = [f for f in deduped_films if f['movie'] and f['movie'].release_year == year]
     count = len(same_year_films)
@@ -718,10 +740,7 @@ def _same_year_releases(diary, year, films_watched_total, deduped_films) -> dict
         'count': count,
         'pct': pct,
         'avg_rating': avg_rating,
-        'rating_distribution': {
-            'labels': [str(row['rating']) for row in rating_distribution],
-            'data': [row['count'] for row in rating_distribution],
-        },
+        'rating_distribution': rating_distribution,
         'films': films,
     }
 
@@ -842,21 +861,17 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
     # rated diary rows in year mode -- one row per distinct rated film either way
     # (a same-year rewatch re-rated adds its own bar entry in year mode, per this
     # function's own docstring on rewatch weighting).
-    rating_distribution = list(
-        rated.values('rating').annotate(count=Count('id')).order_by('rating')
-    )
+    rating_distribution = _rating_distribution_chart(rated)
     # "First watches" toggle for the chart above (and its own "Average rating"
     # line), year mode only -- rated is RatingEntry (ratings.csv) in all-time
     # mode, which has one row per film and no rewatch concept at all, so
     # there's nothing to toggle there.
-    rating_distribution_first_watch = []
+    rating_distribution_first_watch = {'labels': [], 'data': []}
     avg_rating_first_watch = None
     if year is not None:
         first_watch_qs = rated.filter(rewatch=False)
         first_watch_stats = first_watch_qs.aggregate(count=Count('id'), avg=Avg('rating'))
-        rating_distribution_first_watch = list(
-            first_watch_qs.values('rating').annotate(count=Count('id')).order_by('rating')
-        )
+        rating_distribution_first_watch = _rating_distribution_chart(first_watch_qs)
         if first_watch_stats['count'] >= MIN_COUNT_FOR_AVERAGE:
             avg_rating_first_watch = first_watch_stats['avg']
 
@@ -1075,14 +1090,8 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
                 'labels': [str(row['y']) for row in films_per_year],
                 'data': [row['count'] for row in films_per_year],
             },
-            'rating_distribution': {
-                'labels': [str(row['rating']) for row in rating_distribution],
-                'data': [row['count'] for row in rating_distribution],
-            },
-            'rating_distribution_first_watch': {
-                'labels': [str(row['rating']) for row in rating_distribution_first_watch],
-                'data': [row['count'] for row in rating_distribution_first_watch],
-            },
+            'rating_distribution': rating_distribution,
+            'rating_distribution_first_watch': rating_distribution_first_watch,
             # Plain scalars, not {labels, data} -- feeds the "Average rating"
             # text next to the chart above, which the All watches/First watches
             # toggle also updates (see that toggle's own JS handler).
@@ -2924,7 +2933,14 @@ def _viewing_calendar(diary, year=None) -> dict:
         'weekday_distribution': weekday_distribution,
         'longest_streak_days': longest_streak,
         'longest_gap_days': longest_gap,
-        'heatmap': _viewing_heatmap(date_counts),
+        # Year view only -- the all-time page used to let you browse any past
+        # year's own calendar grid here, but that's what switching to that
+        # year's own Wrapped-style page is for now, so it's simply absent
+        # (empty years list) in all-time mode. The template's existing
+        # {% if calendar.heatmap.years %} guard already hides the whole
+        # "Activity by year" block for an empty one, same as every other
+        # year-view-only card on this page.
+        'heatmap': _viewing_heatmap(date_counts) if year is not None else {'years': [], 'default_year': None, 'data': {}},
         'days_watched_count': days_watched_count,
         'days_elapsed': days_elapsed,
         'days_watched_pct': days_watched_pct,
