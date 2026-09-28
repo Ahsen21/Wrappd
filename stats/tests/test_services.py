@@ -2290,6 +2290,97 @@ class BuildCompareContextTests(TestCase):
         )
 
 
+class CompareWatchingHabitsTests(TestCase):
+    """build_compare_context's Watching Habits section -- films per year, most
+    watched films, and the viewing-calendar comparison stats, all sourced from
+    diary.csv per session (see _films_per_year/_most_watched_films/
+    _viewing_habits' own docstrings)."""
+
+    def setUp(self):
+        self.session_a = ImportSession.objects.create(display_name='Alex')
+        self.session_b = ImportSession.objects.create(display_name='Sam')
+
+    def _log(self, session, uri, title, watched_date, year=2020, rewatch=False, movie=None):
+        return DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri=uri, title=title, year=year,
+            watched_date=watched_date, rewatch=rewatch, movie=movie,
+        )
+
+    def test_films_per_year_zero_fills_the_union_of_both_sessions_years(self):
+        self._log(self.session_a, 'https://boxd.it/a1', 'Film A1', '2023-01-01')
+        self._log(self.session_a, 'https://boxd.it/a2', 'Film A2', '2024-01-01')
+        self._log(self.session_b, 'https://boxd.it/b1', 'Film B1', '2025-01-01')
+
+        chart = build_compare_context(self.session_a, self.session_b)['chart_data']['films_per_year']
+        self.assertEqual(chart['labels'], ['2023', '2024', '2025'])
+        self.assertEqual(chart['data_a'], [1, 1, 0])
+        self.assertEqual(chart['data_b'], [0, 0, 1])
+
+    def test_most_watched_films_is_independent_per_session_not_shared(self):
+        # A rewatches "Solo A", B rewatches "Solo B" -- neither should leak into
+        # the other's list; there's no Shared view for this card (see
+        # _most_watched_films' own comment on why).
+        self._log(self.session_a, 'https://boxd.it/a1', 'Solo A', '2024-01-01')
+        self._log(self.session_a, 'https://boxd.it/a2', 'Solo A', '2024-02-01', rewatch=True)
+        self._log(self.session_b, 'https://boxd.it/b1', 'Solo B', '2024-01-01')
+        self._log(self.session_b, 'https://boxd.it/b2', 'Solo B', '2024-02-01', rewatch=True)
+        self._log(self.session_b, 'https://boxd.it/b3', 'Solo B', '2024-03-01', rewatch=True)
+
+        context = build_compare_context(self.session_a, self.session_b)
+        self.assertEqual([f['title'] for f in context['most_watched_films_a']], ['Solo A'])
+        self.assertEqual(context['most_watched_films_a'][0]['watch_count'], 2)
+        self.assertEqual([f['title'] for f in context['most_watched_films_b']], ['Solo B'])
+        self.assertEqual(context['most_watched_films_b'][0]['watch_count'], 3)
+
+    def test_most_watched_films_excludes_films_watched_only_once(self):
+        self._log(self.session_a, 'https://boxd.it/a1', 'Once Only', '2024-01-01')
+        context = build_compare_context(self.session_a, self.session_b)
+        self.assertEqual(context['most_watched_films_a'], [])
+
+    def test_viewing_habits_busiest_month_and_streak_per_session(self):
+        # A: 3 logs in Jan (a 2-day streak, then a gap to the 10th).
+        self._log(self.session_a, 'https://boxd.it/a1', 'A1', '2024-01-01')
+        self._log(self.session_a, 'https://boxd.it/a2', 'A2', '2024-01-02')
+        self._log(self.session_a, 'https://boxd.it/a3', 'A3', '2024-01-10')
+        # B: a single log.
+        self._log(self.session_b, 'https://boxd.it/b1', 'B1', '2024-02-01')
+
+        context = build_compare_context(self.session_a, self.session_b)
+        self.assertEqual(context['viewing_habits_a']['busiest_month_count'], 3)
+        self.assertEqual(context['viewing_habits_a']['longest_streak_days'], 2)
+        self.assertEqual(context['viewing_habits_a']['longest_gap_days'], 7)
+        self.assertEqual(context['viewing_habits_b']['busiest_month_count'], 1)
+        self.assertEqual(context['viewing_habits_b']['longest_streak_days'], 1)
+        self.assertEqual(context['viewing_habits_b']['longest_gap_days'], 0)
+
+    def test_weekday_distribution_chart_data(self):
+        # 2024-01-01 and 2024-01-08 are both Mondays.
+        self._log(self.session_a, 'https://boxd.it/a1', 'A1', '2024-01-01')
+        self._log(self.session_b, 'https://boxd.it/b1', 'B1', '2024-01-01')
+        self._log(self.session_b, 'https://boxd.it/b2', 'B2', '2024-01-08')
+
+        chart = build_compare_context(self.session_a, self.session_b)['chart_data']['weekday_distribution']
+        self.assertEqual(chart['labels'], ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])
+        monday_index = chart['labels'].index('Mon')
+        self.assertEqual(chart['data_a'][monday_index], 1)
+        self.assertEqual(chart['data_b'][monday_index], 2)
+        # count_a/count_b feed the chart's own Films/Percent toggle (client-side
+        # derived, see toPercent in compare.html) -- each session's own total
+        # logs, not the other's, so a person who logs far more overall doesn't
+        # just visually dominate every day.
+        self.assertEqual(chart['count_a'], 1)
+        self.assertEqual(chart['count_b'], 2)
+
+    def test_exclude_shorts_applies_to_watching_habits_too(self):
+        short_movie = Movie.objects.create(tmdb_id=9701, title='Short Film', runtime_minutes=40)
+        self._log(self.session_a, 'https://boxd.it/short1', 'Short Film', '2024-01-01', movie=short_movie)
+        self._log(self.session_a, 'https://boxd.it/short2', 'Short Film', '2024-02-01', rewatch=True, movie=short_movie)
+
+        context = build_compare_context(self.session_a, self.session_b, exclude_shorts=True)
+        self.assertEqual(context['most_watched_films_a'], [])
+        self.assertEqual(context['chart_data']['films_per_year']['data_a'], [])
+
+
 class AlignmentBlurbTests(TestCase):
     """_alignment_blurb -- the {overlap_clause, connector, agreement_clause}
     pieces behind the hero's Overall alignment row, built from two

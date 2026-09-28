@@ -85,6 +85,7 @@
     <a href="#ratings" class="section-nav-link active" data-section="ratings">Ratings</a>
     <a href="#whos-seen-what" class="section-nav-link" data-section="whos-seen-what">Who's Seen What</a>
     <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
+    <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
     <a href="#watching-together" class="section-nav-link" data-section="watching-together">Watching Together</a>
   </nav>
 
@@ -315,6 +316,88 @@
       {% else %}
         <p class="empty-state">No shared favorites yet</p>
       {% endif %}
+    </div>
+  </div>
+  </div>
+
+  <div class="jump-target" id="watching-habits">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watching Habits</span></h2>
+  <p class="muted">How much, how often, and when you each watch.</p>
+
+  <div class="card">
+    <h3>Films per year</h3>
+    <canvas id="filmsPerYearComparisonChart"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Most watched films</h3>
+    <div class="two-col two-col--divided">
+      <div>
+        <h4>{{ session_a.display_name|default:"Person A" }}</h4>
+        {% if most_watched_films_a %}
+          <div class="favs favs--four">
+            {% for film in most_watched_films_a %}
+              <div class="fav-card">
+                {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+                <p class="a-color">{{ film.watch_count }}×</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty-state">No rewatches yet</p>
+        {% endif %}
+      </div>
+      <div>
+        <h4>{{ session_b.display_name|default:"Person B" }}</h4>
+        {% if most_watched_films_b %}
+          <div class="favs favs--four">
+            {% for film in most_watched_films_b %}
+              <div class="fav-card">
+                {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+                <p class="b-color">{{ film.watch_count }}×</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty-state">No rewatches yet</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Viewing calendar</h3>
+    <div class="color-key">
+      <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
+      <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
+    </div>
+    <div class="grid grid--calendar-stats">
+      <div class="stat">
+        <div class="value stat-pair-value">
+          <span class="a-color">{{ viewing_habits_a.busiest_month_count }}</span><span class="stat-pair-separator">|</span><span class="b-color">{{ viewing_habits_b.busiest_month_count }}</span>
+        </div>
+        <div class="label">Busiest month (films)</div>
+      </div>
+      <div class="stat">
+        <div class="value stat-pair-value">
+          <span class="a-color">{{ viewing_habits_a.longest_streak_days }}</span><span class="stat-pair-separator">|</span><span class="b-color">{{ viewing_habits_b.longest_streak_days }}</span>
+        </div>
+        <div class="label">Longest streak (days)</div>
+      </div>
+      <div class="stat">
+        <div class="value stat-pair-value">
+          <span class="a-color">{{ viewing_habits_a.longest_gap_days }}</span><span class="stat-pair-separator">|</span><span class="b-color">{{ viewing_habits_b.longest_gap_days }}</span>
+        </div>
+        <div class="label">Longest dry spell (days)</div>
+      </div>
+    </div>
+    <h4>Day of week</h4>
+    <div class="toggle-group" data-chart-toggle="weekdayComparison">
+      <button type="button" class="toggle-btn active" data-view="count">Films</button>
+      <button type="button" class="toggle-btn" data-view="percent">Percent</button>
+    </div>
+    <div class="weekday-chart">
+      <canvas id="weekdayComparisonChart"></canvas>
     </div>
   </div>
   </div>
@@ -561,6 +644,103 @@
         ratingCurveChart.update();
       });
     });
+
+    // Watching Habits' films-per-year and weekday-distribution charts -- same
+    // blue/orange grouped-bar shape as ratingCurveChart above, no toggle (unlike
+    // that chart's count/percent one): both x-axes are already directly
+    // comparable between the two people (a shared, zero-filled year range for
+    // films-per-year; the fixed 7-day week for weekday), so there's no second
+    // view to swap to.
+    if (document.getElementById('filmsPerYearComparisonChart')) {
+      new Chart(document.getElementById('filmsPerYearComparisonChart'), {
+        type: 'bar',
+        data: {
+          labels: chartData.films_per_year.labels,
+          datasets: [
+            {
+              label: chartData.films_per_year.label_a,
+              data: chartData.films_per_year.data_a,
+              backgroundColor: '#40bcf4',
+              hoverBackgroundColor: lighten('#40bcf4', 40),
+              borderRadius: 4,
+            },
+            {
+              label: chartData.films_per_year.label_b,
+              data: chartData.films_per_year.data_b,
+              backgroundColor: '#ff8000',
+              hoverBackgroundColor: lighten('#ff8000', 40),
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          scales: {
+            x: { grid: { color: gridColor } },
+            y: { grid: { color: gridColor }, beginAtZero: true },
+          },
+          plugins: { legend: { display: true } },
+        },
+      });
+    }
+
+    if (document.getElementById('weekdayComparisonChart')) {
+      const weekdayComparisonChart = new Chart(document.getElementById('weekdayComparisonChart'), {
+        type: 'bar',
+        data: {
+          labels: chartData.weekday_distribution.labels,
+          datasets: [
+            {
+              label: chartData.weekday_distribution.label_a,
+              data: chartData.weekday_distribution.data_a,
+              backgroundColor: '#40bcf4',
+              hoverBackgroundColor: lighten('#40bcf4', 40),
+              borderRadius: 4,
+            },
+            {
+              label: chartData.weekday_distribution.label_b,
+              data: chartData.weekday_distribution.data_b,
+              backgroundColor: '#ff8000',
+              hoverBackgroundColor: lighten('#ff8000', 40),
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          // Needed here (unlike filmsPerYearComparisonChart just above, a bare
+          // canvas with no wrapper) because this canvas sits in .weekday-chart,
+          // which forces a fixed height via CSS -- without this, Chart.js's
+          // default aspect-ratio sizing fights that forced height and renders
+          // into a small fallback box instead of filling it. Same fix
+          // Director's Cut's own weekdayChart already needed for the identical
+          // wrapper (see dashboard.html).
+          maintainAspectRatio: false,
+          scales: {
+            x: { grid: { color: gridColor } },
+            y: { grid: { color: gridColor }, beginAtZero: true, ticks: {} },
+          },
+          plugins: { legend: { display: true } },
+        },
+      });
+
+      // Films/Percent toggle -- same "count vs. client-side count/total" shape
+      // as ratingCurveChart's own toggle above (see toPercent), so a person who
+      // logs far more overall doesn't just visually dominate every day.
+      document.querySelectorAll('[data-chart-toggle="weekdayComparison"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="weekdayComparison"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const percent = btn.dataset.view === 'percent';
+          weekdayComparisonChart.data.datasets[0].data = percent
+            ? toPercent(chartData.weekday_distribution.data_a, chartData.weekday_distribution.count_a)
+            : chartData.weekday_distribution.data_a;
+          weekdayComparisonChart.data.datasets[1].data = percent
+            ? toPercent(chartData.weekday_distribution.data_b, chartData.weekday_distribution.count_b)
+            : chartData.weekday_distribution.data_b;
+          weekdayComparisonChart.options.scales.y.ticks.callback = percent ? function (value) { return value + '%'; } : undefined;
+          weekdayComparisonChart.update();
+        });
+      });
+    }
 
     // Horizontal grouped bar -- genres on the y-axis (indexAxis: 'y', same
     // orientation as Director's Cut's own genres chart, since a genre name reads

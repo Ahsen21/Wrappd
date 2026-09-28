@@ -694,6 +694,15 @@ a { color: var(--accent-2); }
 }
 .stat .value { font-size: 2rem; font-weight: 700; color: var(--accent); }
 .stat .label { font-size: 0.85rem; }
+/* Double Feature's Viewing calendar comparison -- two colored numbers side by
+   side ("26 | 31") in one .stat (a-color/b-color, via .grid--calendar-stats)
+   instead of the usual single value, so each tile shows both people's own
+   count without needing a .two-col layout for just 3 small numbers. Shrunk
+   from .stat .value's own 2rem so the pair (plus the separator) fits a single
+   line at this tile's width -- same reasoning as .grid--rating-avg's own
+   smaller value size for its 2-stat case. */
+.stat .value.stat-pair-value { font-size: 1.5rem; }
+.stat-pair-separator { color: var(--muted); font-weight: 400; margin: 0 0.35em; }
 
 h1, h2, h3, h4 { font-weight: 700; }
 

@@ -9,6 +9,7 @@ from decimal import Decimal
 from itertools import groupby
 
 from django.db.models import Avg, Count, Min
+from django.db.models.functions import ExtractYear
 
 from imports.models import DiaryEntry, RatingEntry, WatchedEntry, WatchlistEntry
 from stats.services.filters import SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short_entries, exclude_tv_shows
@@ -85,6 +86,12 @@ CAMEO_RELATIVE_BILLING_THRESHOLD = 0.4
 # compares/hashes equal (fine for dict lookups) but formats inconsistently via str()
 # (not fine for the chart's x-axis labels, which need uniform '0.5'/'1.0'/... text).
 RATING_BUCKETS = [Decimal(v) for v in ('0.5', '1.0', '1.5', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0')]
+# Short weekday labels for the Watching Habits' weekday-distribution chart, indexed
+# 1-7 to match Django's ExtractWeekDay/dashboard.py's own WEEKDAY_NAMES convention
+# (1=Sunday ... 7=Saturday) -- reimplemented locally per this file's own convention
+# (see _tmdb_image_url's own comment). Short forms rather than full names (dashboard.py's
+# own WEEKDAY_NAMES), since this is a chart axis label, not table-row prose.
+WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 
 def _film_map(import_session, exclude_shorts=False):
@@ -304,6 +311,112 @@ def _rating_curve(import_session, exclude_shorts=False) -> dict:
     avg = float(rated.aggregate(avg=Avg('rating'))['avg']) if rated_count >= MIN_COUNT_FOR_AVERAGE else None
 
     return {'counts': counts, 'avg': avg, 'count': rated_count}
+
+
+def _films_per_year(import_session, exclude_shorts=False) -> dict:
+    """year -> diary.csv log count for this session. Returns the raw per-year
+    counts, not zero-filled -- unlike _rating_curve's fixed RATING_BUCKETS scale,
+    the years worth showing depend on both sessions' own diary history, so
+    build_compare_context unions the two sessions' own year sets and zero-fills
+    against that shared range itself, the same split Director's Cut's own
+    films_per_year leaves to its template (a continuous range there too, just
+    single-session so nothing needs unioning first). exclude_shorts -- see
+    _film_map's own comment."""
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        diary = exclude_short_entries(diary)
+    rows = diary.annotate(y=ExtractYear('watched_date')).values('y').annotate(count=Count('id'))
+    return {row['y']: row['count'] for row in rows}
+
+
+def _most_watched_films(import_session, cap, exclude_shorts=False) -> list:
+    """This session's own most-rewatched films (diary.csv, watch_count > 1) --
+    same definition as Director's Cut's own most_rewatched_films, reimplemented
+    locally per this file's own convention. Independent per session, not
+    intersected -- unlike Favorite directors/actors' own Side by side/Shared
+    split, "films you've each rewatched" doesn't have an obviously meaningful
+    shared reading (rewatching the exact same film the same number of times
+    each is a coincidence, not a taste signal), so there's no Shared view here.
+    Sorted by watch_count descending, (title, year) as the tiebreak for
+    determinism -- diary is a QuerySet with unspecified DB ordering otherwise.
+    exclude_shorts -- see _film_map's own comment."""
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        diary = exclude_short_entries(diary)
+    films = list(
+        diary.values('title', 'year')
+        .annotate(watch_count=Count('id'), movie_id=Min('movie_id'))
+        .filter(watch_count__gt=1)
+    )
+    films.sort(key=lambda f: (-f['watch_count'], f['title'], f['year']))
+    return films[:cap]
+
+
+def _streak_and_gap(dates: list) -> tuple:
+    """Given a sorted list of distinct watch dates, return (longest consecutive-day
+    streak, longest gap between watches) in days. Mirrors dashboard.py's own
+    _streak_and_gap exactly, reimplemented locally per this file's own
+    convention."""
+    if not dates:
+        return 0, 0
+
+    longest_streak = current_streak = 1
+    longest_gap = 0
+
+    for prev, curr in zip(dates, dates[1:]):
+        gap = (curr - prev).days
+        if gap == 1:
+            current_streak += 1
+        else:
+            longest_streak = max(longest_streak, current_streak)
+            current_streak = 1
+        longest_gap = max(longest_gap, gap - 1)
+
+    longest_streak = max(longest_streak, current_streak)
+    return longest_streak, longest_gap
+
+
+def _viewing_habits(import_session, exclude_shorts=False) -> dict:
+    """Busiest month (film count only, not which month -- the two sessions'
+    busiest months rarely coincide, so naming both would need twice the label
+    space for a fact that's mostly interesting as a number), longest streak,
+    longest dry spell, and a weekday distribution (indexed 1-7 against
+    WEEKDAY_LABELS, Django's ExtractWeekDay convention) -- the two-session
+    comparison version of Director's Cut's own _viewing_calendar. Only the
+    non-heatmap stats: a full two-person calendar heatmap would be a much
+    heavier feature (two grids, or an awkward merged one) for what "Same day
+    logs" above already covers from the angle that matters for a comparison
+    page -- whether your calendars overlap, not each one's own shape.
+    Reimplemented locally per this file's own convention. exclude_shorts --
+    see _film_map's own comment."""
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    if exclude_shorts:
+        diary = exclude_short_entries(diary)
+    watched_dates = list(diary.values_list('watched_date', flat=True))
+
+    month_counts = defaultdict(int)
+    weekday_counts = defaultdict(int)
+    for watched_date in watched_dates:
+        month_counts[watched_date.replace(day=1)] += 1
+        # Match WEEKDAY_LABELS' indexing -- see dashboard.py's own identical
+        # conversion comment for why (Python's date.weekday() uses a different
+        # convention than Django's ExtractWeekDay).
+        weekday_counts[((watched_date.weekday() + 1) % 7) + 1] += 1
+
+    busiest_month_count = max(month_counts.values()) if month_counts else 0
+    longest_streak, longest_gap = _streak_and_gap(sorted(set(watched_dates)))
+
+    return {
+        'busiest_month_count': busiest_month_count,
+        'longest_streak_days': longest_streak,
+        'longest_gap_days': longest_gap,
+        'weekday_counts': [weekday_counts[w] for w in range(1, 8)],
+        # Total logs backing weekday_counts -- feeds the weekday chart's own
+        # Films/Percent toggle (same pattern as _rating_curve's count, see
+        # chart_data.weekday_distribution below), so a person who logs far more
+        # overall doesn't just visually dominate every day.
+        'total_count': len(watched_dates),
+    }
 
 
 def _resolve_posters(movies_by_id, *film_lists):
@@ -1135,6 +1248,20 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     curve_a = _rating_curve(session_a, exclude_shorts)
     curve_b = _rating_curve(session_b, exclude_shorts)
 
+    # Watching Habits: films per year (zero-filled across the union of both
+    # sessions' own diary years -- see _films_per_year's own comment), most
+    # rewatched films (independent per session, no Shared view -- see
+    # _most_watched_films' own comment), and the non-heatmap viewing-calendar
+    # stats (see _viewing_habits' own comment on why there's no two-person
+    # heatmap here).
+    films_per_year_a = _films_per_year(session_a, exclude_shorts)
+    films_per_year_b = _films_per_year(session_b, exclude_shorts)
+    films_per_year_years = sorted(set(films_per_year_a) | set(films_per_year_b))
+    most_watched_films_a = _most_watched_films(session_a, GRID_DISPLAY_CAP_NARROW, exclude_shorts)
+    most_watched_films_b = _most_watched_films(session_b, GRID_DISPLAY_CAP_NARROW, exclude_shorts)
+    viewing_habits_a = _viewing_habits(session_a, exclude_shorts)
+    viewing_habits_b = _viewing_habits(session_b, exclude_shorts)
+
     # Each session's director/actor averages computed once and reused by both
     # _top_people (this session alone) and _shared_people (the intersection) --
     # avoids querying the same session's stats twice over.
@@ -1173,13 +1300,15 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     # top_unseen_a/b, watchlist_matches_ranked (the already-capped display list --
     # nothing beyond it ever renders, so it doesn't need posters resolved onto the
     # wider watchlist_eligible pool too), the same-day films (and therefore
-    # same_day_logs_all's nested films_a/films_b), and same_day_exact_matches_all.
+    # same_day_logs_all's nested films_a/films_b), same_day_exact_matches_all, and
+    # Watching Habits' most_watched_films_a/b.
     movie_ids = {
         f['movie_id']
         for f in (
             shared_films
             + top_unseen_a_all + top_unseen_b_all + watchlist_matches_ranked
             + same_day_films_a + same_day_films_b + same_day_exact_matches_all
+            + most_watched_films_a + most_watched_films_b
         )
         if f.get('movie_id')
     }
@@ -1188,6 +1317,7 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         movies_by_id, shared_films,
         top_unseen_a_all, top_unseen_b_all, watchlist_matches_ranked,
         same_day_films_a, same_day_films_b, same_day_exact_matches_all,
+        most_watched_films_a, most_watched_films_b,
     )
 
     overlap_pct = round(len(shared_keys) / union_size * 100, 1) if union_size else 0
@@ -1267,6 +1397,10 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'top_directors_b': top_directors_b,
         'top_actors_a': top_actors_a,
         'top_actors_b': top_actors_b,
+        'most_watched_films_a': most_watched_films_a,
+        'most_watched_films_b': most_watched_films_b,
+        'viewing_habits_a': viewing_habits_a,
+        'viewing_habits_b': viewing_habits_b,
         'genre_agreement': genre_agreement,
         'watchlist_matches': watchlist_matches_ranked,
         'watchlist_matches_total': len(watchlist_eligible),
@@ -1347,6 +1481,35 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
             # genre_agreement above.
             'same_day_heatmap': {
                 **same_day_heatmap,
+                'label_a': session_a.display_name or 'Person A',
+                'label_b': session_b.display_name or 'Person B',
+            },
+            # Watching Habits' films-per-year chart -- same {labels, data_a,
+            # data_b} grouped-bar shape as rating_curve/genre_agreement above,
+            # zero-filled across films_per_year_years (the union of both
+            # sessions' own diary years, computed above) rather than each
+            # session's own sparse year set, so a year either of them logged
+            # anything in gets a real 0 bar for the other, not a silently
+            # missing column.
+            'films_per_year': {
+                'labels': [str(year) for year in films_per_year_years],
+                'data_a': [films_per_year_a.get(year, 0) for year in films_per_year_years],
+                'data_b': [films_per_year_b.get(year, 0) for year in films_per_year_years],
+                'label_a': session_a.display_name or 'Person A',
+                'label_b': session_b.display_name or 'Person B',
+            },
+            # Watching Habits' weekday-distribution chart -- same grouped-bar
+            # shape again, fixed WEEKDAY_LABELS scale (always all 7 days, same
+            # "gap-free axis" reasoning as _rating_curve's own RATING_BUCKETS).
+            # count_a/count_b feed its own Films/Percent toggle, same purpose
+            # and client-side derivation (see toPercent in compare.html) as
+            # rating_curve's count_a/count_b above.
+            'weekday_distribution': {
+                'labels': WEEKDAY_LABELS,
+                'data_a': viewing_habits_a['weekday_counts'],
+                'data_b': viewing_habits_b['weekday_counts'],
+                'count_a': viewing_habits_a['total_count'],
+                'count_b': viewing_habits_b['total_count'],
                 'label_a': session_a.display_name or 'Person A',
                 'label_b': session_b.display_name or 'Person B',
             },
