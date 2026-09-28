@@ -490,7 +490,15 @@ class SameYearReleasesTests(TestCase):
 
         result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['avg_rating'], 4.0)
-        self.assertEqual(result['rating_distribution'], {'labels': ['3.0', '5.0'], 'data': [1, 1]})
+        # Zero-filled across every half-star bucket, not just 3.0/5.0 -- see
+        # _rating_distribution_chart's own docstring.
+        self.assertEqual(
+            result['rating_distribution'],
+            {
+                'labels': ['0.5', '1.0', '1.5', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0'],
+                'data': [0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+            },
+        )
 
     def test_avg_rating_is_none_below_the_minimum_count(self):
         movie = Movie.objects.create(tmdb_id=7005, title='Lone Release', release_year=2024)
@@ -613,9 +621,16 @@ class RatingDistributionFirstWatchToggleTests(TestCase):
 
         context = build_dashboard_context(self.session, year=2024)
 
-        self.assertEqual(context['chart_data']['rating_distribution'], {'labels': ['3.0', '4.0', '5.0'], 'data': [1, 1, 1]})
+        # Zero-filled across every half-star bucket -- see
+        # _rating_distribution_chart's own docstring.
+        labels = ['0.5', '1.0', '1.5', '2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0']
         self.assertEqual(
-            context['chart_data']['rating_distribution_first_watch'], {'labels': ['3.0', '4.0'], 'data': [1, 1]},
+            context['chart_data']['rating_distribution'],
+            {'labels': labels, 'data': [0, 0, 0, 0, 0, 1, 0, 1, 0, 1]},
+        )
+        self.assertEqual(
+            context['chart_data']['rating_distribution_first_watch'],
+            {'labels': labels, 'data': [0, 0, 0, 0, 0, 1, 0, 1, 0, 0]},
         )
         # avg_rating (all 3) vs. avg_rating_first_watch (just the 2 first
         # watches) -- the toggle's own "Average rating" text swap.
@@ -943,11 +958,11 @@ class DashboardNewStatsTests(TestCase):
         total_weekday_count = sum(row['count'] for row in calendar['weekday_distribution'])
         self.assertEqual(total_weekday_count, 6)
 
-    def test_viewing_heatmap_buckets_by_year(self):
+    def test_viewing_heatmap_present_in_year_mode_scoped_to_that_year(self):
         # 5 distinct 2024 dates -- Jan 3 has 2 diary rows (Beta's watch and Dir
         # X's 2nd rewatch, added in setUp so most_rewatched_directors has
         # something to show), every other date has 1.
-        heatmap = build_dashboard_context(self.session)['calendar']['heatmap']
+        heatmap = build_dashboard_context(self.session, year=2024)['calendar']['heatmap']
         self.assertEqual(heatmap['years'], [2024])
         self.assertEqual(heatmap['default_year'], 2024)
         self.assertEqual(
@@ -955,14 +970,15 @@ class DashboardNewStatsTests(TestCase):
             {'2024-01-01': 1, '2024-01-02': 1, '2024-01-03': 2, '2024-01-10': 1, '2024-01-11': 1},
         )
 
-    def test_viewing_heatmap_counts_multiple_films_same_day_and_spans_years(self):
+    def test_viewing_heatmap_absent_in_all_time_mode_even_with_diary_data(self):
+        # All-time used to let you browse any past year's own calendar grid
+        # here (the toggle this multi-year fixture used to exercise) -- that's
+        # what switching to that year's own Wrapped-style page is for now, so
+        # it's simply absent in all-time mode regardless of how much diary
+        # data spans however many years.
         session = ImportSession.objects.create(display_name='Multi')
         DiaryEntry.objects.create(
             import_session=session, letterboxd_uri='https://boxd.it/one', title='One', year=2020,
-            watched_date='2023-06-01',
-        )
-        DiaryEntry.objects.create(
-            import_session=session, letterboxd_uri='https://boxd.it/two', title='Two', year=2020,
             watched_date='2023-06-01',
         )
         DiaryEntry.objects.create(
@@ -971,16 +987,13 @@ class DashboardNewStatsTests(TestCase):
         )
 
         heatmap = build_dashboard_context(session)['calendar']['heatmap']
-        # Oldest -> newest for the toggle's left-to-right order, but default_year is
-        # still the most recent one regardless of its position in that list.
-        self.assertEqual(heatmap['years'], [2023, 2024])
-        self.assertEqual(heatmap['default_year'], 2024)
-        self.assertEqual(heatmap['data']['2023'], {'2023-06-01': 2})
-        self.assertEqual(heatmap['data']['2024'], {'2024-01-01': 1})
+        self.assertEqual(heatmap['years'], [])
+        self.assertIsNone(heatmap['default_year'])
+        self.assertEqual(heatmap['data'], {})
 
-    def test_viewing_heatmap_empty_when_no_diary_entries(self):
+    def test_viewing_heatmap_empty_when_no_diary_entries_for_that_year(self):
         session = ImportSession.objects.create(display_name='Empty')
-        heatmap = build_dashboard_context(session)['calendar']['heatmap']
+        heatmap = build_dashboard_context(session, year=2024)['calendar']['heatmap']
         self.assertEqual(heatmap['years'], [])
         self.assertIsNone(heatmap['default_year'])
         self.assertEqual(heatmap['data'], {})
@@ -1577,8 +1590,12 @@ class TvShowExclusionTests(TestCase):
         self.assertEqual(context['excluded_tv_count'], 1)
         self.assertEqual(context['excluded_tv_titles'], [{'title': 'Some TV Show', 'year': 2020}])
 
-        ratings_seen = context['chart_data']['rating_distribution']['labels']
-        self.assertNotIn('2.0', ratings_seen)
+        # Zero-filled labels always include every bucket now (see
+        # _rating_distribution_chart), so the exclusion shows up as a 0 count
+        # at 2.0, not a missing label.
+        rating_distribution = context['chart_data']['rating_distribution']
+        by_rating = dict(zip(rating_distribution['labels'], rating_distribution['data']))
+        self.assertEqual(by_rating['2.0'], 0)
 
     def test_dashboard_reflects_zero_when_nothing_excluded(self):
         other = ImportSession.objects.create()

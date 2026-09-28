@@ -564,8 +564,11 @@
         <div class="stat"><div class="value" id="heatmapPerMonthStat">—</div><div class="label">Films per month</div></div>
       </div>
       <div class="heatmap-wrap">
-        <div class="heatmap-months" id="heatmapMonths"></div>
-        <div class="heatmap-grid" id="heatmapGrid"></div>
+        <div class="heatmap-table">
+          <div class="heatmap-months" id="heatmapMonths"></div>
+          <div class="heatmap-days" id="heatmapDays"></div>
+          <div class="heatmap-grid" id="heatmapGrid"></div>
+        </div>
         <div class="heatmap-tip" id="heatmapTip" hidden></div>
       </div>
       <div class="heatmap-legend">
@@ -940,6 +943,7 @@
     (function () {
       const gridEl = document.getElementById('heatmapGrid');
       const monthsEl = document.getElementById('heatmapMonths');
+      const daysEl = document.getElementById('heatmapDays');
       const tipEl = document.getElementById('heatmapTip');
       const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
       const perWeekEl = document.getElementById('heatmapPerWeekStat');
@@ -947,6 +951,11 @@
       if (!gridEl || !chartData.heatmap) return;
 
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      // Every other row labeled (Mon/Wed/Fri), not all 7 -- GitHub's own
+      // contribution graph uses the same convention, since 7 labels crammed
+      // into a column of ~11-16px cells overlap into illegibility. Index is
+      // Date.getDay() (0=Sun..6=Sat), matching each cell's own gridRow below.
+      const dayLabels = [null, 'Mon', null, 'Wed', null, 'Fri', null];
 
       // Manual YYYY-MM-DD formatting, not toISOString() -- that converts to UTC
       // first, which shifts local midnight to the previous calendar day in any
@@ -998,6 +1007,22 @@
         tipEl.style.top = top + 'px';
       }
 
+      // Renders the Mon/Wed/Fri row labels to the left of the grid, at the
+      // given cellSize -- called once per renderYear, since cellSize is
+      // recomputed there against the current viewport/scroll width.
+      function renderDayLabels(cellSize) {
+        daysEl.innerHTML = '';
+        daysEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
+        dayLabels.forEach(function (label, row) {
+          if (!label) return;
+          const el = document.createElement('div');
+          el.className = 'heatmap-day-label';
+          el.textContent = label;
+          el.style.gridRow = String(row + 1);
+          daysEl.appendChild(el);
+        });
+      }
+
       function renderYear(year) {
         gridEl.innerHTML = '';
         monthsEl.innerHTML = '';
@@ -1034,13 +1059,21 @@
         // to CSS grid alone. Floors at 11px, same floor minmax() enforced on
         // columns before this -- once a full year no longer fits at that floor,
         // .heatmap-wrap's overflow-x:auto scrolls it instead of shrinking further.
+        // daysColumnWidth/tableGap match .heatmap-days' fixed width and
+        // .heatmap-table's own gap in base.css -- subtracted here since the day-
+        // label column now shares wrapEl's width with the grid, rather than the
+        // grid alone sizing off the full wrap width.
         const gap = 3;
-        const rawSize = (wrapEl.clientWidth - (weekCount - 1) * gap) / weekCount;
+        const daysColumnWidth = 24;
+        const tableGap = 4;
+        const availableWidth = wrapEl.clientWidth - daysColumnWidth - tableGap;
+        const rawSize = (availableWidth - (weekCount - 1) * gap) / weekCount;
         const cellSize = Math.max(11, Math.floor(rawSize));
         const columns = 'repeat(' + weekCount + ', ' + cellSize + 'px)';
         gridEl.style.gridTemplateColumns = columns;
         gridEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
         monthsEl.style.gridTemplateColumns = columns;
+        renderDayLabels(cellSize);
 
         // A running counter, not (date - startOfYear) / 86400000 -- a DST transition
         // makes that division land on a non-integer number of days for the dates on

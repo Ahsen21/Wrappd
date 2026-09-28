@@ -364,8 +364,11 @@
         </div>
       {% endif %}
       <div class="heatmap-wrap">
-        <div class="heatmap-months" id="sameDayHeatmapMonths"></div>
-        <div class="heatmap-grid heatmap-grid--same-day" id="sameDayHeatmapGrid"></div>
+        <div class="heatmap-table">
+          <div class="heatmap-months" id="sameDayHeatmapMonths"></div>
+          <div class="heatmap-days" id="sameDayHeatmapDays"></div>
+          <div class="heatmap-grid heatmap-grid--same-day" id="sameDayHeatmapGrid"></div>
+        </div>
         <div class="heatmap-tip" id="sameDayHeatmapTip" hidden></div>
       </div>
       <div class="heatmap-legend heatmap-legend--same-day">
@@ -644,11 +647,15 @@
     (function () {
       const gridEl = document.getElementById('sameDayHeatmapGrid');
       const monthsEl = document.getElementById('sameDayHeatmapMonths');
+      const daysEl = document.getElementById('sameDayHeatmapDays');
       const tipEl = document.getElementById('sameDayHeatmapTip');
       const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
       if (!gridEl || !chartData.same_day_heatmap) return;
 
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      // Same Mon/Wed/Fri convention as the viewing heatmap's own dayLabels --
+      // see its comment for why (GitHub's own contribution graph does the same).
+      const dayLabels = [null, 'Mon', null, 'Wed', null, 'Fri', null];
       const labelA = chartData.same_day_heatmap.label_a;
       const labelB = chartData.same_day_heatmap.label_b;
 
@@ -745,6 +752,21 @@
         openModal();
       }
 
+      // See the viewing heatmap's own renderDayLabels for why this is a
+      // separate function called once per renderYear.
+      function renderDayLabels(cellSize) {
+        daysEl.innerHTML = '';
+        daysEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
+        dayLabels.forEach(function (label, row) {
+          if (!label) return;
+          const el = document.createElement('div');
+          el.className = 'heatmap-day-label';
+          el.textContent = label;
+          el.style.gridRow = String(row + 1);
+          daysEl.appendChild(el);
+        });
+      }
+
       function renderYear(year) {
         gridEl.innerHTML = '';
         monthsEl.innerHTML = '';
@@ -757,13 +779,19 @@
         const daysInYear = Math.round((new Date(year + 1, 0, 1) - startOfYear) / 86400000);
         const weekCount = Math.floor((startOffset + daysInYear - 1) / 7) + 1;
 
+        // daysColumnWidth/tableGap -- see the viewing heatmap's own comment on
+        // these same two constants in dashboard.html.
         const gap = 3;
-        const rawSize = (wrapEl.clientWidth - (weekCount - 1) * gap) / weekCount;
+        const daysColumnWidth = 24;
+        const tableGap = 4;
+        const availableWidth = wrapEl.clientWidth - daysColumnWidth - tableGap;
+        const rawSize = (availableWidth - (weekCount - 1) * gap) / weekCount;
         const cellSize = Math.max(11, Math.floor(rawSize));
         const columns = 'repeat(' + weekCount + ', ' + cellSize + 'px)';
         gridEl.style.gridTemplateColumns = columns;
         gridEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
         monthsEl.style.gridTemplateColumns = columns;
+        renderDayLabels(cellSize);
 
         let dayIndex = startOffset;
         let lastMonth = -1;
