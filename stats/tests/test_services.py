@@ -16,12 +16,14 @@ from imports.models import (
 )
 from stats.services.compare import build_compare_context
 from stats.services.dashboard import (
-    MILESTONE_THRESHOLDS,
+    MILESTONE_STEP_SMALL,
+    MILESTONE_TIER_2,
     MIN_COUNT_FOR_FAVORITE_ACTOR,
     MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR,
     MIN_COUNT_FOR_FAVORITE_DIRECTOR,
     MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR,
     SAME_YEAR_RELEASES_GRID_CAP,
+    _deduped_diary_films,
     _milestones,
     _same_year_releases,
     build_dashboard_context,
@@ -101,9 +103,9 @@ class YearScopedDashboardContextTests(TestCase):
     docstring for why RatingEntry/WatchedEntry/WatchlistEntry can't be scoped
     to a year at all), so this fixture spans two years with enough variety to
     prove each card only reflects the selected year's diary rows, that a
-    same-year rewatch counts as its own data point rather than being deduped
-    to one row per film, and that Watchlist/Favorite films/Highlights are
-    absent in year mode."""
+    same-year rewatch dedupes to one distinct-film data point (represented by
+    its most recent watch) in the stats _deduped_diary_films feeds, and that
+    Watchlist/Favorite films/Highlights are absent in year mode."""
 
     def setUp(self):
         self.session = ImportSession.objects.create(display_name='Alex')
@@ -130,9 +132,9 @@ class YearScopedDashboardContextTests(TestCase):
             watched_date='2024-03-01', rating=Decimal('4.0'), movie=self.movie_a,
         )
         # 2025: movie_a rewatched twice with different ratings -- the case that
-        # proves a same-year rewatch counts as two separate data points
-        # (genre/director/actor counts and rating averages), not one deduped
-        # film, per this feature's rewatch-weighting decision.
+        # proves a same-year rewatch dedupes to one distinct-film data point
+        # for genre/director/actor counts and rating averages, represented by
+        # the chronologically latest log (Jun 5, rating 3.0), not two.
         DiaryEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/2025a', title='2024 Film', year=2020,
             watched_date='2025-01-05', rating=Decimal('5.0'), movie=self.movie_a, rewatch=False,
@@ -184,20 +186,22 @@ class YearScopedDashboardContextTests(TestCase):
         context_2019 = build_dashboard_context(self.session, year=2019)
         self.assertEqual(context_2019['total_films'], 0)
 
-    def test_rewatch_counts_as_its_own_data_point_toward_genre_and_director(self):
+    def test_rewatch_dedupes_to_one_data_point_toward_genre_and_director(self):
         context = build_dashboard_context(self.session, year=2025)
         drama_row = next(r for r in context['top_genres'] if r['genres__name'] == 'Drama')
-        self.assertEqual(drama_row['count'], 2)
+        self.assertEqual(drama_row['count'], 1)
         director_row = next(r for r in context['top_directors'] if r['directors__name'] == 'Year Director')
-        self.assertEqual(director_row['count'], 2)
-        # Average of both 2025 ratings (5.0, 3.0), not a single per-film value.
-        self.assertEqual(director_row['avg_rating'], Decimal('4.0'))
+        self.assertEqual(director_row['count'], 1)
+        # Only one rating feeds the average now (the latest log's 3.0), below
+        # MIN_COUNT_FOR_AVERAGE -- there's no longer a second data point to
+        # average it against.
+        self.assertIsNone(director_row['avg_rating'])
 
-    def test_rewatch_counts_as_its_own_data_point_toward_actor(self):
+    def test_rewatch_dedupes_to_one_data_point_toward_actor(self):
         context = build_dashboard_context(self.session, year=2025)
         actor_row = next(r for r in context['top_actors'] if r['person__name'] == 'Year Actor')
-        self.assertEqual(actor_row['count'], 2)
-        self.assertEqual(actor_row['avg_rating'], Decimal('4.0'))
+        self.assertEqual(actor_row['count'], 1)
+        self.assertIsNone(actor_row['avg_rating'])
 
     def test_country_distribution_is_year_isolated(self):
         context_2024 = build_dashboard_context(self.session, year=2024)
@@ -213,12 +217,25 @@ class YearScopedDashboardContextTests(TestCase):
         self.assertEqual(context['hero_poster_url'], '')
 
     def test_year_view_uses_its_own_lower_favorite_people_threshold(self):
+        # Year Director's own 2025 diary rows (movie_a, rewatched twice) dedupe
+        # to a single distinct film -- below even the lower year-view bar. A
+        # second, genuinely distinct film from the same director is needed to
+        # prove the lower bar itself, not rewatch inflation faking it.
+        movie_c = Movie.objects.create(tmdb_id=103, title='2025 Second Film', release_year=2022)
+        movie_c.directors.add(self.director)
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/2025d', title='2025 Second Film', year=2022,
+            watched_date='2025-08-01', rating=Decimal('3.5'), movie=movie_c,
+        )
+
         context = build_dashboard_context(self.session, year=2025)
         self.assertEqual(context['min_favorite_director'], MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR)
-        # Year Director has exactly 2 rated logs in 2025 -- clears the year-view
-        # bar (2) but would not clear the all-time bar (3).
+        # Year Director now has 2 distinct 2025 films (movie_a, movie_c) --
+        # clears the year-view bar (2) but would not clear the all-time bar (3).
         director_names = {r['movie__directors__name'] for r in context['favorite_people']['favorite_directors']}
         self.assertIn('Year Director', director_names)
+        director_row = next(r for r in context['favorite_people']['favorite_directors'] if r['movie__directors__name'] == 'Year Director')
+        self.assertEqual(director_row['count'], 2)
 
         all_time_context = build_dashboard_context(self.session)
         self.assertEqual(all_time_context['min_favorite_director'], MIN_COUNT_FOR_FAVORITE_DIRECTOR)
@@ -268,9 +285,58 @@ class YearScopedDashboardContextTests(TestCase):
         self.assertEqual(calendar['days_elapsed'], 181)
 
 
+class YearScopedRewatchDedupRegressionTests(TestCase):
+    """Confirms for real the two bugs that prompted _deduped_diary_films: a
+    same-year rewatch used to show up twice in Taste vs. Crowd's Overrates
+    grid, and an actor/director in a same-year-rewatched film used to have
+    their Favorite Actors/Directors film count (and its "Highest rated"/"True
+    score" siblings) inflated by the rewatch count instead of reflecting
+    distinct films."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+        self.director = Person.objects.create(tmdb_id=9501, name='Dedup Director')
+        self.actor = Person.objects.create(tmdb_id=9502, name='Dedup Actor')
+        self.movie = Movie.objects.create(
+            tmdb_id=9503, title='Rewatched Film', release_year=2020, tmdb_rating=Decimal('6.0'),
+        )
+        self.movie.directors.add(self.director)
+        Credit.objects.create(movie=self.movie, person=self.actor, order=0)
+
+        # Same film, logged three times in the same year -- exactly the
+        # "watched a movie 3 times" case reported for real (The Odyssey).
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/1', title='Rewatched Film', year=2020,
+            watched_date='2025-01-01', rating=Decimal('4.0'), movie=self.movie, rewatch=False,
+        )
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/2', title='Rewatched Film', year=2020,
+            watched_date='2025-02-01', rating=Decimal('4.5'), movie=self.movie, rewatch=True,
+        )
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/3', title='Rewatched Film', year=2020,
+            watched_date='2025-03-01', rating=Decimal('5.0'), movie=self.movie, rewatch=True,
+        )
+
+    def test_taste_vs_crowd_does_not_duplicate_a_rewatched_film(self):
+        taste = build_dashboard_context(self.session, year=2025)['taste']
+        self.assertEqual(taste['rated_and_enriched_count'], 1)
+        titles = [row['title'] for row in taste['overrates']]
+        self.assertEqual(titles.count('Rewatched Film'), 1)
+        # The latest log's rating (5.0), not the first or an average.
+        self.assertEqual(taste['overrates'][0]['your_rating'], Decimal('5.0'))
+
+    def test_favorite_actors_and_directors_count_one_film_not_three(self):
+        context = build_dashboard_context(self.session, year=2025)
+        actor_row = next(r for r in context['top_actors'] if r['person__name'] == 'Dedup Actor')
+        self.assertEqual(actor_row['count'], 1)
+        director_row = next(r for r in context['top_directors'] if r['directors__name'] == 'Dedup Director')
+        self.assertEqual(director_row['count'], 1)
+
+
 class MilestonesTests(TestCase):
     """_milestones (year view, Watching Habits) -- the first watch, round-number
-    checkpoints (MILESTONE_THRESHOLDS), and the last watch of the year, in
+    checkpoints (_milestone_thresholds), and the last watch of the year, in
     chronological order."""
 
     def setUp(self):
@@ -300,10 +366,10 @@ class MilestonesTests(TestCase):
         self.assertEqual(milestones[1]['title'], 'Film 3')
 
     def test_a_threshold_exactly_at_the_last_film_is_not_shown_twice(self):
-        # Exactly MILESTONE_THRESHOLDS[0] (50) logs -- the 50th film IS the
-        # last film, so it should appear once (as "Last watch"), not also as
-        # a redundant "50th film" card for the same poster.
-        threshold = MILESTONE_THRESHOLDS[0]
+        # Exactly MILESTONE_STEP_SMALL logs -- the Nth film IS the last film,
+        # so it should appear once (as "Last watch"), not also as a redundant
+        # "Nth film" card for the same poster.
+        threshold = MILESTONE_STEP_SMALL
         start = date(2024, 1, 1)
         for i in range(1, threshold + 1):
             self._log(i, date=start + timedelta(days=i))
@@ -311,14 +377,35 @@ class MilestonesTests(TestCase):
         self.assertEqual([m['label'] for m in milestones], ['First watch', 'Last watch'])
 
     def test_a_threshold_one_past_the_last_film_shows_as_its_own_milestone(self):
-        threshold = MILESTONE_THRESHOLDS[0]
+        threshold = MILESTONE_STEP_SMALL
         start = date(2024, 1, 1)
         for i in range(1, threshold + 2):
             self._log(i, date=start + timedelta(days=i))
         milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
         self.assertEqual([m['label'] for m in milestones], ['First watch', f'{threshold}th film', 'Last watch'])
-        # The Nth film (1-indexed) is exactly the film logged Nth.
-        self.assertEqual(next(m for m in milestones if m['label'] == f'{threshold}th film')['title'], f'Film {threshold}')
+
+    def test_medium_tier_steps_by_50_once_the_year_reaches_that_tier(self):
+        # At MILESTONE_TIER_2 (150) logs, the step switches from 25s to 50s --
+        # a 25-multiple past 125 (e.g. 150 itself) must NOT also appear, since
+        # the whole year uses one step size, not a mix of both.
+        start = date(2024, 1, 1)
+        for i in range(1, MILESTONE_TIER_2 + 51):
+            self._log(i, date=start + timedelta(days=i))
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual(
+            [m['label'] for m in milestones],
+            ['First watch', '50th film', '100th film', '150th film', 'Last watch'],
+        )
+
+    def test_large_tier_steps_by_100_once_the_year_reaches_that_tier(self):
+        start = date(2024, 1, 1)
+        for i in range(1, 351):
+            self._log(i, date=start + timedelta(days=i))
+        milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
+        self.assertEqual(
+            [m['label'] for m in milestones],
+            ['First watch', '100th film', '200th film', '300th film', 'Last watch'],
+        )
 
     def test_a_rewatch_counts_as_its_own_position_in_the_chronological_order(self):
         # Same "count every log" rule as every other year-view stat -- a
@@ -373,7 +460,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/b', 'Old Catalog Film', older, rating=5.0)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=2, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=2, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['count'], 1)
         self.assertEqual([f['title'] for f in result['films']], ['New Release'])
 
@@ -388,7 +475,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=4.0, rewatch=True)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['count'], 1)
         self.assertEqual(result['pct'], 100)
 
@@ -401,7 +488,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=5.0, rewatch=True)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['avg_rating'], 4.0)
         self.assertEqual(result['rating_distribution'], {'labels': ['3.0', '5.0'], 'data': [1, 1]})
 
@@ -410,7 +497,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/a', 'Lone Release', movie, rating=4.0)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertIsNone(result['avg_rating'])
 
     def test_grid_rating_prefers_the_current_rating_over_a_stale_diary_value(self):
@@ -429,7 +516,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/c', 'Unedited Release', other_movie, rating=4.5)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=2, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=2, deduped_films=_deduped_diary_films(diary, self.session))
         edited = next(f for f in result['films'] if f['title'] == 'Edited Release')
         self.assertEqual(edited['rating'], 3.5)
         # avg_rating stays diary-based (4.5 + 4.5) / 2 -- confirms the fix is
@@ -442,20 +529,23 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/a', 'Never Edited Release', movie, rating=4.5)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['films'][0]['rating'], 4.5)
 
-    def test_grid_dedupes_a_rewatched_release_to_its_best_rating(self):
+    def test_grid_dedupes_a_rewatched_release_to_its_most_recent_watch(self):
         movie = Movie.objects.create(
             tmdb_id=7006, title='Rewatched New Release', release_year=2024, poster_path='/p.jpg',
         )
-        self._log('https://boxd.it/a', 'Rewatched New Release', movie, date='2024-03-01', rating=3.0)
-        self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=4.5, rewatch=True)
+        self._log('https://boxd.it/a', 'Rewatched New Release', movie, date='2024-03-01', rating=4.5)
+        self._log('https://boxd.it/b', 'Rewatched New Release', movie, date='2024-09-01', rating=3.0, rewatch=True)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(len(result['films']), 1)
-        self.assertEqual(float(result['films'][0]['rating']), 4.5)
+        # The later (Sept) log's rating wins even though it's lower than the
+        # March one -- proves dedup picks the most recent watch, not the best
+        # rating.
+        self.assertEqual(float(result['films'][0]['rating']), 3.0)
 
     def test_grid_sorted_highest_rated_first_and_capped(self):
         for i in range(SAME_YEAR_RELEASES_GRID_CAP + 3):
@@ -467,7 +557,7 @@ class SameYearReleasesTests(TestCase):
             self._log(f'https://boxd.it/f{i}', f'Film {i}', movie, rating=1.0 + (i % 5) * 0.5)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=SAME_YEAR_RELEASES_GRID_CAP + 3, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=SAME_YEAR_RELEASES_GRID_CAP + 3, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(len(result['films']), SAME_YEAR_RELEASES_GRID_CAP)
         ratings = [float(f['rating']) for f in result['films']]
         self.assertEqual(ratings, sorted(ratings, reverse=True))
@@ -477,7 +567,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/a', 'Unrated New Release', movie, rating=None)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['count'], 1)
         self.assertIsNone(result['avg_rating'])
         self.assertEqual(result['films'], [])
@@ -487,7 +577,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/a', 'Old Catalog Film', older, rating=5.0)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['count'], 0)
         self.assertEqual(result['pct'], 0)
         self.assertIsNone(result['avg_rating'])
@@ -497,7 +587,7 @@ class SameYearReleasesTests(TestCase):
         self._log('https://boxd.it/a', 'Unresolved Film', movie=None, rating=4.0)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=1, import_session=self.session)
+        result = _same_year_releases(diary, 2024, films_watched_total=1, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['count'], 0)
 
 
@@ -806,6 +896,41 @@ class DashboardNewStatsTests(TestCase):
                 )
         rewatch = build_dashboard_context(session)['rewatch']
         self.assertEqual(len(rewatch['most_rewatched_directors']), 12)
+
+    def test_most_rewatched_directors_only_counts_films_rewatched_within_this_scope(self):
+        # Confirmed for real: a film first watched in an earlier year and
+        # rewatched only once within the selected year still carries
+        # rewatch=True on that single in-year log (Letterboxd's own "I'd seen
+        # this before, ever" meaning) -- but this year's own diary rows only
+        # show it once, so it shouldn't count as a director's rewatch for this
+        # year, the same way most_rewatched_films' own per-scope watch_count
+        # wouldn't show it as rewatched either.
+        director_z, _ = Person.objects.get_or_create(tmdb_id=903, defaults={'name': 'Dir Z'})
+        delta = Movie.objects.create(tmdb_id=304, title='Delta', release_year=2010)
+        delta.directors.add(director_z)
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/delta-first', title='Delta', year=2010,
+            watched_date='2023-01-01', rating=Decimal('4.0'), rewatch=False, movie=delta,
+        )
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/delta-2024', title='Delta', year=2010,
+            watched_date='2024-01-05', rating=Decimal('4.0'), rewatch=True, movie=delta,
+        )
+
+        year_rewatch = build_dashboard_context(self.session, year=2024)['rewatch']
+        director_names = {row['movie__directors__name'] for row in year_rewatch['most_rewatched_directors']}
+        self.assertNotIn('Dir Z', director_names)
+
+        # All-time, Delta genuinely has 2 watches -- Dir Z should still qualify
+        # there (paired with a 2nd rewatch, since most_rewatched_directors also
+        # requires at least 2 rewatches to appear at all).
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/delta-2025', title='Delta', year=2010,
+            watched_date='2025-01-01', rating=Decimal('4.0'), rewatch=True, movie=delta,
+        )
+        all_time_rewatch = build_dashboard_context(self.session)['rewatch']
+        director_names = {row['movie__directors__name'] for row in all_time_rewatch['most_rewatched_directors']}
+        self.assertIn('Dir Z', director_names)
 
     def test_viewing_calendar(self):
         calendar = build_dashboard_context(self.session)['calendar']
@@ -5291,6 +5416,72 @@ class PersonFilmographyTests(TestCase):
             )
         result = build_person_filmography(session, director, 'director')
         self.assertEqual([f['title'] for f in result['films']], ['High Film', 'Mid Film', 'Low Film'])
+
+    def test_year_scopes_to_diary_rows_watched_that_year(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=509, name='Year Director')
+        movie_2025 = Movie.objects.create(tmdb_id=630, title='2025 Watch', release_year=2020)
+        movie_2025.directors.add(director)
+        movie_2024 = Movie.objects.create(tmdb_id=631, title='2024 Watch', release_year=2019)
+        movie_2024.directors.add(director)
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/2025', title='2025 Watch', year=2020,
+            watched_date='2025-05-01', rating=Decimal('4.0'), movie=movie_2025,
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/2024', title='2024 Watch', year=2019,
+            watched_date='2024-05-01', rating=Decimal('3.0'), movie=movie_2024,
+        )
+        result = build_person_filmography(session, director, 'director', year=2025)
+        self.assertEqual([f['title'] for f in result['films']], ['2025 Watch'])
+
+    def test_year_dedupes_a_same_year_rewatch_to_its_most_recent_watch(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=510, name='Rewatch Director')
+        movie = Movie.objects.create(tmdb_id=632, title='Rewatched Film', release_year=2020)
+        movie.directors.add(director)
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/a', title='Rewatched Film', year=2020,
+            watched_date='2025-01-01', rating=Decimal('3.0'), movie=movie, rewatch=False,
+        )
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/b', title='Rewatched Film', year=2020,
+            watched_date='2025-06-01', rating=Decimal('5.0'), movie=movie, rewatch=True,
+        )
+        result = build_person_filmography(session, director, 'director', year=2025)
+        self.assertEqual(len(result['films']), 1)
+        self.assertEqual(result['films'][0]['rating'], '5.0')
+
+    def test_year_prefers_current_ratings_csv_rating_over_stale_diary_value(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        director = Person.objects.create(tmdb_id=511, name='Edited Director')
+        movie = Movie.objects.create(tmdb_id=633, title='Edited Film', release_year=2020)
+        movie.directors.add(director)
+        DiaryEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/a', title='Edited Film', year=2020,
+            watched_date='2025-01-01', rating=Decimal('4.5'), movie=movie,
+        )
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/b', title='Edited Film', year=2020,
+            rating=Decimal('3.5'),
+        )
+        result = build_person_filmography(session, director, 'director', year=2025)
+        self.assertEqual(result['films'][0]['rating'], '3.5')
+
+    def test_year_actor_role_excludes_cameo(self):
+        session = ImportSession.objects.create(display_name='Alex')
+        actor = Person.objects.create(tmdb_id=512, name='Year Actor')
+        lead_movie = _make_movie(640, 'Year Lead Film', 2020, 100, 'Drama')
+        _cast_movie(lead_movie, actor, order=1, total_cast_size=40)  # 1/40, not a cameo
+        cameo_movie = _make_movie(641, 'Year Cameo Film', 2020, 100, 'Drama')
+        _cast_movie(cameo_movie, actor, order=30, total_cast_size=40)  # 30/40 = 0.75, a cameo
+        for movie, uri in [(lead_movie, 'https://boxd.it/lead'), (cameo_movie, 'https://boxd.it/cameo')]:
+            DiaryEntry.objects.create(
+                import_session=session, letterboxd_uri=uri, title=movie.title, year=movie.release_year,
+                watched_date='2025-01-01', rating=Decimal('4.0'), movie=movie,
+            )
+        result = build_person_filmography(session, actor, 'actor', year=2025)
+        self.assertEqual([f['title'] for f in result['films']], ['Year Lead Film'])
 
 
 class InsightFilmsTests(TestCase):

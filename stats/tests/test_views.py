@@ -8,7 +8,7 @@ from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 
-from imports.models import ImportSession, RatingEntry
+from imports.models import DiaryEntry, ImportSession, RatingEntry
 from stats.services.dashboard import build_dashboard_context
 from tmdb.models import Credit, Movie, Person
 
@@ -62,6 +62,43 @@ class PersonFilmographyViewTests(TestCase):
     def test_unknown_person_returns_404(self):
         response = self.client.get(self._url(tmdb_id=999999), {'role': 'director'})
         self.assertEqual(response.status_code, 404)
+
+    def test_year_scopes_to_that_year_and_dedupes_a_same_year_rewatch(self):
+        # Same film logged twice in 2025 (a rewatch) -- must collapse to one
+        # entry, matching how the dashboard's own year-scoped Favorite Directors
+        # card already counts/rates it (see _deduped_diary_films). Its rating is
+        # setUp's own RatingEntry (4.5), not either diary log -- the current
+        # ratings.csv rating still wins over a same-year rewatch's own logged
+        # value, the same as everywhere else in year mode. A different film from
+        # a different year proves year scoping itself, not just the dedup.
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/d1', title='Their Film', year=2020,
+            watched_date='2025-01-01', rating=Decimal('3.0'), movie=self.movie, rewatch=False,
+        )
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/d2', title='Their Film', year=2020,
+            watched_date='2025-06-01', rating=Decimal('5.0'), movie=self.movie, rewatch=True,
+        )
+        other_movie = Movie.objects.create(tmdb_id=802, title='Other Year Film', release_year=2019)
+        other_movie.directors.add(self.director)
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/d3', title='Other Year Film', year=2019,
+            watched_date='2024-01-01', rating=Decimal('2.0'), movie=other_movie,
+        )
+
+        response = self.client.get(self._url(), {'role': 'director', 'year': 2025})
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual(len(data['films']), 1)
+        self.assertEqual(data['films'][0]['title'], 'Their Film')
+        self.assertEqual(data['films'][0]['rating'], '4.5')
+
+    def test_invalid_year_falls_back_to_all_time(self):
+        response = self.client.get(self._url(), {'role': 'director', 'year': 'not-a-year'})
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertEqual(len(data['films']), 1)
+        self.assertEqual(data['films'][0]['title'], 'Their Film')
 
 
 class InsightFilmsViewTests(TestCase):

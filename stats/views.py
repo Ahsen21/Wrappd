@@ -89,7 +89,15 @@ def person_filmography(request, session_id, tmdb_id):
     if role not in ('director', 'actor'):
         return JsonResponse({'error': 'role must be "director" or "actor"'}, status=400)
     person = get_object_or_404(Person, pk=tmdb_id)
-    return JsonResponse(build_person_filmography(import_session, person, role))
+    # Same "don't trust the query string" posture as _render_dashboard's own
+    # ?year= handling -- an absent/invalid value just falls back to the
+    # all-time filmography rather than erroring.
+    year_param = request.GET.get('year')
+    try:
+        year = int(year_param) if year_param else None
+    except ValueError:
+        year = None
+    return JsonResponse(build_person_filmography(import_session, person, role, year))
 
 
 def insight_films(request, session_id):

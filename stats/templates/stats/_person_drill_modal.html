@@ -3,6 +3,11 @@ Person-filmography / insight-drill-down modal -- shared by the dashboard's
 Favorite Directors/Actors, Rewatches, and insight tiles, and by the home
 screen's stat-of-the-day card. Include with `session_id` set to whichever
 ImportSession this page is showing (`{% include 'stats/_person_drill_modal.html' with session_id=import_session.id %}`).
+Also pass `year` when the including page is showing a year-scoped view
+(dashboard.html's own `year`) -- the person-filmography fetch below carries it
+through as `&year=`, so the modal only lists films watched that year, matching
+whichever year-scoped card (Favorite Directors/Actors, Most Rewatched
+Directors) it was opened from. Omit it (or pass None) for an all-time page.
 
 Wires up two independent triggers, both delegated so any matching element
 present in the DOM at parse time is picked up with no page-specific JS:
@@ -36,6 +41,10 @@ present in the DOM at parse time is picked up with no page-specific JS:
     // hardcoding "/dashboard/.../person/<id>/" directly.
     const urlTemplate = "{% url 'stats:person_filmography' session_id=session_id tmdb_id=999999999 %}";
     const insightUrl = "{% url 'stats:insight_films' session_id=session_id %}";
+    // Carried into the person-filmography fetch below so the modal agrees with
+    // whichever year-scoped card triggered it -- not used by the insight-drill
+    // fetch, which has no year-scoped equivalent yet.
+    const currentYear = {% if year %}{{ year }}{% else %}null{% endif %};
     let lastTrigger = null;
 
     function escapeHtml(str) {
@@ -87,7 +96,8 @@ present in the DOM at parse time is picked up with no page-specific JS:
         titleEl.textContent = trigger.textContent;
         bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
         openModal();
-        const url = urlTemplate.replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
+        let url = urlTemplate.replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
+        if (currentYear) url += '&year=' + currentYear;
         fetch(url)
           .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
           .then(renderFilms)
