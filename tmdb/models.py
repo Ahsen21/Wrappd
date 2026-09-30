@@ -11,6 +11,20 @@ class Genre(models.Model):
         return self.name
 
 
+class Keyword(models.Model):
+    """A TMDB plot/theme tag (e.g. 'unreliable narrator', 'coming of age') --
+    far more granular than Genre, and validated as a real taste signal for
+    Double Feature's watchlist-match ranking (see stats/services/compare.py's
+    own RECOMMENDATION_WEIGHTS comment) via leave-one-out holdout testing
+    against real already-rated films before being added here."""
+
+    tmdb_id = models.PositiveIntegerField(primary_key=True)
+    name = models.CharField(max_length=200)
+
+    def __str__(self):
+        return self.name
+
+
 class Country(models.Model):
     """A production country. TMDB identifies these by ISO 3166-1 alpha-2 code, not a
     numeric id, so the code itself is the natural primary key."""
@@ -67,6 +81,7 @@ class Movie(models.Model):
     fetched_at = models.DateTimeField(auto_now=True)
 
     genres = models.ManyToManyField(Genre, related_name='movies', blank=True)
+    keywords = models.ManyToManyField(Keyword, related_name='movies', blank=True)
     countries = models.ManyToManyField(Country, related_name='movies', blank=True)
     # Many-to-many, not a single FK -- a film can have co-directors (e.g. most Coen
     # Brothers films list both Joel and Ethan in TMDB's crew), and crediting only one

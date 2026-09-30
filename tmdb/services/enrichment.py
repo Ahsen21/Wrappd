@@ -16,7 +16,7 @@ from django.conf.locale import LANG_INFO
 from django.db import IntegrityError, connection, transaction
 
 from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
-from tmdb.models import Country, Credit, Genre, Movie, Person, TitleYearLookup
+from tmdb.models import Country, Credit, Genre, Keyword, Movie, Person, TitleYearLookup
 from tmdb.services.client import TMDBClientError, get_movie_details, search_movie, search_tv
 
 logger = logging.getLogger(__name__)
@@ -333,6 +333,12 @@ def _populate_details(movie):
         )
         countries.append(country)
     movie.countries.set(countries)
+
+    keywords = []
+    for keyword_data in details.get('keywords', {}).get('keywords', []):
+        keyword, _ = _safe_get_or_create(Keyword, tmdb_id=keyword_data['id'], defaults={'name': keyword_data['name']})
+        keywords.append(keyword)
+    movie.keywords.set(keywords)
 
     credits = details.get('credits', {})
     _populate_directors(movie, credits.get('crew', []))

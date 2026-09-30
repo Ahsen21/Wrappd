@@ -91,9 +91,10 @@ def search_tv(title: str, year: int | None) -> list:
 
 
 def get_movie_details(tmdb_id: int) -> dict:
-    """Fetch full movie details plus credits (director + top cast) in one call."""
+    """Fetch full movie details plus credits (director + top cast) and keywords
+    in one call."""
     if not settings.TMDB_API_KEY:
         raise TMDBClientError('TMDB_API_KEY is not configured.')
 
-    response = _get(f'/movie/{tmdb_id}', {'append_to_response': 'credits'})
+    response = _get(f'/movie/{tmdb_id}', {'append_to_response': 'credits,keywords'})
     return response.json()

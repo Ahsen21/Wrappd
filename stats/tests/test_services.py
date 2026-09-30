@@ -29,7 +29,7 @@ from stats.services.dashboard import (
     build_dashboard_context,
 )
 from stats.services.person_filmography import build_person_filmography
-from tmdb.models import Country, Credit, Genre, Movie, Person, TitleYearLookup
+from tmdb.models import Country, Credit, Genre, Keyword, Movie, Person, TitleYearLookup
 
 
 def _make_movie(tmdb_id, title, year, runtime, genre_name, director_name=None):
@@ -5169,7 +5169,7 @@ class WatchlistMatchesRankingTests(TestCase):
         axis_deltas = {
             'genre': {'Horror': 0.8, 'Romance': -0.6, 'Comedy': 0.1},
             'director': {'Director A': 0.01, 'Director B': -0.01, 'Director C': 0.0},
-            'actor': {}, 'country': {}, 'language': {}, 'decade': {}, 'runtime': {},
+            'actor': {}, 'country': {}, 'language': {}, 'decade': {}, 'runtime': {}, 'keyword': {},
         }
         weights = _adaptive_weights(axis_deltas)
         self.assertGreater(weights['genre'], RECOMMENDATION_WEIGHTS['genre'])
@@ -5181,6 +5181,70 @@ class WatchlistMatchesRankingTests(TestCase):
 
         axis_deltas = {axis: {} for axis in RECOMMENDATION_WEIGHTS}
         self.assertEqual(_adaptive_weights(axis_deltas), RECOMMENDATION_WEIGHTS)
+
+    def _axis_only_deltas(self, **overrides):
+        base = {
+            axis: {}
+            for axis in ('genre', 'director', 'actor', 'country', 'language', 'decade', 'runtime', 'keyword')
+        }
+        base.update(overrides)
+        return base
+
+    def test_axis_agreement_picks_the_strongest_qualifying_value_not_the_sum(self):
+        from stats.services.compare import _axis_agreement
+
+        # Three qualifying director values -- max should pick the strongest single
+        # one (0.5), not sum (0.9) or average (0.3) across all three.
+        deltas_a = self._axis_only_deltas(
+            director={'Director A': 0.5, 'Director B': 0.2, 'Director C': 0.2},
+        )
+        deltas_b = self._axis_only_deltas(
+            director={'Director A': 0.6, 'Director B': 0.3, 'Director C': 0.25},
+        )
+        agreement = _axis_agreement(deltas_a, deltas_b)
+        self.assertAlmostEqual(agreement['director'], 0.5)
+
+    def test_axis_agreement_ignores_values_below_credit_threshold(self):
+        from stats.services.compare import _axis_agreement
+
+        # A clears the threshold, B doesn't -- shouldn't count as agreement.
+        deltas_a = self._axis_only_deltas(genre={'Horror': 0.4})
+        deltas_b = self._axis_only_deltas(genre={'Horror': 0.05})
+        agreement = _axis_agreement(deltas_a, deltas_b)
+        self.assertEqual(agreement['genre'], 0.0)
+
+    def test_axis_agreement_is_zero_when_nothing_qualifies(self):
+        from stats.services.compare import _PREFERENCE_AXES, _axis_agreement
+
+        agreement = _axis_agreement(self._axis_only_deltas(), self._axis_only_deltas())
+        self.assertEqual(agreement, {axis: 0.0 for axis in _PREFERENCE_AXES})
+
+    def test_boosted_weights_favors_the_strongest_agreement_axis(self):
+        from stats.services.compare import AXIS_AGREEMENT_BOOST, RECOMMENDATION_WEIGHTS, _boosted_weights
+
+        # 'director' is the pair's single strongest agreement axis (gets the full
+        # boost); 'genre' has weaker agreement (partial boost); everything else has
+        # none (untouched before renormalizing).
+        agreement = {
+            'genre': 0.2, 'director': 0.5, 'actor': 0.0, 'country': 0.0,
+            'language': 0.0, 'decade': 0.0, 'runtime': 0.0, 'keyword': 0.0,
+        }
+        boosted = _boosted_weights(RECOMMENDATION_WEIGHTS, agreement)
+        self.assertAlmostEqual(sum(boosted.values()), 1.0, places=6)
+        # director (strongest) should gain relative share; the untouched axes
+        # should lose relative share (same raw ratio to each other as before,
+        # just renormalized down since director and genre grew).
+        self.assertGreater(
+            boosted['director'] / RECOMMENDATION_WEIGHTS['director'],
+            boosted['genre'] / RECOMMENDATION_WEIGHTS['genre'],
+        )
+        self.assertLess(boosted['actor'] / RECOMMENDATION_WEIGHTS['actor'], 1.0)
+
+    def test_boosted_weights_unchanged_when_no_axis_has_any_agreement(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _boosted_weights
+
+        agreement = {axis: 0.0 for axis in RECOMMENDATION_WEIGHTS}
+        self.assertEqual(_boosted_weights(RECOMMENDATION_WEIGHTS, agreement), dict(RECOMMENDATION_WEIGHTS))
 
     def test_person_credit_cap_limits_how_many_matches_credit_the_same_director(self):
         from stats.services.compare import PERSON_CREDIT_CAP
@@ -5286,6 +5350,613 @@ class WatchlistMatchesRankingTests(TestCase):
         context = build_compare_context(self.session_a, self.session_b)
         titles = [f['title'] for f in context['watchlist_matches']]
         self.assertIn('No TMDB Rating Shared Horror', titles)
+
+
+class PreferenceDeltasEmpiricalBayesTests(TestCase):
+    """_preference_deltas' empirical Bayes shrinkage -- replaces the old fixed
+    count/(count+K) confidence factor. Exercised directly rather than through
+    the full watchlist-ranking pipeline, since these are about the deltas
+    themselves, not what a downstream score does with them."""
+
+    def test_well_evidenced_delta_shrinks_less_than_a_thin_one(self):
+        # Compares the shrinkage step alone, dividing back out each value's own
+        # _rarity_factor before comparing -- _rarity_factor deliberately pulls
+        # in the OPPOSITE direction from shrinkage (it rewards a *rare* value,
+        # and Comedy's 1 film is far rarer than Drama's 8 out of the same
+        # corpus), so comparing the final, rarity-scaled deltas directly would
+        # be comparing two effects pulling against each other, not shrinkage on
+        # its own -- confirmed for real when a first version of this test did
+        # exactly that and failed in the "wrong" direction.
+        from stats.services.compare import _preference_deltas, _rarity_factor
+
+        session = ImportSession.objects.create(display_name='Alex')
+        drama, _ = Genre.objects.get_or_create(tmdb_id=994001, defaults={'name': 'Drama994'})
+        comedy, _ = Genre.objects.get_or_create(tmdb_id=994002, defaults={'name': 'Comedy994'})
+        horror, _ = Genre.objects.get_or_create(tmdb_id=994003, defaults={'name': 'Horror994'})
+
+        # Horror: well evidenced and clearly disliked -- gives between_var a
+        # real, non-zero spread to detect at all (two genres landing on the
+        # exact same raw average, as Drama/Comedy do below, would otherwise
+        # look identical to a genre-neutral person no matter how differently
+        # confident the evidence behind them is).
+        for i in range(8):
+            movie = Movie.objects.create(tmdb_id=994050 + i, title=f'Horror {i}', release_year=2010)
+            movie.genres.add(horror)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/h{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('1.0'), movie=movie,
+            )
+        # Drama: well evidenced (8 films, all 5.0).
+        for i in range(8):
+            movie = Movie.objects.create(tmdb_id=994200 + i, title=f'Drama {i}', release_year=2010)
+            movie.genres.add(drama)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/d{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        # Comedy: same raw average (5.0), but only 1 film -- thin evidence.
+        movie = Movie.objects.create(tmdb_id=994300, title='Comedy 0', release_year=2010)
+        movie.genres.add(comedy)
+        RatingEntry.objects.create(
+            import_session=session, letterboxd_uri='https://boxd.it/c0', title=movie.title,
+            year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+        )
+
+        deltas = _preference_deltas(session)
+        rated_count = 17  # 8 horror + 8 drama + 1 comedy
+        drama_shrink_only = deltas['genre']['Drama994'] / _rarity_factor(8, rated_count)
+        comedy_shrink_only = deltas['genre']['Comedy994'] / _rarity_factor(1, rated_count)
+        self.assertGreater(drama_shrink_only, comedy_shrink_only)
+
+    def test_axis_with_only_one_distinct_value_still_gets_a_real_delta(self):
+        # Confirmed for real: an axis with a single distinct value (very
+        # common for director -- most people have only a handful of distinct
+        # directors relative to genres) has no internal spread to measure
+        # between_var from on its own, which an earlier version of this
+        # shrinkage got wrong by estimating between_var separately per axis --
+        # a lone value always looked exactly as unremarkable as this person's
+        # own overall average, however many films backed it, since there was
+        # nothing within that one axis to compare it against. Pooling the
+        # variance estimate across every axis together (see _preference_deltas'
+        # own comment) fixes it: other axes (genre here) still provide a real
+        # between-value spread to shrink director's own lone value against.
+        from stats.services.compare import _preference_deltas
+
+        session = ImportSession.objects.create(display_name='Alex')
+        drama, _ = Genre.objects.get_or_create(tmdb_id=994401, defaults={'name': 'Drama995'})
+        comedy, _ = Genre.objects.get_or_create(tmdb_id=994402, defaults={'name': 'Comedy995'})
+        director = Person.objects.create(tmdb_id=994403, name='Only Director')
+
+        for i in range(10):
+            movie = Movie.objects.create(tmdb_id=994500 + i, title=f'Filler {i}', release_year=2010)
+            movie.genres.add(drama if i % 2 == 0 else comedy)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/f{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0') if i % 2 == 0 else Decimal('4.0'), movie=movie,
+            )
+        # The only director this session has ever rated -- 4 films, all 5.0,
+        # clearly a standout compared to their 3.0-4.0 filler baseline.
+        for i in range(4):
+            movie = Movie.objects.create(tmdb_id=994600 + i, title=f'Director Film {i}', release_year=2010)
+            movie.directors.add(director)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/dir{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+
+        deltas = _preference_deltas(session)
+        self.assertGreater(deltas['director']['Only Director'], 0.0)
+
+    def test_identical_ratings_do_not_crash_the_variance_fallback(self):
+        from stats.services.compare import _preference_deltas
+
+        session = ImportSession.objects.create(display_name='Alex')
+        drama, _ = Genre.objects.get_or_create(tmdb_id=994701, defaults={'name': 'Drama996'})
+        for i in range(5):
+            movie = Movie.objects.create(tmdb_id=994800 + i, title=f'Same {i}', release_year=2010)
+            movie.genres.add(drama)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/s{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('4.0'), movie=movie,
+            )
+        # Every rating is identical (4.0) -- 0 real variance anywhere. Should
+        # return cleanly (every delta is 0, since nothing differs from the
+        # overall average at all), not divide by zero.
+        deltas = _preference_deltas(session)
+        self.assertEqual(deltas['genre']['Drama996'], 0.0)
+
+    def test_within_value_variance_is_not_inflated_by_between_value_signal(self):
+        # Confirmed for real: using this person's OVERALL rating variance as
+        # the "how noisy is one rating" estimate (an earlier version of this
+        # shrinkage) conflates real between-value signal into what's supposed
+        # to be a pure noise term -- a person who rates Drama a rock-solid
+        # ~5.0 and Horror a rock-solid ~1.0 has almost NO real per-value noise
+        # (each group's own ratings barely move), but a HUGE overall variance,
+        # since that overall number is dominated by the gap between the two
+        # groups, not noise within either one. The overall-variance version
+        # would misread that gap as "ratings are just noisy in general" and
+        # over-shrink both deltas well below their true magnitude; the pooled
+        # within-value estimate (this value's own ratings' spread around ITS
+        # OWN mean, pooled across every axis) correctly reads this as "very
+        # little noise, and a very real between-value difference" and barely
+        # shrinks either delta at all.
+        from stats.services.compare import _preference_deltas, _rarity_factor
+
+        session = ImportSession.objects.create(display_name='Alex')
+        drama, _ = Genre.objects.get_or_create(tmdb_id=994901, defaults={'name': 'Drama997'})
+        horror, _ = Genre.objects.get_or_create(tmdb_id=994902, defaults={'name': 'Horror997'})
+
+        # release_year deliberately left unset on every movie here -- a first
+        # version of this fixture gave them all the same year, which (caught
+        # for real, via this exact test failing) accidentally created a
+        # SECOND axis (decade -- one value, "2010s", spanning literally every
+        # rating in the fixture) whose own "within-value" residual was the
+        # entire Drama/Horror gap itself, polluting the pooled estimate this
+        # test exists to check isn't polluted. Exactly the same failure mode
+        # this fix targets, just smuggled back in through an axis the test
+        # wasn't trying to exercise at all.
+        #
+        # Drama: tight cluster around 5.0 (tiny within-value spread).
+        for i, rating in enumerate(['4.9', '5.0', '5.0', '5.1']):
+            movie = Movie.objects.create(tmdb_id=994950 + i, title=f'Drama {i}')
+            movie.genres.add(drama)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/d{i}', title=movie.title,
+                year=None, rating=Decimal(rating), movie=movie,
+            )
+        # Horror: tight cluster around 1.0 -- same tiny within-value spread,
+        # but a world apart from Drama's own average.
+        for i, rating in enumerate(['0.9', '1.0', '1.0', '1.1']):
+            movie = Movie.objects.create(tmdb_id=994960 + i, title=f'Horror {i}')
+            movie.genres.add(horror)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/h{i}', title=movie.title,
+                year=None, rating=Decimal(rating), movie=movie,
+            )
+
+        deltas = _preference_deltas(session)
+        rated_count = 8
+        # Divide out rarity_factor (same isolation technique as the
+        # well-evidenced-vs-thin test above) to check the shrink step alone --
+        # what's left should be very close to the raw delta (Drama: +2.0 off
+        # a 3.0 overall average), not meaningfully shrunk toward 0.
+        raw_delta = 2.0
+        shrink_ratio = (deltas['genre']['Drama997'] / _rarity_factor(4, rated_count)) / raw_delta
+        self.assertGreater(shrink_ratio, 0.95)
+
+
+class LeadCastFilteringTests(TestCase):
+    """_lead_cast_credit_ids -- the preference/recommendation model's own
+    "top ACTOR_TOP_BILLING_FRACTION of the cast" actor filter, used by
+    _preference_deltas and _rank_watchlist_matches (and therefore
+    _preference_score/_shared_trait_bonus) instead of
+    _actor_averages' own wider _cameo_credit_ids rule -- Favorite Actors/Top
+    Actors/Shared Actors (top_actors_a/b, covered separately in
+    BuildCompareContextTests) deliberately keep the old cameo-only exclusion,
+    per an explicit scope decision, not an oversight."""
+
+    def test_top_20_percent_of_a_10_person_cast_is_the_top_2(self):
+        from stats.services.compare import _lead_cast_credit_ids
+
+        movie = _make_movie(995001, 'Ten Cast Film', 2020, 100, 'Drama')
+        people = [Person.objects.create(tmdb_id=995100 + i, name=f'Cast {i}') for i in range(10)]
+        credit_ids = {}
+        for order, person in enumerate(people):
+            credit = Credit.objects.create(movie=movie, person=person, order=order)
+            credit_ids[order] = credit.id
+
+        lead_ids = _lead_cast_credit_ids([movie.tmdb_id])
+        self.assertEqual(lead_ids, {credit_ids[0], credit_ids[1]})
+
+    def test_actor_axis_only_counts_lead_billed_credits(self):
+        from stats.services.compare import _preference_deltas
+
+        session = ImportSession.objects.create(display_name='Alex')
+        lead_actor = Person.objects.create(tmdb_id=995201, name='Lead Actor')
+        support_actor = Person.objects.create(tmdb_id=995202, name='Support Actor')
+
+        # 10 filler films establish a real baseline.
+        for i in range(10):
+            movie = Movie.objects.create(tmdb_id=995300 + i, title=f'Filler {i}')
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/f{i}', title=movie.title,
+                year=None, rating=Decimal('3.0'), movie=movie,
+            )
+        # A well-evidenced pair of films, credited on a 10-person cast: Lead
+        # Actor at order 1 (1/10 = 0.1 < 0.2, top 20%, included), Support
+        # Actor at order 2 (2/10 = 0.2, NOT < 0.2, just past the cutoff,
+        # excluded) -- both rated identically, so any difference in whether
+        # they get a delta at all is purely the billing cutoff, not the
+        # rating pattern.
+        filler_cast = [
+            Person.objects.get_or_create(tmdb_id=995500 + i, defaults={'name': f'Filler Cast {i}'})[0]
+            for i in range(8)
+        ]
+        cast = [filler_cast[0], lead_actor, support_actor] + filler_cast[1:]
+        for j in range(4):
+            movie = Movie.objects.create(tmdb_id=995400 + j, title=f'Cast Film {j}')
+            for order, person in enumerate(cast):
+                Credit.objects.create(movie=movie, person=person, order=order)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/c{j}', title=movie.title,
+                year=None, rating=Decimal('5.0'), movie=movie,
+            )
+
+        deltas = _preference_deltas(session)
+        self.assertIn('Lead Actor', deltas['actor'])
+        self.assertNotIn('Support Actor', deltas['actor'])
+
+
+class KeywordAxisTests(TestCase):
+    """'keyword' -- the 8th _PREFERENCE_AXES entry (TMDB plot/theme tags),
+    added after leave-one-out holdout validation against real already-rated
+    films confirmed it improves prediction accuracy (see RECOMMENDATION_WEIGHTS'
+    own comment). Flows through the exact same empirical-Bayes-shrinkage/
+    least-misery machinery every other axis already uses -- these tests check
+    it's actually wired through _preference_deltas/_preference_score/
+    _shared_trait_bonus, not the shrinkage math itself (already covered for
+    every axis via genre in PreferenceDeltasEmpiricalBayesTests)."""
+
+    def test_preference_deltas_includes_a_keyword_delta(self):
+        from stats.services.compare import _preference_deltas
+
+        session = ImportSession.objects.create(display_name='Alex')
+        heist = Keyword.objects.create(tmdb_id=995001, name='heist995')
+        filler_keyword = Keyword.objects.create(tmdb_id=995002, name='filler-kw995')
+
+        for i in range(16):
+            movie = Movie.objects.create(tmdb_id=995100 + i, title=f'Filler {i}', release_year=2010)
+            movie.keywords.add(filler_keyword)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/f{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        for i in range(4):
+            movie = Movie.objects.create(tmdb_id=995200 + i, title=f'Heist {i}', release_year=2010)
+            movie.keywords.add(heist)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/h{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+
+        deltas = _preference_deltas(session)
+        self.assertIn('keyword', deltas)
+        self.assertGreater(deltas['keyword']['heist995'], 0)
+
+    def test_preference_score_is_boosted_by_a_matching_keyword(self):
+        from stats.services.compare import _preference_deltas, _preference_score
+
+        session = ImportSession.objects.create(display_name='Alex')
+        heist = Keyword.objects.create(tmdb_id=995003, name='heist995b')
+        filler_keyword = Keyword.objects.create(tmdb_id=995004, name='filler-kw995b')
+
+        for i in range(16):
+            movie = Movie.objects.create(tmdb_id=995300 + i, title=f'Filler {i}', release_year=2010)
+            movie.keywords.add(filler_keyword)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/f{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+            )
+        for i in range(4):
+            movie = Movie.objects.create(tmdb_id=995400 + i, title=f'Heist {i}', release_year=2010)
+            movie.keywords.add(heist)
+            RatingEntry.objects.create(
+                import_session=session, letterboxd_uri=f'https://boxd.it/h{i}', title=movie.title,
+                year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+            )
+        deltas = _preference_deltas(session)
+
+        with_keyword = Movie.objects.create(tmdb_id=995500, title='Candidate With Keyword', release_year=2020)
+        with_keyword.keywords.add(heist)
+        without_keyword = Movie.objects.create(tmdb_id=995501, title='Candidate Without Keyword', release_year=2020)
+
+        score_with, _ = _preference_score(with_keyword, deltas, actor_names=[])
+        score_without, _ = _preference_score(without_keyword, deltas, actor_names=[])
+        self.assertGreater(score_with, score_without)
+
+    def test_shared_trait_bonus_counts_a_shared_keyword(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+
+        keyword = Keyword.objects.create(tmdb_id=995005, name='unreliable narrator995')
+        movie = Movie.objects.create(tmdb_id=995600, title='Shared Keyword Film', release_year=2020)
+        movie.keywords.add(keyword)
+
+        base = {axis: {} for axis in ('genre', 'director', 'actor', 'country', 'language', 'decade', 'runtime')}
+        deltas_a = {**base, 'keyword': {'unreliable narrator995': 0.4}, 'weights': dict(RECOMMENDATION_WEIGHTS)}
+        deltas_b = {**base, 'keyword': {'unreliable narrator995': 0.3}, 'weights': dict(RECOMMENDATION_WEIGHTS)}
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        self.assertAlmostEqual(bonus, RECOMMENDATION_WEIGHTS['keyword'] * min(0.4, 0.3))
+
+
+class SharedTraitBonusTests(TestCase):
+    """_shared_trait_bonus -- the small additive ranking nudge for a watchlist
+    match where both people have an independently well-evidenced, genuinely
+    positive delta for the exact same trait value, not just two unrelated
+    reasons the film scores well for each of them separately."""
+
+    def _deltas(self, **overrides):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS
+        base = {
+            'genre': {}, 'director': {}, 'actor': {}, 'country': {}, 'language': {}, 'decade': {}, 'runtime': {},
+            'weights': dict(RECOMMENDATION_WEIGHTS),
+        }
+        base.update(overrides)
+        return base
+
+    def test_shared_value_above_threshold_on_both_sides_contributes(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+        director = Person.objects.create(tmdb_id=993001, name='Shared Director')
+        movie = Movie.objects.create(tmdb_id=993101, title='Shared Director Film', release_year=2020)
+        movie.directors.add(director)
+
+        deltas_a = self._deltas(director={'Shared Director': 0.4})
+        deltas_b = self._deltas(director={'Shared Director': 0.3})
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        self.assertAlmostEqual(bonus, RECOMMENDATION_WEIGHTS['director'] * min(0.4, 0.3))
+
+    def test_value_below_threshold_on_either_side_contributes_nothing(self):
+        from stats.services.compare import _shared_trait_bonus
+        director = Person.objects.create(tmdb_id=993002, name='Weak Director')
+        movie = Movie.objects.create(tmdb_id=993102, title='Weak Director Film', release_year=2020)
+        movie.directors.add(director)
+
+        # A is confident, B barely registers -- not a shared preference.
+        deltas_a = self._deltas(director={'Weak Director': 0.4})
+        deltas_b = self._deltas(director={'Weak Director': 0.05})
+        self.assertEqual(_shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[]), 0.0)
+
+    def test_value_missing_from_one_side_contributes_nothing(self):
+        from stats.services.compare import _shared_trait_bonus
+        director = Person.objects.create(tmdb_id=993003, name='One Sided Director')
+        movie = Movie.objects.create(tmdb_id=993103, title='One Sided Director Film', release_year=2020)
+        movie.directors.add(director)
+
+        deltas_a = self._deltas(director={'One Sided Director': 0.5})
+        deltas_b = self._deltas()  # B has never rated anything from this director
+        self.assertEqual(_shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[]), 0.0)
+
+    def test_multiple_shared_genres_are_averaged_within_the_axis(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+        horror, _ = Genre.objects.get_or_create(tmdb_id=993201, defaults={'name': 'Horror993'})
+        comedy, _ = Genre.objects.get_or_create(tmdb_id=993202, defaults={'name': 'Comedy993'})
+        movie = Movie.objects.create(tmdb_id=993104, title='Horror Comedy', release_year=2020)
+        movie.genres.add(horror, comedy)
+
+        deltas_a = self._deltas(genre={'Horror993': 0.4, 'Comedy993': 0.2})
+        deltas_b = self._deltas(genre={'Horror993': 0.3, 'Comedy993': 0.5})
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        # min(0.4, 0.3)=0.3 for Horror, min(0.2, 0.5)=0.2 for Comedy -- averaged
+        # within the genre axis, not summed, same rule _preference_score's own
+        # taste_score follows.
+        self.assertAlmostEqual(bonus, RECOMMENDATION_WEIGHTS['genre'] * ((0.3 + 0.2) / 2))
+
+    def test_weight_is_averaged_across_both_people(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+        director = Person.objects.create(tmdb_id=993004, name='Adaptive Director')
+        movie = Movie.objects.create(tmdb_id=993105, title='Adaptive Director Film', release_year=2020)
+        movie.directors.add(director)
+
+        deltas_a = self._deltas(
+            director={'Adaptive Director': 0.4}, weights={**RECOMMENDATION_WEIGHTS, 'director': 0.6},
+        )
+        deltas_b = self._deltas(
+            director={'Adaptive Director': 0.3}, weights={**RECOMMENDATION_WEIGHTS, 'director': 0.2},
+        )
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        self.assertAlmostEqual(bonus, ((0.6 + 0.2) / 2) * min(0.4, 0.3))
+
+    def test_actor_axis_uses_the_passed_actor_names_not_movie_credits(self):
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+        movie = Movie.objects.create(tmdb_id=993106, title='Actor Film', release_year=2020)
+        deltas_a = self._deltas(actor={'Shared Actor': 0.4})
+        deltas_b = self._deltas(actor={'Shared Actor': 0.3})
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=['Shared Actor'])
+        self.assertAlmostEqual(bonus, RECOMMENDATION_WEIGHTS['actor'] * min(0.4, 0.3))
+
+    def test_axes_at_or_above_the_combo_floor_get_a_combo_multiplier(self):
+        from stats.services.compare import (
+            RECOMMENDATION_WEIGHTS, SHARED_TRAIT_COMBO_BONUS_PER_AXIS, SHARED_TRAIT_COMBO_MIN_AXES,
+            _shared_trait_bonus,
+        )
+        director = Person.objects.create(tmdb_id=993005, name='Combo Director')
+        genre, _ = Genre.objects.get_or_create(tmdb_id=993203, defaults={'name': 'Combo Genre'})
+        country, _ = Country.objects.get_or_create(code='CB', defaults={'name': 'Combo Country'})
+        movie = Movie.objects.create(tmdb_id=993107, title='Combo Film', release_year=2020)
+        movie.directors.add(director)
+        movie.genres.add(genre)
+        movie.countries.add(country)
+
+        deltas_a = self._deltas(
+            director={'Combo Director': 0.4}, genre={'Combo Genre': 0.3}, country={'Combo Country': 0.5},
+        )
+        deltas_b = self._deltas(
+            director={'Combo Director': 0.3}, genre={'Combo Genre': 0.2}, country={'Combo Country': 0.4},
+        )
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        # 3 qualifying axes (director, genre, country) -- at SHARED_TRAIT_COMBO_MIN_AXES,
+        # the floor this session's data showed most real candidates DON'T clear (most
+        # only reach 2). Their individual contributions sum first, same as always, then
+        # the whole total is scaled up by the combo multiplier for clearing that floor.
+        base_bonus = (
+            RECOMMENDATION_WEIGHTS['director'] * min(0.4, 0.3)
+            + RECOMMENDATION_WEIGHTS['genre'] * min(0.3, 0.2)
+            + RECOMMENDATION_WEIGHTS['country'] * min(0.5, 0.4)
+        )
+        expected = base_bonus * (1 + SHARED_TRAIT_COMBO_BONUS_PER_AXIS * (3 - (SHARED_TRAIT_COMBO_MIN_AXES - 1)))
+        self.assertAlmostEqual(bonus, expected)
+
+    def test_axes_below_the_combo_floor_get_no_combo_multiplier(self):
+        # SHARED_TRAIT_COMBO_MIN_AXES=3 -- 1 or 2 qualifying axes stay at plain
+        # summation, no multiplier on top, since most real candidates already clear
+        # 2 on their own (see SHARED_TRAIT_COMBO_MIN_AXES's own comment for why 2
+        # wasn't a distinctive-enough bar). Covers both the 1-axis and 2-axis cases
+        # in one test since they're the same code path (max(0, ...) clamps both to 0).
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+        director = Person.objects.create(tmdb_id=993006, name='Solo Director')
+        solo_movie = Movie.objects.create(tmdb_id=993108, title='Solo Director Film', release_year=2020)
+        solo_movie.directors.add(director)
+
+        deltas_a = self._deltas(director={'Solo Director': 0.4})
+        deltas_b = self._deltas(director={'Solo Director': 0.3})
+        bonus = _shared_trait_bonus(solo_movie, deltas_a, deltas_b, actor_names=[])
+        self.assertAlmostEqual(bonus, RECOMMENDATION_WEIGHTS['director'] * min(0.4, 0.3))
+
+        genre, _ = Genre.objects.get_or_create(tmdb_id=993205, defaults={'name': 'Two Axis Genre'})
+        two_axis_movie = Movie.objects.create(tmdb_id=993109, title='Two Axis Film', release_year=2020)
+        two_axis_movie.directors.add(director)
+        two_axis_movie.genres.add(genre)
+
+        deltas_a = self._deltas(director={'Solo Director': 0.4}, genre={'Two Axis Genre': 0.3})
+        deltas_b = self._deltas(director={'Solo Director': 0.3}, genre={'Two Axis Genre': 0.2})
+        bonus = _shared_trait_bonus(two_axis_movie, deltas_a, deltas_b, actor_names=[])
+        expected = (
+            RECOMMENDATION_WEIGHTS['director'] * min(0.4, 0.3) + RECOMMENDATION_WEIGHTS['genre'] * min(0.3, 0.2)
+        )
+        self.assertAlmostEqual(bonus, expected)
+
+    def test_country_and_language_together_count_as_one_axis_toward_the_combo_floor(self):
+        # country + language + director is 3 RAW qualifying axes, but country and
+        # language collapse to one slot (COMBO_COUNT_AXIS_GROUP), leaving only 2
+        # distinct groups -- below SHARED_TRAIT_COMBO_MIN_AXES=3, so no combo
+        # multiplier, even though all three axes still contribute their own term
+        # to the base sum below.
+        from stats.services.compare import RECOMMENDATION_WEIGHTS, _shared_trait_bonus
+        director = Person.objects.create(tmdb_id=993007, name='French Director')
+        country, _ = Country.objects.get_or_create(code='FR', defaults={'name': 'France'})
+        movie = Movie.objects.create(
+            tmdb_id=993110, title='French Film', release_year=2020, original_language='fr',
+        )
+        movie.directors.add(director)
+        movie.countries.add(country)
+
+        deltas_a = self._deltas(
+            director={'French Director': 0.4}, country={'France': 0.5}, language={'fr': 0.6},
+        )
+        deltas_b = self._deltas(
+            director={'French Director': 0.3}, country={'France': 0.4}, language={'fr': 0.5},
+        )
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        expected = (
+            RECOMMENDATION_WEIGHTS['director'] * min(0.4, 0.3)
+            + RECOMMENDATION_WEIGHTS['country'] * min(0.5, 0.4)
+            + RECOMMENDATION_WEIGHTS['language'] * min(0.6, 0.5)
+        )
+        self.assertAlmostEqual(bonus, expected)
+
+    def test_country_and_language_plus_two_more_axes_clears_the_combo_floor(self):
+        # Adding a 4th, genuinely distinct qualifying axis (genre) on top of the
+        # country+language+director case above brings the grouped count to 3
+        # (director, genre, country/language-as-one) -- right at
+        # SHARED_TRAIT_COMBO_MIN_AXES, so the combo multiplier now applies.
+        from stats.services.compare import (
+            RECOMMENDATION_WEIGHTS, SHARED_TRAIT_COMBO_BONUS_PER_AXIS, SHARED_TRAIT_COMBO_MIN_AXES,
+            _shared_trait_bonus,
+        )
+        director = Person.objects.create(tmdb_id=993008, name='French Director Two')
+        country, _ = Country.objects.get_or_create(code='FR', defaults={'name': 'France'})
+        genre, _ = Genre.objects.get_or_create(tmdb_id=993206, defaults={'name': 'French Genre'})
+        movie = Movie.objects.create(
+            tmdb_id=993111, title='French Film Two', release_year=2020, original_language='fr',
+        )
+        movie.directors.add(director)
+        movie.countries.add(country)
+        movie.genres.add(genre)
+
+        deltas_a = self._deltas(
+            director={'French Director Two': 0.4}, country={'France': 0.5}, language={'fr': 0.6},
+            genre={'French Genre': 0.3},
+        )
+        deltas_b = self._deltas(
+            director={'French Director Two': 0.3}, country={'France': 0.4}, language={'fr': 0.5},
+            genre={'French Genre': 0.2},
+        )
+
+        bonus = _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names=[])
+        base_bonus = (
+            RECOMMENDATION_WEIGHTS['director'] * min(0.4, 0.3)
+            + RECOMMENDATION_WEIGHTS['country'] * min(0.5, 0.4)
+            + RECOMMENDATION_WEIGHTS['language'] * min(0.6, 0.5)
+            + RECOMMENDATION_WEIGHTS['genre'] * min(0.3, 0.2)
+        )
+        expected = base_bonus * (1 + SHARED_TRAIT_COMBO_BONUS_PER_AXIS * (3 - (SHARED_TRAIT_COMBO_MIN_AXES - 1)))
+        self.assertAlmostEqual(bonus, expected)
+
+    def test_shared_and_unshared_director_picks_tie_now_that_the_bonus_is_zeroed(self):
+        # Originally named test_mutual_director_outranks_an_otherwise_identically_
+        # scored_film, when SHARED_TRAIT_BONUS_WEIGHT was still nonzero: both
+        # candidates are engineered to have IDENTICAL score_a/score_b (same overall
+        # averages, same director-axis delta magnitude, same adaptive weight, by
+        # symmetry) -- the only difference is which director earns that delta on
+        # each side. "Shared Pick" is directed by the one director both people
+        # love; "Not Shared Pick" is co-directed by two *different* directors, one
+        # only Alex loves and one only Sam loves, individually worth exactly as
+        # much to each of them.
+        #
+        # SHARED_TRAIT_BONUS_WEIGHT is now 0 (see that constant's own comment --
+        # leave-one-out holdout validation against real already-rated films, on two
+        # independent real pairs, found raising it measurably hurt prediction
+        # accuracy rather than helping), so _shared_trait_bonus's own nonzero
+        # output for "Shared Pick" no longer reaches the final ranking score at
+        # all -- these two now tie exactly and fall back to (title, year)
+        # alphabetical order, same as any other genuine tie in this file. This
+        # test now guards that: if SHARED_TRAIT_BONUS_WEIGHT is ever raised again
+        # without a conscious decision, this would start failing as the ranking
+        # silently diverges from a real tie, which is exactly the signal that
+        # should prompt someone to go find out why it changed.
+        session_a = ImportSession.objects.create(display_name='Alex')
+        session_b = ImportSession.objects.create(display_name='Sam')
+
+        director_x = Person.objects.create(tmdb_id=993301, name='Director X')  # both love
+        director_y = Person.objects.create(tmdb_id=993302, name='Director Y')  # only Alex loves
+        director_z = Person.objects.create(tmdb_id=993303, name='Director Z')  # only Sam loves
+
+        # A shared baseline of filler films, identical for both, so their
+        # overall averages (and therefore every delta computed against it)
+        # land on the same numbers by construction.
+        for i in range(10):
+            movie = Movie.objects.create(tmdb_id=993400 + i, title=f'Filler {i}', release_year=2010)
+            for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+                RatingEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}f{i}', title=movie.title,
+                    year=movie.release_year, rating=Decimal('3.0'), movie=movie,
+                )
+
+        def _rate_director(director, sessions_and_prefixes, id_offset):
+            for i in range(3):
+                movie = Movie.objects.create(tmdb_id=id_offset + i, title=f'{director.name} Film {i}', release_year=2010)
+                movie.directors.add(director)
+                for session, prefix in sessions_and_prefixes:
+                    RatingEntry.objects.create(
+                        import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}{director.name}{i}',
+                        title=movie.title, year=movie.release_year, rating=Decimal('5.0'), movie=movie,
+                    )
+
+        _rate_director(director_x, [(session_a, 'a'), (session_b, 'b')], 993500)  # mutual
+        _rate_director(director_y, [(session_a, 'a')], 993600)  # Alex only
+        _rate_director(director_z, [(session_b, 'b')], 993700)  # Sam only
+
+        shared_pick = Movie.objects.create(tmdb_id=993800, title='Shared Pick', release_year=2020)
+        shared_pick.directors.add(director_x)
+        not_shared_pick = Movie.objects.create(tmdb_id=993801, title='Not Shared Pick', release_year=2020)
+        not_shared_pick.directors.add(director_y, director_z)
+
+        for movie in [shared_pick, not_shared_pick]:
+            for session, prefix in [(session_a, 'a'), (session_b, 'b')]:
+                WatchlistEntry.objects.create(
+                    import_session=session, letterboxd_uri=f'https://boxd.it/{prefix}wl{movie.tmdb_id}',
+                    title=movie.title, year=movie.release_year, movie=movie,
+                )
+
+        context = build_compare_context(session_a, session_b)
+        titles = [f['title'] for f in context['watchlist_matches']]
+        # Alphabetical: 'Not Shared Pick' < 'Shared Pick'.
+        self.assertLess(titles.index('Not Shared Pick'), titles.index('Shared Pick'))
 
 
 class TopUnseenByOtherTests(TestCase):
