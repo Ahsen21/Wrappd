@@ -59,6 +59,7 @@ class EnrichImportSessionTests(TransactionTestCase):
                 'spoken_languages': [{'iso_639_1': 'en', 'name': 'English', 'english_name': 'English'}],
                 'production_countries': [{'iso_3166_1': 'US', 'name': 'United States of America'}],
                 'genres': [{'id': 18, 'name': 'Drama'}],
+                'keywords': {'keywords': [{'id': 818, 'name': 'atomic bomb'}, {'id': 9663, 'name': 'biography'}]},
                 'credits': {
                     'crew': [{'id': 1, 'name': 'Christopher Nolan', 'job': 'Director', 'profile_path': None}],
                     'cast': [{'id': 2, 'name': 'Cillian Murphy', 'character': 'Oppenheimer', 'order': 0, 'profile_path': None}],
@@ -75,6 +76,7 @@ class EnrichImportSessionTests(TransactionTestCase):
         self.assertEqual(movie.original_language, 'English')
         self.assertEqual(list(movie.countries.values_list('name', flat=True)), ['United States of America'])
         self.assertTrue(Country.objects.filter(code='US').exists())
+        self.assertEqual(set(movie.keywords.values_list('name', flat=True)), {'atomic bomb', 'biography'})
 
         entry = session.diary_entries.get()
         self.assertEqual(entry.movie_id, 872585)
