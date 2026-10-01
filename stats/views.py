@@ -57,7 +57,12 @@ def _render_dashboard_shell(request, import_session):
     exclude_shorts, year = _dashboard_query_params(request)
     content_url = reverse('stats:dashboard_content', kwargs={'session_id': import_session.id})
     content_url += _dashboard_query_string(exclude_shorts, year)
-    return render(request, 'stats/dashboard.html', {'import_session': import_session, 'content_url': content_url})
+    # year is threaded through so the skeleton can shape itself like the real page
+    # for this mode (7 vs. 8 stat tiles, "{{ year }} Releases" vs. "Ratings" as the
+    # first section) without needing the actual data behind either one.
+    return render(
+        request, 'stats/dashboard.html', {'import_session': import_session, 'content_url': content_url, 'year': year}
+    )
 
 
 def dashboard(request, session_id):
