@@ -1,0 +1,1203 @@
+{% load humanize %}
+
+  {% if unenriched_count %}
+    <div class="card muted">{{ unenriched_count }} film(s) couldn't be matched to TMDB yet and are excluded from genre/director/cast/runtime breakdowns.</div>
+  {% endif %}
+
+  <div class="hero" {% if hero_poster_url %}style="--hero-image: url('{{ hero_poster_url }}');"{% endif %}>
+    <div class="hero-top-row">
+      <p class="hero-eyebrow">Director's Cut</p>
+      <div class="hero-top-row-controls">
+        <a
+          href="{% if exclude_shorts %}{{ dashboard_path }}{% if year %}?year={{ year }}{% endif %}{% else %}?shorts=exclude{% if year %}&year={{ year }}{% endif %}{% endif %}"
+          class="shorts-toggle{% if exclude_shorts %} shorts-toggle--on{% endif %}"
+          role="switch" aria-checked="{% if exclude_shorts %}true{% else %}false{% endif %}"
+          title="{% if exclude_shorts %}Showing films 60+ min only -- click to include shorts{% else %}Click to exclude short films (under 60 min) from every stat on this page{% endif %}"
+        >
+          Exclude shorts
+          <span class="shorts-toggle-track"><span class="shorts-toggle-thumb"></span></span>
+        </a>
+      </div>
+    </div>
+    <div class="hero-heading">
+      <h1>{{ import_session.display_name|default:"Your" }} stats{% if year %} <span class="hero-heading-year">— {{ year }}</span>{% endif %}</h1>
+      <button
+        type="button" class="hero-share-btn" id="share-copy-btn"
+        title="Copy link -- anyone with it can view your stats" aria-label="Copy link to this dashboard"
+        data-share-url="{{ share_url }}"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+      </button>
+      {% if available_years %}
+        <div class="toggle-group year-picker">
+          <a
+            href="{{ dashboard_path }}{% if exclude_shorts %}?shorts=exclude{% endif %}"
+            class="toggle-btn{% if not year %} active{% endif %}"
+          >All time</a>
+          {% for y in available_years %}
+            <a
+              href="?year={{ y }}{% if exclude_shorts %}&shorts=exclude{% endif %}"
+              class="toggle-btn{% if y == year %} active{% endif %}"
+            >{{ y }}</a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+    <script>
+      (function () {
+        const btn = document.getElementById('share-copy-btn');
+        if (!btn) return;
+        const linkIcon = btn.innerHTML;
+        const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+          + 'stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">'
+          + '<polyline points="20 6 9 17 4 12"></polyline></svg>';
+        btn.addEventListener('click', function () {
+          const url = btn.dataset.shareUrl;
+          const showCopied = function () {
+            btn.innerHTML = checkIcon;
+            btn.classList.add('hero-share-btn--copied');
+            setTimeout(function () {
+              btn.innerHTML = linkIcon;
+              btn.classList.remove('hero-share-btn--copied');
+            }, 1500);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(showCopied).catch(function () {
+              const temp = document.createElement('input');
+              temp.value = url;
+              document.body.appendChild(temp);
+              temp.select();
+              document.execCommand('copy');
+              temp.remove();
+              showCopied();
+            });
+          } else {
+            const temp = document.createElement('input');
+            temp.value = url;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            temp.remove();
+            showCopied();
+          }
+        });
+      })();
+    </script>
+
+    <h2 class="sr-only">Overview</h2>
+    <div class="grid hero-grid">
+      <div class="stat">
+        <div class="value">{{ films_watched_total|intcomma }}</div>
+        <div class="label th-with-tip">
+          Films watched
+          {% if excluded_tv_count %}
+            <span class="info-tip" tabindex="0">i<span class="tip-bubble">Excluded {{ excluded_tv_count }} TV show{{ excluded_tv_count|pluralize }}: {% for entry in excluded_tv_titles %}{{ entry.title }}{% if entry.year %} ({{ entry.year }}){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</span></span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="stat"><div class="value">{{ total_runtime_hours|default:"0"|intcomma }}</div><div class="label">Hours watched</div></div>
+      <div class="stat"><div class="value">{{ total_films|intcomma }}</div><div class="label">Films logged</div></div>
+      <div class="stat"><div class="value">{{ films_rated|intcomma }}</div><div class="label">Films rated</div></div>
+      <div class="stat"><div class="value">{{ likes_count|intcomma }}</div><div class="label">Likes</div></div>
+      <div class="stat"><div class="value">{{ reviews_count|intcomma }}</div><div class="label">Reviews</div></div>
+      <div class="stat"><div class="value">{{ rewatch_count|intcomma }}</div><div class="label">Rewatches</div></div>
+      {% if not year %}
+        <div class="stat"><div class="value">{{ watchlist_count|intcomma }}</div><div class="label">Watchlist</div></div>
+      {% endif %}
+    </div>
+
+    {% if favorites %}
+      <div class="hero-favs">
+        <h2 class="hero-favs-label">Favorites</h2>
+        <div class="favs">
+          {% for fav in favorites %}
+            <div class="fav-card">
+              {% if fav.movie.poster_url %}
+                <img src="{{ fav.movie.poster_url }}" alt="{{ fav.title }}" title="{{ fav.title|default:"Unknown title" }}{% if fav.year %} ({{ fav.year }}){% endif %}">
+              {% else %}
+                <div class="fav-placeholder" title="{{ fav.title|default:"Unknown title" }}{% if fav.year %} ({{ fav.year }}){% endif %}">🎬</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <nav class="section-nav">
+    {% if year %}
+      <a href="#same-year-releases" class="section-nav-link active" data-section="same-year-releases">{{ year }} Releases</a>
+    {% endif %}
+    <a href="#ratings" class="section-nav-link{% if not year %} active{% endif %}" data-section="ratings">Ratings</a>
+    <a href="#what-you-watch" class="section-nav-link" data-section="what-you-watch">What You Watch</a>
+    <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
+    <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
+    {% if not year %}
+      <a href="#rewatches" class="section-nav-link" data-section="rewatches">Rewatches</a>
+    {% endif %}
+    {% if recommendations %}
+      <a href="#watchlist" class="section-nav-link" data-section="watchlist">Watchlist</a>
+    {% endif %}
+  </nav>
+
+  {% if year %}
+    <div class="jump-target" id="same-year-releases">
+    <h2 class="section-heading"><span class="section-heading-tick">{{ year }} Releases</span></h2>
+    <p class="muted">How caught up you were on {{ year }}'s new releases.</p>
+
+    {% if same_year_releases.count %}
+      <div class="card">
+        <h3>Ratings</h3>
+        <p class="muted">
+          <strong>{{ same_year_releases.count }} films ({{ same_year_releases.pct }}%)</strong> of everything you watched
+          &mdash; average <strong>{% if same_year_releases.avg_rating %}{{ same_year_releases.avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong>
+        </p>
+        <canvas id="sameYearRatingDistributionChart"></canvas>
+      </div>
+
+
+      <div class="card">
+        <h3>Your favorite films of {{ year }} </h3>
+        {% if same_year_releases.films %}
+          <div class="favs favs--six">
+            {% for film in same_year_releases.films %}
+              <div class="fav-card">
+                {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+                <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty-state">None rated yet</p>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="card">
+        <p class="empty-state">No {{ year }} releases logged yet.</p>
+      </div>
+    {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="jump-target" id="ratings">
+  <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
+  <p class="muted">What you watch and how you rate it{% if year %} in {{ year }}{% endif %}.</p>
+
+  {% if insights.featured or insights.stats %}
+    <div class="card">
+      <h3>Highlights</h3>
+      <p class="muted">Some featured insights about your ratings.</p>
+      {% if insights.featured %}
+        <div class="ib-grid">
+          {% for card in insights.featured %}
+            <div class="ib-tile{% if card.drill %} ib-tile--clickable{% endif %}"{% if card.drill %} role="button" tabindex="0" data-drill-kind="{{ card.drill.kind }}" data-drill-p1="{{ card.drill.p1 }}" data-drill-p2="{{ card.drill.p2 }}" data-drill-title="{{ card.label }} · {{ card.value }}"{% endif %}>
+              {% if card.duo %}
+                <div class="ib-media ib-media--duo">
+                  {% if card.duo.a.image %}<img src="{{ card.duo.a.image }}" alt="{{ card.duo.a.name }}" title="{{ card.duo.a.name }}">{% else %}<span title="{{ card.duo.a.name }}">👤</span>{% endif %}
+                  {% if card.duo.b.image %}<img src="{{ card.duo.b.image }}" alt="{{ card.duo.b.name }}" title="{{ card.duo.b.name }}">{% else %}<span title="{{ card.duo.b.name }}">👤</span>{% endif %}
+                </div>
+              {% elif card.image %}
+                <div class="ib-media">
+                  <img class="ib-poster" src="{{ card.image }}" alt="{{ card.value }}" title="{{ card.value }}">
+                </div>
+              {% else %}
+                <div class="ib-media ib-media--ph">🎬</div>
+              {% endif %}
+              <div class="ib-foot">
+                <p class="ib-eyebrow">{{ card.label }}</p>
+                <p class="ib-value">{{ card.value }}</p>
+                <p class="ib-meta">{{ card.stat }}</p>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if insights.stats %}
+        <div class="ib-strip">
+          {% for card in insights.stats %}
+            <div class="ib-stat">
+              <p class="ib-eyebrow">{{ card.label }}</p>
+              {% if card.pct is not None %}
+                <div class="ib-gauge" style="--ib-gauge-pct: {{ card.pct }};">
+                  <span class="ib-gauge-hole"></span>
+                  <span class="ib-gauge-label">{{ card.value }}</span>
+                </div>
+              {% elif card.flags %}
+                <div class="ib-val">{{ card.value }}</div>
+                <p class="ib-stat-sub">{% for flag in card.flags %}<span class="flag">{{ flag }}</span>{% endfor %}{% if card.flags_more %}<span class="more">{{ card.flags_more }}</span>{% endif %}</p>
+              {% elif card.direction %}
+                <div class="ib-val ib-val--shift">
+                  {% if card.direction == 'up' %}
+                    <svg class="ib-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6 -6l4 4l8 -8"/><path d="M14 7l7 0l0 7"/></svg>
+                  {% else %}
+                    <svg class="ib-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6 6l4 -4l8 8"/><path d="M14 17l7 0l0 -7"/></svg>
+                  {% endif %}{{ card.value }}
+                </div>
+                {% if card.sub %}<p class="ib-stat-sub">{{ card.sub }}</p>{% endif %}
+              {% else %}
+                <div class="ib-val ib-val--flat">{{ card.value }}</div>
+                {% if card.sub %}<p class="ib-stat-sub">{{ card.sub }}</p>{% endif %}
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h3>Rating distribution</h3>
+    {% if year %}
+      <div class="toggle-group" data-chart-toggle="ratingDistribution">
+        <button type="button" class="toggle-btn active" data-view="all">All watches</button>
+        <button type="button" class="toggle-btn" data-view="first-watch">First watches</button>
+      </div>
+    {% endif %}
+    <p class="muted">Average rating: <strong id="ratingDistributionAvg">{% if avg_rating %}{{ avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong></p>
+    <canvas id="ratingDistributionChart"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Taste vs. the crowd</h3>
+    <p class="muted">Your rating compared to TMDB's community average.</p>
+    <div class="grid">
+      <div class="stat">
+        {% if taste.generosity_score == None %}
+          <div class="value">—</div>
+          <div class="label">Not enough data yet</div>
+        {% else %}
+          <div class="value">{% if taste.generosity_score > 0 %}+{% endif %}{{ taste.generosity_score|floatformat:2 }}</div>
+          <div class="label">{% if taste.generosity_score > 0 %}More generous{% elif taste.generosity_score < 0 %}Harsher{% else %}Generosity{% endif %} than the crowd</div>
+        {% endif %}
+      </div>
+    </div>
+    <h4>Biggest over-rates</h4>
+    {% if taste.overrates %}
+      <div class="favs favs--six">
+        {% for film in taste.overrates %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-state">No data yet</p>
+    {% endif %}
+    <h4>Biggest under-rates</h4>
+    {% if taste.underrates %}
+      <div class="favs favs--six">
+        {% for film in taste.underrates %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-state">No data yet</p>
+    {% endif %}
+  </div>
+  </div>
+
+  <div class="jump-target" id="what-you-watch">
+
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">What You Watch</span></h2>
+  <p class="muted">Your most watched genres, languages, and more{% if year %} in {{ year }}{% endif %}.</p>
+
+  <div class="card">
+    <h3>Films per release year</h3>
+    <div class="toggle-group" data-chart-toggle="releaseYear">
+      <button type="button" class="toggle-btn active" data-view="watched">Films watched</button>
+      <button type="button" class="toggle-btn" data-view="rated">Avg rating</button>
+    </div>
+    <canvas id="releaseYearChart"></canvas>
+  </div>
+
+  <div class="three-col">
+    <div class="card">
+      <h3>Genres</h3>
+      <div class="toggle-group" data-chart-toggle="genres">
+        <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+        <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      </div>
+      <div class="h-chart"><canvas id="genresChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>Countries</h3>
+      <div class="toggle-group" data-chart-toggle="country">
+        <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+        <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      </div>
+      <div class="h-chart"><canvas id="countryChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>Languages</h3>
+      <div class="toggle-group" data-chart-toggle="language">
+        <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+        <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      </div>
+      <div class="h-chart"><canvas id="languageChart"></canvas></div>
+    </div>
+  </div>
+  </div>
+
+  <div class="jump-target" id="favorite-people">
+
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Favorite People</span></h2>
+  <p class="muted">The directors and actors behind your favorite films{% if year %} in {{ year }}{% endif %}.</p>
+
+  <div class="card">
+    <h3>Directors</h3>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+      <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      <button type="button" class="toggle-btn" data-view="true_score">True score</button>
+    </div>
+    <p class="muted caption"><i>Note: Directors need at least {{ min_favorite_director }} rated films to appear under Highest rated or True score.</i></p>
+    <div data-view-panel="watched">
+      {% if top_directors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in top_directors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.directors__name }}</button>
+              <p class="muted">{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %} </p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="rated" hidden>
+      {% if favorite_people.favorite_directors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in favorite_people.favorite_directors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
+              <p class="muted">{{ row.avg|floatformat:1 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="true_score" hidden>
+      <p class="th-with-tip muted caption">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></p>
+      {% if favorite_people.favorite_directors_by_true_score %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in favorite_people.favorite_directors_by_true_score %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
+              <p class="muted">{{ row.true_score|floatformat:2 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No data yet</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3><span class="th-with-tip">Actors <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></h3>
+    <div class="toggle-group" data-toggle-group>
+      <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+      <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
+      <button type="button" class="toggle-btn" data-view="true_score">True score</button>
+    </div>
+    <p class="muted caption"><i>Note: Actors need at least {{ min_favorite_actor }} rated films to appear under Highest rated or True score.</i></p>
+    <div data-view-panel="watched">
+      {% if top_actors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in top_actors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
+              <p class="muted">{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="rated" hidden>
+      {% if favorite_people.favorite_actors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in favorite_people.favorite_actors %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
+              <p class="muted">{{ row.avg|floatformat:1 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No data yet</p>
+      {% endif %}
+    </div>
+    <div data-view-panel="true_score" hidden>
+      <p class="th-with-tip muted caption">True score <span class="info-tip" tabindex="0">i<span class="tip-bubble">A weighted average that factors in the number of films of theirs that you've watched, so fewer films will result in a lower score than a raw average. Also, a high rate of 5-star ratings adds a small bonus.</span></span></p>
+      {% if favorite_people.favorite_actors_by_true_score %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in favorite_people.favorite_actors_by_true_score %}
+            <div class="fav-card">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
+              <p class="muted">{{ row.true_score|floatformat:2 }} ★</p>
+              <p class="muted">({{ row.count }} film{{ row.count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No data yet</p>
+      {% endif %}
+    </div>
+  </div>
+  </div>
+
+  <div class="jump-target" id="watching-habits">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watching Habits</span></h2>
+  <p class="muted">How much, how often, and when you watch{% if year %} in {{ year }}{% endif %}.</p>
+  {% if not year %}
+    <div class="card">
+      <h3>Films per year</h3>
+      <canvas id="filmsPerYearChart"></canvas>
+    </div>
+  {% elif milestones %}
+    <div class="card">
+      <h3>Milestones</h3>
+      <p class="muted">The films that marked your year.</p>
+      <div class="favs favs--six">
+        {% for milestone in milestones %}
+          <div class="fav-card">
+            <span class="milestone-badge">{{ milestone.label }}</span>
+            {% if milestone.poster_url %}<img src="{{ milestone.poster_url }}" alt="{{ milestone.title }}" title="{{ milestone.title }} ({{ milestone.year }})">{% else %}<div class="fav-placeholder" title="{{ milestone.title }} ({{ milestone.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ milestone.date|date:"M j" }}</p>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if year %}
+    {% comment %}
+    Rewatches only gets its own section in all-time mode, where it has two
+    cards (Most rewatched films + Most rewatched directors, below). Year mode
+    drops the directors card (a director credited on one rewatched film
+    doesn't mean much on its own for a single year) and folds the sole
+    remaining card in here instead, renamed to match this section's general
+    "how you watch" framing rather than a rewatch-specific one. Placed right
+    after Milestones -- both are "which films stood out" cards, before Viewing
+    calendar/Most used tags' "how you watch" ones.
+    {% endcomment %}
+    <div class="card">
+      <h3>Most watched films</h3>
+      {% if rewatch.most_rewatched_films %}
+        <div class="favs favs--six">
+          {% for film in rewatch.most_rewatched_films %}
+            <div class="fav-card">
+              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+              <p class="muted">{{ film.watch_count }}×</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No rewatches yet</p>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h3>Viewing calendar</h3>
+    <div class="grid grid--calendar-stats">
+      <div class="stat">
+        <div class="value">{% if calendar.busiest_month %}{{ calendar.busiest_month.count }}{% else %}—{% endif %}</div>
+        <div class="label">Busiest month{% if calendar.busiest_month %} ({{ calendar.busiest_month.month|date:"F Y" }}){% endif %}</div>
+      </div>
+      <div class="stat"><div class="value">{{ calendar.longest_streak_days }}</div><div class="label">Longest streak (days)</div></div>
+      <div class="stat"><div class="value">{{ calendar.longest_gap_days }}</div><div class="label">Longest dry spell (days)</div></div>
+      {% if year %}
+        <div class="stat">
+          <div class="value">{{ calendar.days_watched_pct }}%</div>
+          <div class="label">Days watched ({{ calendar.days_watched_count }}/{{ calendar.days_elapsed }})</div>
+        </div>
+      {% endif %}
+    </div>
+    <h4>Day of week</h4>
+    <div class="weekday-chart">
+      <canvas id="weekdayChart"></canvas>
+    </div>
+
+    {% if calendar.heatmap.years %}
+      <h4>Activity by year</h4>
+      {% if calendar.heatmap.years|length > 1 %}
+        <div class="toggle-group" data-chart-toggle="heatmapYear">
+          {% for year in calendar.heatmap.years %}
+            <button
+              type="button" class="toggle-btn{% if year == calendar.heatmap.default_year %} active{% endif %}"
+              data-year="{{ year }}"
+            >{{ year }}</button>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="grid grid--pace-stats">
+        <div class="stat"><div class="value" id="heatmapPerWeekStat">—</div><div class="label">Films per week</div></div>
+        <div class="stat"><div class="value" id="heatmapPerMonthStat">—</div><div class="label">Films per month</div></div>
+      </div>
+      <div class="heatmap-wrap">
+        <div class="heatmap-table">
+          <div class="heatmap-months" id="heatmapMonths"></div>
+          <div class="heatmap-days" id="heatmapDays"></div>
+          <div class="heatmap-grid" id="heatmapGrid"></div>
+        </div>
+        <div class="heatmap-tip" id="heatmapTip" hidden></div>
+      </div>
+      <div class="heatmap-legend">
+        <span>Less</span>
+        <span class="heatmap-legend-swatch" data-level="0"></span>
+        <span class="heatmap-legend-swatch" data-level="1"></span>
+        <span class="heatmap-legend-swatch" data-level="2"></span>
+        <span class="heatmap-legend-swatch" data-level="3"></span>
+        <span class="heatmap-legend-swatch" data-level="4"></span>
+        <span>More</span>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Most used tags</h3>
+    <div class="h-chart"><canvas id="tagsChart"></canvas></div>
+  </div>
+  </div>
+
+  {% if not year %}
+  <div class="jump-target" id="rewatches">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Rewatches</span></h2>
+  <p class="muted">Your most rewatched films and directors.</p>
+  <div class="card">
+    <h3>Most rewatched films</h3>
+    {% if rewatch.most_rewatched_films %}
+      <div class="favs favs--six">
+        {% for film in rewatch.most_rewatched_films %}
+          <div class="fav-card">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+            <p class="muted">{{ film.watch_count }}×</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-state">No rewatches yet</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Most rewatched directors</h3>
+    {% if rewatch.most_rewatched_directors %}
+      <div class="favs favs--six favs--headshots">
+        {% for row in rewatch.most_rewatched_directors %}
+          <div class="fav-card">
+            {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+            <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
+            <p class="muted">{{ row.count }}×</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-state">No data yet</p>
+    {% endif %}
+  </div>
+  </div>
+  {% endif %}
+
+  {% include 'stats/_person_drill_modal.html' with session_id=import_session.id year=year %}
+
+  {% if recommendations %}
+  <div class="jump-target" id="watchlist">
+  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watchlist</span></h2>
+  <p class="muted">Recommended films from your watchlist.</p>
+  <div class="card">
+    <h3>Watchlist recommendations</h3>
+    <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
+    <div class="favs favs--six">
+      {% for rec in recommendations %}
+        <div class="fav-card">
+          {% if rec.movie.poster_url %}
+            <img src="{{ rec.movie.poster_url }}" alt="{{ rec.movie.title }}" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">
+          {% else %}
+            <div class="fav-placeholder" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">🎬</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  </div>
+  {% endif %}
+
+  {{ chart_data|json_script:"chart-data" }}
+  <script>
+    // Highlights whichever section ("Movie Stats" / "Watching Stats") is currently in
+    // view in the sticky nav -- observes a thin horizontal band ~45% down the viewport
+    // rather than the exact top, so a heading counts as "current" once it's scrolled
+    // into a comfortable reading position, not only at the literal top edge.
+    (function () {
+      const sectionLinks = document.querySelectorAll('.section-nav-link');
+      const sections = [...sectionLinks].map(function (link) { return document.getElementById(link.dataset.section); });
+
+      function activate(id) {
+        sectionLinks.forEach(function (link) { link.classList.toggle('active', link.dataset.section === id); });
+      }
+
+      const observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) activate(entry.target.id);
+        });
+      }, { rootMargin: '-45% 0px -50% 0px' });
+      sections.forEach(function (section) { if (section) observer.observe(section); });
+
+      // Clicking a link jumps its target to the very top of the viewport (the
+      // browser's default anchor behavior), which sits above the mid-viewport band
+      // above -- so a click alone would move the page without ever triggering the
+      // highlight; activate() here handles that immediately. But the resulting
+      // smooth-scroll animation still sweeps that same band across the *other*
+      // section's heading en route (it necessarily sits between wherever you started
+      // and the very top of the page), which can re-fire the observer mid-transition
+      // and stomp the just-clicked state before the scroll finishes settling --
+      // worse the longer the scroll, since there's more time for it to happen.
+      // Disconnecting for the duration of the scroll and re-observing once it
+      // actually settles (scrollend, with a timeout fallback for browsers without
+      // it) avoids that race instead of just guessing at a delay.
+      let reconnectTimer = null;
+      sectionLinks.forEach(function (link) {
+        link.addEventListener('click', function () {
+          activate(link.dataset.section);
+          observer.disconnect();
+          clearTimeout(reconnectTimer);
+          const reconnect = function () {
+            window.removeEventListener('scrollend', reconnect);
+            clearTimeout(reconnectTimer);
+            sections.forEach(function (section) { if (section) observer.observe(section); });
+          };
+          window.addEventListener('scrollend', reconnect, { once: true });
+          reconnectTimer = setTimeout(reconnect, 1000);
+        });
+      });
+    })();
+
+    document.querySelectorAll('[data-toggle-group]').forEach(function (group) {
+      const card = group.closest('.card');
+      group.querySelectorAll('.toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const view = btn.dataset.view;
+          card.querySelectorAll('[data-view-panel]').forEach(function (panel) {
+            panel.hidden = panel.dataset.viewPanel !== view;
+          });
+        });
+      });
+    });
+
+    const chartData = JSON.parse(document.getElementById('chart-data').textContent);
+    // Checked once at load, not re-checked on resize -- only used to give a couple
+    // of charts a taller aspect ratio on a phone-width screen, not something that
+    // needs to track live window resizing.
+    const isMobile = window.matchMedia('(max-width: 700px)').matches;
+    const gridColor = 'rgba(138, 153, 168, 0.15)';
+    const textColor = '#e5e9ec';
+    Chart.defaults.color = textColor;
+    // Chart.js draws to canvas, not the DOM, so it never inherits the page's own
+    // font-family from CSS -- it has its own default font stack that has to be set
+    // explicitly to match. Mutating the existing font object's property rather than
+    // replacing Chart.defaults.font wholesale (see the animation defaults below --
+    // a full reassignment there once silently dropped keys Chart.js needed
+    // internally and broke the whole animation system).
+    Chart.defaults.font.family = "'Sora', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+    // Sora measures ~15-20% wider than Chart.js's built-in default font at the same
+    // size, which was pushing labels past the width Chart.js reserves for them in
+    // the narrower charts (genres/country/language), truncating them. Chart.js's
+    // own default is 12; sized down slightly to compensate for Sora specifically.
+    Chart.defaults.font.size = 11;
+    // Applies to every chart's initial render AND to toggle-triggered .update() calls
+    // (Most watched <-> Highest rated), so switching views animates consistently
+    // instead of the bars snapping straight to their new lengths.
+    Chart.defaults.animation.duration = 500;
+    Chart.defaults.animation.easing = 'easeOutQuart';
+
+    // A lighter tint of a bar's own color, for hoverBackgroundColor -- so hovering a
+    // bar visibly brightens it without needing a whole second color per chart.
+    function lighten(hex, amount) {
+      const num = parseInt(hex.slice(1), 16);
+      const r = Math.min(255, (num >> 16) + amount);
+      const g = Math.min(255, ((num >> 8) & 0xff) + amount);
+      const b = Math.min(255, (num & 0xff) + amount);
+      return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+    }
+
+    {% if not year %}
+      new Chart(document.getElementById('filmsPerYearChart'), {
+        type: 'bar',
+        data: { labels: chartData.films_per_year.labels, datasets: [{ label: 'Films', data: chartData.films_per_year.data, backgroundColor: '#00e054', hoverBackgroundColor: lighten('#00e054', 40), borderRadius: 4 }] },
+        options: { scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } }, plugins: { legend: { display: false } } }
+      });
+    {% endif %}
+
+    const ratingDistributionChart = new Chart(document.getElementById('ratingDistributionChart'), {
+      type: 'bar',
+      data: { labels: chartData.rating_distribution.labels, datasets: [{ label: 'Films', data: chartData.rating_distribution.data, backgroundColor: '#40bcf4', hoverBackgroundColor: lighten('#40bcf4', 40), borderRadius: 4 }] },
+      options: { scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } }, plugins: { legend: { display: false } } }
+    });
+
+    {% if year %}
+      // All watches vs. first watches only -- unlike the Most watched/Highest
+      // rated toggles above (which swap between two different MEASURES, count
+      // vs. average, and relabel the axis accordingly), both states here are
+      // the same measure (a count of films per star rating), just filtered by
+      // rewatch status -- so this is a plain data swap, not a reuse of
+      // wireMostWatchedToggle.
+      document.querySelectorAll('[data-chart-toggle="ratingDistribution"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="ratingDistribution"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const firstWatch = btn.dataset.view === 'first-watch';
+          const source = firstWatch ? chartData.rating_distribution_first_watch : chartData.rating_distribution;
+          ratingDistributionChart.data.labels = source.labels;
+          ratingDistributionChart.data.datasets[0].data = source.data;
+          ratingDistributionChart.update();
+
+          const avg = firstWatch ? chartData.avg_rating_first_watch : chartData.avg_rating;
+          document.getElementById('ratingDistributionAvg').textContent = avg !== null ? avg.toFixed(2) + ' ★' : '—';
+        });
+      });
+    {% endif %}
+
+    {% if year and same_year_releases.count %}
+      new Chart(document.getElementById('sameYearRatingDistributionChart'), {
+        type: 'bar',
+        data: { labels: chartData.same_year_rating_distribution.labels, datasets: [{ label: 'Films', data: chartData.same_year_rating_distribution.data, backgroundColor: '#40bcf4', hoverBackgroundColor: lighten('#40bcf4', 40), borderRadius: 4 }] },
+        options: { scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } }, plugins: { legend: { display: false } } }
+      });
+    {% endif %}
+
+    const genresChart = new Chart(document.getElementById('genresChart'), {
+      type: 'bar',
+      data: { labels: chartData.top_genres.labels, datasets: [{ label: 'Films', data: chartData.top_genres.data, backgroundColor: '#ff8000', hoverBackgroundColor: lighten('#ff8000', 40), borderRadius: 4 }] },
+      options: {
+        indexAxis: 'y',
+        maintainAspectRatio: false,
+        scales: { x: { grid: { color: gridColor }, beginAtZero: true }, y: { grid: { display: false }, ticks: { autoSkip: false } } },
+        plugins: { legend: { display: false }, tooltip: ratingAwareTooltip() },
+      },
+    });
+    wireMostWatchedToggle(genresChart, 'genres', chartData.top_genres, chartData.rating_by_genre);
+
+    const releaseYearChart = new Chart(document.getElementById('releaseYearChart'), {
+      type: 'bar',
+      data: { labels: chartData.release_year_distribution.labels, datasets: [{ label: 'Films', data: chartData.release_year_distribution.data, backgroundColor: '#00e054', hoverBackgroundColor: lighten('#00e054', 40), borderRadius: 4 }] },
+      options: {
+        // Chart.js's default aspectRatio (2, width:height) on a full-width desktop
+        // card is already tall enough for this many year-bars to read clearly, but
+        // on a narrow phone card that same 2:1 ratio squashes it short -- not enough
+        // vertical room for the bars or every-5th-year labels to stay legible.
+        // Shorter ratio only on mobile; omitted (not overridden) on desktop so
+        // Chart.js's own default still applies there, unchanged.
+        aspectRatio: isMobile ? 1.3 : undefined,
+        scales: {
+          x: {
+            grid: { color: gridColor },
+            ticks: {
+              // autoSkip:false forces Chart.js to generate a tick for every year
+              // (otherwise it thins ticks itself based on pixel width, landing on
+              // whatever interval fits rather than a clean multiple of 5/15 --
+              // autoSkip's own choice of interval isn't guaranteed to land on a
+              // round number, e.g. it picked 14 once). The callback is then the
+              // only thing deciding which ticks get label text: every 5th year on
+              // desktop, every 15th on the narrower mobile card.
+              // maxRotation:0 is what actually keeps those labels upright on
+              // mobile, not autoSkip -- Chart.js sizes each tick's rotation against
+              // its true per-category slot width (~3px each, with a century-
+              // spanning range like this one) regardless of how few of those slots
+              // the callback lets render text, so without capping rotation at 0 it
+              // still rotates steeply even though the visible labels have plenty of
+              // real space around them.
+              autoSkip: false,
+              maxRotation: isMobile ? 0 : undefined,
+              callback: function (value) {
+                const year = parseInt(this.getLabelForValue(value), 10);
+                return year % (isMobile ? 20 : 5) === 0 ? year : '';
+              },
+            },
+          },
+          y: { grid: { color: gridColor }, beginAtZero: true },
+        },
+        plugins: { legend: { display: false }, tooltip: ratingAwareTooltip('y') },
+      },
+    });
+
+    document.querySelectorAll('[data-chart-toggle="releaseYear"] .toggle-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('[data-chart-toggle="releaseYear"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        const rated = btn.dataset.view === 'rated';
+        const source = rated ? chartData.rating_by_release_year : chartData.release_year_distribution;
+        releaseYearChart.data.labels = source.labels;
+        releaseYearChart.data.datasets[0].data = source.data;
+        releaseYearChart.data.datasets[0].label = rated ? 'Avg rating' : 'Films';
+        releaseYearChart.options.scales.y.max = rated ? 5 : undefined;
+        releaseYearChart.update();
+      });
+    });
+
+    function ratingAwareTooltip(valueAxis) {
+      valueAxis = valueAxis || 'x';
+      return {
+        callbacks: {
+          // "Highest rated" shows a rating (round to 2dp, an exception to the usual
+          // 1dp elsewhere); "Most watched" shows a plain film count, which stays as-is.
+          label: function (context) {
+            const value = context.parsed[valueAxis];
+            const isRating = context.dataset.label === 'Avg rating';
+            const formatted = isRating ? value.toFixed(2) + '★' : value;
+            return context.dataset.label + ': ' + formatted;
+          },
+        },
+      };
+    }
+
+    function wireMostWatchedToggle(chart, toggleKey, watchedSource, ratedSource) {
+      document.querySelectorAll('[data-chart-toggle="' + toggleKey + '"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="' + toggleKey + '"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          const rated = btn.dataset.view === 'rated';
+          const source = rated ? ratedSource : watchedSource;
+          chart.data.labels = source.labels;
+          chart.data.datasets[0].data = source.data;
+          chart.data.datasets[0].label = rated ? 'Avg rating' : 'Films';
+          chart.options.scales.x.max = rated ? 5 : undefined;
+          chart.update();
+        });
+      });
+    }
+
+    const countryChart = new Chart(document.getElementById('countryChart'), {
+      type: 'bar',
+      data: { labels: chartData.country_distribution.labels, datasets: [{ label: 'Films', data: chartData.country_distribution.data, backgroundColor: '#40bcf4', hoverBackgroundColor: lighten('#40bcf4', 40), borderRadius: 4 }] },
+      options: {
+        indexAxis: 'y',
+        maintainAspectRatio: false,
+        scales: { x: { grid: { color: gridColor }, beginAtZero: true }, y: { grid: { display: false }, ticks: { autoSkip: false } } },
+        plugins: { legend: { display: false }, tooltip: ratingAwareTooltip() },
+      },
+    });
+    wireMostWatchedToggle(countryChart, 'country', chartData.country_distribution, chartData.rating_by_country);
+
+    const languageChart = new Chart(document.getElementById('languageChart'), {
+      type: 'bar',
+      data: { labels: chartData.language_distribution.labels, datasets: [{ label: 'Films', data: chartData.language_distribution.data, backgroundColor: '#00e054', hoverBackgroundColor: lighten('#00e054', 40), borderRadius: 4 }] },
+      options: {
+        indexAxis: 'y',
+        maintainAspectRatio: false,
+        scales: { x: { grid: { color: gridColor }, beginAtZero: true }, y: { grid: { display: false }, ticks: { autoSkip: false } } },
+        plugins: { legend: { display: false }, tooltip: ratingAwareTooltip() },
+      },
+    });
+    wireMostWatchedToggle(languageChart, 'language', chartData.language_distribution, chartData.rating_by_language);
+
+    new Chart(document.getElementById('weekdayChart'), {
+      type: 'bar',
+      data: { labels: chartData.weekday_distribution.labels, datasets: [{ label: 'Films', data: chartData.weekday_distribution.data, backgroundColor: '#00e054', hoverBackgroundColor: lighten('#00e054', 40), borderRadius: 4 }] },
+      options: {
+        maintainAspectRatio: false,
+        scales: { x: { grid: { color: gridColor } }, y: { grid: { color: gridColor }, beginAtZero: true } },
+        plugins: { legend: { display: false } },
+      }
+    });
+
+    // Viewing calendar's activity heatmap -- a GitHub-contribution-style grid, one
+    // year at a time (a whole multi-year history in one grid reads as illegible
+    // columns, same reason GitHub's own only ever shows a year at a time). Laid out
+    // client-side rather than via Chart.js, which has no calendar/matrix chart type
+    // built in -- chartData.heatmap carries {years, default_year, data: {year:
+    // {'YYYY-MM-DD': count}}} from the server (see _viewing_heatmap in
+    // stats/services/dashboard.py), and everything below just positions <div> cells
+    // on a CSS grid.
+    (function () {
+      const gridEl = document.getElementById('heatmapGrid');
+      const monthsEl = document.getElementById('heatmapMonths');
+      const daysEl = document.getElementById('heatmapDays');
+      const tipEl = document.getElementById('heatmapTip');
+      const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
+      const perWeekEl = document.getElementById('heatmapPerWeekStat');
+      const perMonthEl = document.getElementById('heatmapPerMonthStat');
+      if (!gridEl || !chartData.heatmap) return;
+
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      // Every other row labeled (Mon/Wed/Fri), not all 7 -- GitHub's own
+      // contribution graph uses the same convention, since 7 labels crammed
+      // into a column of ~11-16px cells overlap into illegibility. Index is
+      // Date.getDay() (0=Sun..6=Sat), matching each cell's own gridRow below.
+      const dayLabels = [null, 'Mon', null, 'Wed', null, 'Fri', null];
+
+      // Manual YYYY-MM-DD formatting, not toISOString() -- that converts to UTC
+      // first, which shifts local midnight to the previous calendar day in any
+      // timezone behind UTC, silently mismatching cells against the wrong date's
+      // count.
+      function isoDate(d) {
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return d.getFullYear() + '-' + month + '-' + day;
+      }
+
+      // Bucketed relative to this year's own busiest day, not a fixed scale -- someone
+      // who rarely logs more than one film a day would otherwise never see the top
+      // color, while someone who marathons in bursts would max it out constantly.
+      function levelFor(count, max) {
+        if (!count) return 0;
+        return Math.min(4, Math.max(1, Math.ceil((count / max) * 4)));
+      }
+
+      function hideTip() { tipEl.hidden = true; }
+
+      // Viewport coordinates (getBoundingClientRect + position:fixed on .heatmap-tip
+      // in base.css), not offsetLeft/offsetTop against .heatmap-wrap -- that wrap
+      // scrolls horizontally, which makes the browser clip vertical overflow too
+      // (setting only overflow-x computes overflow-y as auto), silently cutting off
+      // a tooltip positioned above its cell. Also clamped against the actual
+      // viewport edges here, the same way .tip-bubble's own reposition script keeps
+      // .info-tip on-screen near a narrow phone's edges.
+      function showTip(cell, text) {
+        tipEl.textContent = text;
+        tipEl.hidden = false;
+        const margin = 8;
+        // Clamped against the card's own wrap, not window.innerWidth -- see
+        // Double Feature's same-day heatmap's own copy of this fix for why
+        // (compare.html) -- a tip clamped only to the true viewport can still
+        // render past the card's own right edge, hanging off the dark card
+        // background into the page's outer margin even though it's technically
+        // still on-screen.
+        const wrapRect = wrapEl.getBoundingClientRect();
+        const cellRect = cell.getBoundingClientRect();
+        let left = cellRect.left;
+        const minLeft = wrapRect.left + margin;
+        const maxLeft = wrapRect.right - margin - tipEl.offsetWidth;
+        if (left > maxLeft) left = maxLeft;
+        if (left < minLeft) left = minLeft;
+        let top = cellRect.top - tipEl.offsetHeight - 6;
+        if (top < margin) top = cellRect.bottom + 6;
+        tipEl.style.left = left + 'px';
+        tipEl.style.top = top + 'px';
+      }
+
+      // Renders the Mon/Wed/Fri row labels to the left of the grid, at the
+      // given cellSize -- called once per renderYear, since cellSize is
+      // recomputed there against the current viewport/scroll width.
+      function renderDayLabels(cellSize) {
+        daysEl.innerHTML = '';
+        daysEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
+        dayLabels.forEach(function (label, row) {
+          if (!label) return;
+          const el = document.createElement('div');
+          el.className = 'heatmap-day-label';
+          el.textContent = label;
+          el.style.gridRow = String(row + 1);
+          daysEl.appendChild(el);
+        });
+      }
+
+      function renderYear(year) {
+        gridEl.innerHTML = '';
+        monthsEl.innerHTML = '';
+        hideTip();
+
+        const counts = chartData.heatmap.data[String(year)] || {};
+        const max = Math.max(1, ...Object.values(counts));
+
+        const startOfYear = new Date(year, 0, 1);
+        const startOffset = startOfYear.getDay();
+        // Rounded, not left as raw ms division -- a DST transition inside the year
+        // makes the raw division land a fraction off whole days, even though the
+        // actual number of calendar days between two Jan 1s never does.
+        const daysInYear = Math.round((new Date(year + 1, 0, 1) - startOfYear) / 86400000);
+        const weekCount = Math.floor((startOffset + daysInYear - 1) / 7) + 1;
+
+        // Per-week/month pace for the selected year -- for the year still in
+        // progress this divides by days elapsed so far (not the full 365/366),
+        // otherwise a partial current year would understate the user's actual
+        // rate; a past year always divides by its full length, since months with
+        // zero activity are real data, not missing data.
+        if (perWeekEl && perMonthEl) {
+          const today = new Date();
+          const elapsedDays = year === today.getFullYear()
+            ? Math.min(daysInYear, Math.floor((today - startOfYear) / 86400000) + 1)
+            : daysInYear;
+          const totalFilms = Object.values(counts).reduce(function (sum, c) { return sum + c; }, 0);
+          perWeekEl.textContent = (totalFilms / (elapsedDays / 7)).toFixed(1);
+          perMonthEl.textContent = (totalFilms / (elapsedDays / (daysInYear / 12))).toFixed(1);
+        }
+
+        // Column width AND row height, computed together so cells stay square --
+        // see the comment on .heatmap-grid in base.css for why this can't be left
+        // to CSS grid alone. Floors at 11px, same floor minmax() enforced on
+        // columns before this -- once a full year no longer fits at that floor,
+        // .heatmap-wrap's overflow-x:auto scrolls it instead of shrinking further.
+        // daysColumnWidth/tableGap match .heatmap-days' fixed width and
+        // .heatmap-table's own gap in base.css -- subtracted here since the day-
+        // label column now shares wrapEl's width with the grid, rather than the
+        // grid alone sizing off the full wrap width.
+        const gap = 3;
+        const daysColumnWidth = 24;
+        const tableGap = 4;
+        const availableWidth = wrapEl.clientWidth - daysColumnWidth - tableGap;
+        const rawSize = (availableWidth - (weekCount - 1) * gap) / weekCount;
+        const cellSize = Math.max(11, Math.floor(rawSize));
+        const columns = 'repeat(' + weekCount + ', ' + cellSize + 'px)';
+        gridEl.style.gridTemplateColumns = columns;
+        gridEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
+        monthsEl.style.gridTemplateColumns = columns;
+        renderDayLabels(cellSize);
+
+        // A running counter, not (date - startOfYear) / 86400000 -- a DST transition
+        // makes that division land on a non-integer number of days for the dates on
+        // the far side of it, occasionally flooring to the wrong week column.
+        let dayIndex = startOffset;
+        let lastMonth = -1;
+
+        for (
+          let d = new Date(year, 0, 1);
+          d.getFullYear() === year;
+          d.setDate(d.getDate() + 1), dayIndex += 1
+        ) {
+          const row = d.getDay();
+          const col = Math.floor(dayIndex / 7);
+
+          if (d.getMonth() !== lastMonth) {
+            lastMonth = d.getMonth();
+            const label = document.createElement('div');
+            label.className = 'heatmap-month-label';
+            label.textContent = monthNames[lastMonth];
+            label.style.gridColumn = String(col + 1);
+            monthsEl.appendChild(label);
+          }
+
+          const iso = isoDate(d);
+          const count = counts[iso] || 0;
+          const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          const text = (count === 0 ? 'No films' : count + ' film' + (count > 1 ? 's' : '')) + ' — ' + dateLabel;
+
+          const cell = document.createElement('div');
+          cell.className = 'heatmap-cell';
+          cell.dataset.level = String(levelFor(count, max));
+          cell.style.gridRow = String(row + 1);
+          cell.style.gridColumn = String(col + 1);
+          cell.tabIndex = 0;
+          cell.setAttribute('aria-label', text);
+          cell.addEventListener('mouseenter', function () { showTip(cell, text); });
+          cell.addEventListener('mouseleave', hideTip);
+          cell.addEventListener('focus', function () { showTip(cell, text); });
+          cell.addEventListener('blur', hideTip);
+          gridEl.appendChild(cell);
+        }
+      }
+
+      renderYear(chartData.heatmap.default_year);
+
+      document.querySelectorAll('[data-chart-toggle="heatmapYear"] .toggle-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('[data-chart-toggle="heatmapYear"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          renderYear(parseInt(btn.dataset.year, 10));
+        });
+      });
+    })();
+
+    new Chart(document.getElementById('tagsChart'), {
+      type: 'bar',
+      data: { labels: chartData.top_tags.labels, datasets: [{ label: 'Uses', data: chartData.top_tags.data, backgroundColor: '#ff8000', hoverBackgroundColor: lighten('#ff8000', 40), borderRadius: 4 }] },
+      options: {
+        indexAxis: 'y',
+        maintainAspectRatio: false,
+        scales: { x: { grid: { color: gridColor }, beginAtZero: true }, y: { grid: { display: false }, ticks: { autoSkip: false } } },
+        plugins: { legend: { display: false } },
+      },
+    });
+
+    // Tap-to-show poster tooltips -- touch has no hover, so every poster's title
+    // attribute (already there for the desktop hover tooltip) is otherwise
+    // unreachable on a phone. Only for genuinely decorative posters (no click
+    // handler of their own): .fav-card:has(.person-trigger) cards already do
+    // something real on tap (open the filmography modal, matches the hover
+    // affordance those get in base.css) and would just fight a tooltip for the
+    // same tap. hover:none, not a width check -- this is about input capability
+    // (no cursor to hover with), not screen size, and matches how a touch-capable
+    // desktop/tablet should behave the same as a phone here.
+    // Delegated to one document-level listener rather than wiring each poster --
+    // the person-filmography modal injects its own poster grid after page load
+    // (fetch/innerHTML), so a per-element listener would miss it; delegation
+    // covers it for free. Same copy as Double Feature's own version of this
+    // (compare.html) -- the two pages don't share a JS module.
+    (function () {
+      if (!window.matchMedia('(hover: none)').matches) return;
+
+      const tipEl = document.createElement('div');
+      tipEl.className = 'poster-tip';
+      tipEl.hidden = true;
+      document.body.appendChild(tipEl);
+      let activeTarget = null;
+
+      function hideTip() {
+        tipEl.hidden = true;
+        activeTarget = null;
+      }
+
+      // Clamped against the poster's own card/modal panel, not window.innerWidth
+      // -- same reasoning as the viewing heatmap's own showTip fix above: a card
+      // sits inset from the page edge, so clamping only to the viewport can
+      // still let the tip hang off the card's own visible edge.
+      function showTip(el, text) {
+        tipEl.textContent = text;
+        tipEl.hidden = false;
+        activeTarget = el;
+        const margin = 8;
+        const bounds = (el.closest('.modal-panel') || el.closest('.card') || document.body).getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        let left = elRect.left;
+        const minLeft = bounds.left + margin;
+        const maxLeft = bounds.right - margin - tipEl.offsetWidth;
+        if (left > maxLeft) left = maxLeft;
+        if (left < minLeft) left = minLeft;
+        let top = elRect.top - tipEl.offsetHeight - 6;
+        if (top < margin) top = elRect.bottom + 6;
+        tipEl.style.left = left + 'px';
+        tipEl.style.top = top + 'px';
+      }
+
+      document.addEventListener('click', function (e) {
+        const poster = e.target.closest('.fav-card img, .fav-card .fav-placeholder');
+        if (poster && !poster.closest('.fav-card:has(.person-trigger)')) {
+          const text = poster.getAttribute('title');
+          if (!text) return;
+          if (activeTarget === poster) { hideTip(); return; }
+          showTip(poster, text);
+          return;
+        }
+        hideTip();
+      });
+      window.addEventListener('scroll', hideTip, { passive: true, capture: true });
+    })();
+  </script>

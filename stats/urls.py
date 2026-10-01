@@ -6,6 +6,7 @@ app_name = 'stats'
 
 urlpatterns = [
     path('dashboard/<uuid:session_id>/', views.dashboard, name='dashboard'),
+    path('dashboard/<uuid:session_id>/content/', views.dashboard_content, name='dashboard_content'),
     # Listed after the uuid pattern above -- Django tries patterns in order, and the
     # uuid converter only matches strict UUID-shaped strings, so a real username
     # falls through to this one automatically. (An adversarial username that's
