@@ -13,10 +13,8 @@ class Genre(models.Model):
 
 class Keyword(models.Model):
     """A TMDB plot/theme tag (e.g. 'unreliable narrator', 'coming of age') --
-    far more granular than Genre, and validated as a real taste signal for
-    Double Feature's watchlist-match ranking (see stats/services/compare.py's
-    own RECOMMENDATION_WEIGHTS comment) via leave-one-out holdout testing
-    against real already-rated films before being added here."""
+    far more granular than Genre. Used as a taste signal in
+    stats/services/compare.py's watchlist-match ranking."""
 
     tmdb_id = models.PositiveIntegerField(primary_key=True)
     name = models.CharField(max_length=200)
@@ -68,12 +66,9 @@ class Movie(models.Model):
     overview = models.TextField(blank=True)
     tmdb_rating = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True)
     # How many people have rated this film on TMDB -- feeds the "hidden gem"
-    # insight (a personal favorite most people haven't rated at all), not shown
-    # anywhere else. Nullable rather than defaulting to 0: a movie enriched before
-    # this field existed genuinely has an unknown count, not a confirmed zero, and
-    # the insight needs to tell those apart (see stats/services/dashboard.py's
-    # _hidden_gem_insight, which skips films with vote_count=None rather than
-    # treating them as the most obscure thing the person has ever rated).
+    # insight. Nullable rather than defaulting to 0: a movie enriched before this
+    # field existed has an unknown count, not a confirmed zero (see
+    # dashboard.py's _hidden_gem_insight, which skips vote_count=None).
     vote_count = models.PositiveIntegerField(null=True, blank=True)
     # Human-readable name (e.g. "English"), resolved from TMDB's spoken_languages list
     # during enrichment since original_language on its own is just an ISO 639-1 code.

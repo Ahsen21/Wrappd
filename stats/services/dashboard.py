@@ -38,17 +38,11 @@ COUNTRY_NAME_OVERRIDES = {'United States of America': 'USA', 'United Kingdom': '
 # ever seen a single film from. A cluster of 30+ tiny flags would be
 # illegible, not more informative.
 FLAG_CLUSTER_SIZE = 4
-# Language name (as stored on Movie.original_language, see tmdb/services/
-# enrichment.py's _resolve_language_name) -> a representative ISO 3166-1
-# alpha-2 country code, for the Languages explored insight tile's flag
-# cluster (see _languages_explored_insight). A language isn't a country, so
-# every mapping here is an approximation (picking the single most
-# internationally recognizable flag for that language, not "the" country it
-# belongs to) -- good enough for a decorative cluster of flags, not a claim
-# about where a film was actually made (that's what the Countries tile is
-# for). Deliberately not exhaustive: a language missing here just doesn't
-# contribute a flag to the cluster (see _flag_emoji's own "don't fabricate"
-# fallback), rather than guessing at one.
+# Language name -> a representative ISO 3166-1 alpha-2 country code, for the
+# Languages explored insight tile's flag cluster. A language isn't a country,
+# so every mapping is an approximation (most internationally recognizable
+# flag, not "the" country it belongs to). Not exhaustive -- a missing
+# language just contributes no flag, rather than guessing at one.
 LANGUAGE_FLAG_CODES = {
     'English': 'GB', 'French': 'FR', 'Spanish': 'ES', 'German': 'DE', 'Italian': 'IT',
     'Japanese': 'JP', 'Korean': 'KR', 'Mandarin': 'CN', 'Cantonese': 'HK', 'Hindi': 'IN',
@@ -91,82 +85,56 @@ MIN_COUNT_FOR_AVERAGE = 2
 # appearances before an actor's average is as meaningful as a director's.
 MIN_COUNT_FOR_FAVORITE_DIRECTOR = 3
 MIN_COUNT_FOR_FAVORITE_ACTOR = 4
-# Year view's own, lower version of the two constants above -- a single year's
-# diary is a much smaller sample (tens of films, not hundreds) than the
-# all-time page's ratings.csv, so the same bar would rarely clear. Separate
-# constants rather than replacing the all-time ones, so all-time behavior is
-# untouched regardless of what these are tuned to. Starting values, not a
-# final answer -- see this feature's design plan for the reasoning and for
-# tuning them against real multi-year accounts.
+# Lower year-view version of the two constants above -- a single year's diary
+# is a much smaller sample than the all-time ratings.csv, so the same bar
+# would rarely clear. Separate constants so all-time behavior stays untouched.
 MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR = 2
 MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR = 3
-# Milestones (year view only, Watching Habits): round-number checkpoints
-# through the year's chronological log, e.g. "100th film". Step size scales
-# with the year's own final total (see _milestone_thresholds) rather than a
-# fixed list -- a single step is either too coarse for a lighter year (nobody
-# reaches "500th film") or, applied to a genuinely prolific year (hundreds of
-# logs), too fine (a dozen-plus cards, most of them meaningless). Below
-# MILESTONE_TIER_2, every MILESTONE_STEP_SMALL; from there up to
-# MILESTONE_TIER_3, every MILESTONE_STEP_MEDIUM; at or above that, every
-# MILESTONE_STEP_LARGE. Each step ends in a digit (0 or 5) that always takes a
-# plain "th" suffix, so the card label can always say "Nth film" without
-# separate ordinal-suffix logic (1st/2nd/3rd/11th-13th).
+# Milestones (year view, Watching Habits): round-number checkpoints through
+# the year's log, e.g. "100th film". Step size scales with the year's final
+# total (see _milestone_thresholds): below MILESTONE_TIER_2, every
+# MILESTONE_STEP_SMALL; up to MILESTONE_TIER_3, every STEP_MEDIUM; above that,
+# every STEP_LARGE.
 MILESTONE_STEP_SMALL = 25
 MILESTONE_TIER_2 = 150
 MILESTONE_STEP_MEDIUM = 50
 MILESTONE_TIER_3 = 300
 MILESTONE_STEP_LARGE = 100
-# The insight grid's runtime/decade tiles (_raw_axis_deltas, feeding
-# _rating_insights) need their own, stronger-than-MIN_COUNT_FOR_AVERAGE bars --
-# every rated film falls into exactly one runtime bucket and one decade, unlike
-# a director/genre/etc. that only some films share, so these two buckets fill up
-# fast and a low bar would make them the least meaningful, not the most
-# meaningful, tiles in the grid. Runtime's bar is the higher of the two: only 3
-# buckets total (see _runtime_bucket) means each one soaks up roughly a third of
-# a person's whole rated history, so it takes more evidence before a runtime
-# preference is distinguishable from "that's just most of what I watch" --
-# decade splits far more finely (one bucket per 10 years), so 10 is already a
-# real pattern there.
+# The insight grid's runtime/decade tiles need stronger-than-
+# MIN_COUNT_FOR_AVERAGE bars -- every rated film falls into exactly one
+# runtime bucket and one decade, so these fill up fast. Runtime's bar is
+# higher: only 3 buckets total means each soaks up roughly a third of a
+# person's history, so it takes more evidence to call it a real preference.
 MIN_COUNT_FOR_RUNTIME_INSIGHT = 20
 MIN_COUNT_FOR_DECADE_INSIGHT = 10
-# Separate from the two thresholds above on purpose -- this is the shrinkage strength
-# for the "True score" toggle (see _true_score), not the minimum count to qualify as
-# a favorite at all. Reusing MIN_COUNT_FOR_FAVORITE_* here (as an earlier version of
-# this did) meant every candidate sat exactly halfway shrunk toward the overall
-# average right at the qualifying threshold, which compressed the whole top-N range
-# down to a narrow band (e.g. an 0.5-star spread of raw averages became a 0.14-star
-# spread of true scores) -- tuned down independently so true_score has room to
-# actually differentiate people instead of pulling everyone toward the same point.
+# Separate from the two thresholds above on purpose -- this is the shrinkage
+# strength for the "True score" toggle, not the minimum count to qualify as a
+# favorite. Reusing MIN_COUNT_FOR_FAVORITE_* here compressed the whole top-N
+# range into a narrow band (every candidate sat halfway-shrunk right at the
+# qualifying threshold); tuned down independently so true_score can actually
+# differentiate people.
 TRUE_SCORE_SHRINKAGE_K = 3
-# True score's tiebreaker: a small additive bonus for a high rate of 5-star ratings,
-# so two people who land on the same true_score (or close to it) don't stay tied just
-# because a straight average can't distinguish "consistently great" from "several
-# perfect films mixed with weaker ones". Weighted by the same count/(count+k)
-# confidence factor as the shrinkage above -- a 3-film director who happens to be
-# 3-for-3 on five stars shouldn't get the same bonus as a 10-film director who's
-# 9-for-10, even though the raw *rate* is similar, since the smaller sample is
-# weaker evidence of a genuine pattern. Max possible bonus (full confidence, 100%
-# five-star rate) is this weight itself -- kept small so it nudges close scores
-# rather than overriding the primary avg-based ranking.
+# True score's tiebreaker: a small additive bonus for a high rate of 5-star
+# ratings, so "consistently great" doesn't stay tied with "a few perfect
+# films mixed with weaker ones." Weighted by the same count/(count+k)
+# confidence factor as the shrinkage above, so a small sample's rate counts
+# for less; max bonus (full confidence, 100% five-star rate) is this weight.
 FIVE_STAR_BONUS_WEIGHT = 0.2
-# A billing position at or past this fraction of a movie's total cast size is treated
-# as a cameo and excluded from every actor stat -- e.g. 0.5 means "in the back half
-# of the credited cast". Only applied to movies with at least this many total credited
-# cast members (a small indie's "order 8 of 12" isn't a cameo the way a blockbuster's
-# "order 25 of 75" is). Both numbers are deliberately tunable -- there's no ground
-# truth for "is this a cameo", just real examples to sanity-check against (Stan Lee's
-# Marvel cameos consistently land around a 0.4-0.6 relative billing in casts of
-# 40-120; a lead actor stays well under 0.1 regardless of cast size).
+# A billing position at or past this fraction of a movie's cast is treated as
+# a cameo and excluded from every actor stat. Only applied to movies with at
+# least this many credited cast members (a small indie's "order 8 of 12" isn't
+# a cameo the way a blockbuster's "order 25 of 75" is). No ground truth here,
+# just sanity-checks: Stan Lee's cameos land around 0.4-0.6 relative billing;
+# a lead actor stays well under 0.1.
 MIN_CAST_SIZE_FOR_CAMEO_FILTER = 30
 CAMEO_RELATIVE_BILLING_THRESHOLD = 0.4
 
-# Watchlist recommender: how much each signal counts toward a candidate film's score.
-# Summed on top of the user's own overall average rating, not averaged together --
-# averaging the signals would cap a film's score at roughly its single best signal,
-# so a film matching several things you love could never score higher than one
-# matching just one of them. Summing lets multiple favorite signals stack, and lets a
-# single standout signal (e.g. a beloved director) carry a film with otherwise-neutral
-# genre/cast, which a plain average can't express either. Sums to 1.0.
+# Watchlist recommender: how much each signal counts toward a candidate film's
+# score. Summed on top of the user's own overall average, not averaged --
+# averaging would cap a film's score at roughly its single best signal, so a
+# film matching several loved things could never beat one matching just one.
+# Summing lets favorite signals stack and lets one standout (e.g. a beloved
+# director) carry an otherwise-neutral film. Sums to 1.0.
 RECOMMENDATION_WEIGHTS = {
     'genre': 0.30,
     'director': 0.25,
@@ -176,34 +144,22 @@ RECOMMENDATION_WEIGHTS = {
     'decade': 0.10,
     'runtime': 0.05,
 }
-# How much a film's TMDB community rating (adjusted by the person's own generosity
-# score -- see _watchlist_recommendations) nudges its score, on top of the 7 taste-
-# based signals above -- deliberately small and NOT part of RECOMMENDATION_WEIGHTS'
-# own adaptive reweighting (_adaptive_weights only ever redistributes across those
-# 7, this stays fixed). TMDB rating isn't a personal-taste axis the way genre/
-# director are -- it's an external quality prior -- so it shouldn't be able to grow
-# via the same "this varies a lot for you" adaptive logic as a real taste signal,
-# and a candidate never qualifies on this signal alone (see the empty-components
-# guard below) -- it only nudges a film that already matched something personal.
+# How much a film's TMDB community rating (adjusted by the person's own
+# generosity score) nudges its score, on top of the 7 taste-based signals --
+# deliberately small and NOT part of RECOMMENDATION_WEIGHTS' adaptive
+# reweighting, since it's an external quality prior rather than a personal-
+# taste axis, and never qualifies a candidate on its own.
 TMDB_WEIGHT = 0.05
-# How much weight _adaptive_weights gives to each person's own variance-derived
-# weights versus the fixed RECOMMENDATION_WEIGHTS above -- 0.5 means an even blend.
-# Kept below 1.0 deliberately: a data-starved axis' variance is noisy, not a
-# confident signal on its own, so the fixed weights act as a floor rather than
-# being fully replaced. See _adaptive_weights.
+# Weight _adaptive_weights gives to a person's own variance-derived weights vs.
+# the fixed RECOMMENDATION_WEIGHTS above -- kept below 1.0 since a data-starved
+# axis' variance is noisy, not confident enough to fully replace the fixed
+# floor. See _adaptive_weights.
 ADAPTIVE_WEIGHT_BLEND = 0.5
-# How much each category's confidence-shrunk *peak* rating (its single highest
-# rating, not its average) contributes to that category's delta, blended alongside
-# the existing average-based delta -- see _rating_deltas. A category's average can
-# be mediocre or even negative while still containing a genuine outlier favorite
-# (e.g. someone who's picky about Action generally but rates their favorite Action
-# film a 5) -- averaging alone erases exactly that kind of favorite, since it
-# treats "loved a couple, indifferent to the rest" the same as "consistently
-# lukewarm" whenever the two happen to average out similarly. Kept below 1.0 so the
-# average still dominates -- a peak from a category with only one or two ratings
-# shouldn't swing the delta on its own merit; PEAK_BLEND's job is to let a *real*,
-# confidence-backed peak (many ratings in this category, one of them clearly
-# excellent) surface, not to chase every lucky single high rating.
+# How much a category's confidence-shrunk *peak* rating (not its average)
+# contributes to its delta -- see _rating_deltas. An average can be mediocre
+# while still containing a genuine outlier favorite that averaging erases.
+# Kept below 1.0 so a peak from only one or two ratings can't swing the delta
+# on its own.
 PEAK_BLEND = 0.35
 # Top-N cap for the "Recommended from your watchlist" grid -- .favs--six's full
 # 2-rows-of-6 shape (4x3 on mobile), same convention as Most rewatched films/
@@ -213,34 +169,21 @@ RECOMMENDATION_DISPLAY_CAP = 12
 # the UI -- otherwise a barely-above-baseline genre would clutter the tooltip
 # alongside a film's actually meaningful matches.
 RECOMMENDATION_REASON_THRESHOLD = 0.15
-# At most this many recommended picks can credit the same director/actor -- without
-# it, one dominant favorite (a director whose whole filmography sits on the
-# watchlist) could flood the grid, crowding out otherwise-strong picks driven by
-# different signals entirely. See _watchlist_recommendations' greedy selection pass.
+# At most this many recommended picks can credit the same director/actor --
+# without it, one dominant favorite could flood the grid, crowding out
+# otherwise-strong picks. See _watchlist_recommendations' greedy selection pass.
 PERSON_CREDIT_CAP = 2
-# A two-person "collaboration" (director+actor or actor+actor) needs at least
-# this many shared rated films to be a pattern, not a coincidence -- most pairs
-# that appear together at all only do so in exactly one or two films, so this is
-# still well below MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR's higher single-person
-# bar. Shared by both _favorite_pairing_insight (director+actor) and
-# _favorite_actor_duo_insight (actor+actor) -- one pairing bar, not two, since
-# the underlying question ("is this a real recurring pattern, not a fluke") is
-# identical either way.
+# A two-person "collaboration" needs at least this many shared rated films to
+# be a pattern, not a coincidence. Shared by _favorite_pairing_insight and
+# _favorite_actor_duo_insight.
 MIN_COUNT_FOR_PAIRING = 3
-# A genre *pair* (see _favorite_genre_combo_insight) needs its own, higher bar
-# than MIN_COUNT_FOR_PAIRING -- two specific people appearing together is
-# genuinely rare, but two genres appearing together is not (most films carry
-# 2-3 genres at once, so a common combo like Action+Adventure can rack up
-# shared films fast without that meaning anything about taste). This needs to
-# be well above what two co-occurring genres would rack up by pure genre-tagging
-# frequency alone, so the pair that wins is really the person's favorite blend,
-# not just TMDB's most-assigned genre pairing.
+# A genre *pair* needs a higher bar than MIN_COUNT_FOR_PAIRING -- two genres
+# co-occurring is common (most films carry 2-3 genres), so the winning combo
+# needs to clear what co-occurrence alone would produce to mean anything.
 MIN_COUNT_FOR_GENRE_COMBO = 8
-# A film's TMDB vote_count has to sit at or below this before it's genuinely
-# obscure enough to call a "hidden gem" -- vote counts scale enormously by a
-# film's prominence (a real blockbuster sits in the tens of thousands even at the
-# "less popular" end), so without an absolute floor, someone whose most obscure
-# favorite still has, say, 15,000 votes would get it mislabeled as hidden. See
+# A film's TMDB vote_count has to sit at or below this to count as a "hidden
+# gem" -- vote counts scale enormously by prominence, so without an absolute
+# floor a blockbuster-adjacent favorite could get mislabeled as obscure. See
 # _hidden_gem_insight.
 HIDDEN_GEM_MAX_VOTE_COUNT = 1000
 
@@ -430,45 +373,23 @@ def _actor_rating_data(rated, watched_movies) -> tuple:
 
 # --- Year-view "most watched"/"highest rated" aggregations --------------------
 #
-# The all-time page's "most watched" side (top_genres/top_directors/top_actors/
-# country_distribution/language_distribution/release_year_distribution) is
-# sourced from watched_movies (WatchedEntry, a distinct-film count with no date
-# at all -- see _watched_movies). The year view has no dateless source to fall
-# back on, so every function below works from _deduped_diary_films instead --
-# one entry per distinct film this person watched that year, not one per log.
-#
-# This is a *change* from this feature's original "count every log" design
-# (still true, and correct, for Rating distribution/Milestones/Viewing
-# calendar/Most rewatched -- those are genuinely about individual watch
-# events, not distinct films): confirmed for real, "count every log" applied
-# to a person or genre's appearance count meant an actor in a 3-times-
-# rewatched film counted as "3 films" in Favorite Actors, and a rewatched
-# film could appear twice in Taste vs. Crowd's Overrates grid. Every stat
-# below -- and the "highest rated" functions just below them
-# (_rating_by_genre/_country/_language/_release_year, _taste_vs_crowd), which
-# used to just read `rated` unchanged since RatingEntry and DiaryEntry share
-# the same (title, year, rating, movie) field names -- now needs a diary-
-# specific variant working from the deduped film list instead, since that
-# dedup (and the current-rating preference below) isn't expressible as a
-# plain queryset filter the way pointing `rated` at a diary queryset was.
+# The all-time page counts distinct films via watched_movies (WatchedEntry has
+# no date). The year view has no dateless source, so these work from
+# _deduped_diary_films instead -- one entry per distinct film watched that
+# year, not one per log, so a 3x-rewatched film doesn't inflate Favorite
+# Actors or appear twice in Taste vs. Crowd's Overrates grid.
 
 def _deduped_diary_films(diary, import_session) -> list:
     """One entry per distinct (title, year) film logged in this (already year-
-    filtered) diary queryset, not one per log -- see the comment block above
-    for why every "distinct films" year-view stat needs this instead of the
-    raw diary queryset every other year-view stat still (correctly) uses.
+    filtered) diary queryset, not one per log.
 
-    Which log represents a rewatched film -- for its movie/genres/cast/etc.
-    -- is whichever was logged last (watched_date, then id as the tiebreak,
-    same convention _milestones/_rewatch_drift_insights use elsewhere). Its
-    rating is overridden by the current ratings.csv value when one exists,
-    since a diary log's rating is frozen at the moment it was logged but
-    Letterboxd lets someone edit their rating later without adding a new log
-    -- same reasoning _rewatch_drift_insights/_same_year_releases already
-    established. rating is None if the film was never rated at all, by
-    either source -- callers that need an average (not just a count) filter
-    those out themselves, the same way the all-time "highest rated"
-    functions already do via `rated`.
+    For a rewatched film, the movie/genres/cast/etc. come from whichever log
+    was logged last (watched_date, then id as tiebreak, same convention as
+    _milestones/_rewatch_drift_insights). Its rating is overridden by the
+    current ratings.csv value when one exists, since a diary log's rating is
+    frozen at logging time but Letterboxd lets someone edit it later without
+    a new log. rating is None if never rated by either source -- callers
+    needing an average filter those out themselves.
 
     Returns {'title', 'year', 'movie' (a Movie instance, prefetched with
     genres/directors/countries, or None if unresolved), 'rating' (Decimal or
@@ -886,15 +807,10 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
             .order_by('-count')[:TOP_N]
         )
 
-        # avg_rating is joined in separately from rated (RatingEntry, i.e. ratings.csv) --
-        # the "most watched" count and the "highest rated" average necessarily come from
-        # different sources (watched.csv has no rating column), so they're computed
-        # independently and merged by name. rating_count enforces MIN_COUNT_FOR_AVERAGE
-        # (a director with 5 watched films but only 1 rated shouldn't show a 1-data-point
-        # "average").
-        # max_rating feeds _watchlist_recommendations' peak-blended director delta (see
-        # PEAK_BLEND) -- not used by top_directors/favorite_people below, which only
-        # ever read rating_count/avg_rating, so this is a free addition for them.
+        # avg_rating is joined in separately from rated (watched.csv has no rating
+        # column), with rating_count enforcing MIN_COUNT_FOR_AVERAGE. max_rating
+        # feeds _watchlist_recommendations' peak-blended director delta (PEAK_BLEND);
+        # top_directors/favorite_people below only read rating_count/avg_rating.
         director_ratings = {
             row['movie__directors__name']: row
             for row in rated.filter(movie__directors__isnull=False)
@@ -947,13 +863,8 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         films_watched_total = _films_watched_total(import_session, diary, rated, exclude_shorts)
         min_favorite_director, min_favorite_actor = MIN_COUNT_FOR_FAVORITE_DIRECTOR, MIN_COUNT_FOR_FAVORITE_ACTOR
     else:
-        # See the _*_diary functions above (and _deduped_diary_films' own
-        # docstring) for why the year view needs its own "most watched"/
-        # "highest rated" logic instead of reusing watched_movies/rated --
-        # there's no year-view equivalent of watched_movies, and every
-        # distinct-films stat needs deduping a plain queryset repoint can't
-        # express. Computed once and reused by every diary-sourced stat below,
-        # including _same_year_releases' own grid.
+        # Computed once and reused by every diary-sourced stat below, including
+        # _same_year_releases' own grid -- see _deduped_diary_films' docstring.
         deduped_films = _deduped_diary_films(diary, import_session)
         top_genres = _top_genres_diary(deduped_films)
         top_directors, director_rating_lists, director_profile_paths, director_tmdb_ids = _top_directors_diary(
@@ -1616,16 +1527,12 @@ def _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, ra
         ),
         avg_rating, rated_count,
     )
-    # Directors/actors reuse the same rating groupings already built in
-    # build_dashboard_context for top_directors/top_actors/favorite_people
-    # (director_ratings, actor_rating_lists) rather than rebuilding them -- that
-    # avoids duplicating actor_rating_lists' cameo filtering here, and keeps an
-    # actor/director's numbers from ever disagreeing between the two views.
-    # Peak-blended (see PEAK_BLEND/_shrunk_delta) same as every other axis -- an
-    # inconsistent director (one standout among otherwise-average films) shouldn't
-    # be invisible here just because director_ratings' own avg_rating doesn't show
-    # it; max_rating (added to that query above) is what makes the peak side of the
-    # blend possible without a second query.
+    # Directors/actors reuse the rating groupings already built in
+    # build_dashboard_context (director_ratings, actor_rating_lists) rather than
+    # rebuilding them, so cameo filtering and numbers stay consistent between
+    # views. Peak-blended like every other axis so an inconsistent director
+    # (one standout among average films) isn't invisible just because
+    # avg_rating alone doesn't show it.
     director_deltas = {
         name: (
             (
@@ -1720,13 +1627,9 @@ def _watchlist_recommendations(
 
     weights = _adaptive_weights(axis_deltas)
 
-    # Excludes unreleased films (a confirmed future release_year -- there's no exact
-    # release_date stored, just the year TMDB gave it, so a same-year film that
-    # hasn't actually come out yet can still slip through; this is the closest check
-    # the data on hand allows) and shorts (a confirmed runtime under 60 minutes).
-    # Both filters keep a NULL value rather than exclude it -- an unknown release
-    # year/runtime hasn't been confirmed bad, so it shouldn't be penalized for
-    # missing data the way a genuinely-future or genuinely-short film should be.
+    # Excludes confirmed-unreleased films (only release_year is stored, not an
+    # exact date) and confirmed shorts (runtime under 60 minutes). Both filters
+    # keep NULL values rather than exclude them -- unknown isn't confirmed bad.
     candidates = list(
         watchlist.filter(movie__isnull=False)
         .exclude(movie_id__in=watched_movie_ids)
@@ -1806,13 +1709,9 @@ def _watchlist_recommendations(
             if delta >= RECOMMENDATION_REASON_THRESHOLD
         ][:3]
         # Directors/actors this candidate is meaningfully credited to, for
-        # PERSON_CREDIT_CAP below -- same RECOMMENDATION_REASON_THRESHOLD as
-        # `reasons` (just not capped to the top 3), not every director/actor axis
-        # component. actor_deltas has an entry for anyone who's ever appeared in even
-        # one rated film (see _rating_deltas' docstring on why there's no hard count
-        # cutoff) -- most of those are negligible, shrunk-near-zero deltas, and
-        # counting every one of them toward the cap would let a handful of trivial
-        # one-film overlaps exhaust a genuinely favorite actor's 2 real slots.
+        # PERSON_CREDIT_CAP below -- same threshold as `reasons` (not capped to
+        # top 3), so trivial near-zero-delta appearances don't exhaust a
+        # genuinely favorite actor's real slots.
         people = {
             label for axis, label, delta in components
             if axis in ('director', 'actor') and delta >= RECOMMENDATION_REASON_THRESHOLD
@@ -1823,12 +1722,9 @@ def _watchlist_recommendations(
     scored.sort(key=lambda item: item['score'], reverse=True)
 
     # Greedy selection, highest score first, skipping any candidate that would push
-    # a director/actor already credited PERSON_CREDIT_CAP times over that limit --
-    # without this, one favorite director whose whole filmography sits on the
-    # watchlist could dominate the grid, crowding out otherwise-strong picks driven
-    # by entirely different signals. Draws from the full scored list, not just the
-    # first RECOMMENDATION_DISPLAY_CAP, so a skipped slot gets backfilled by the
-    # next-best candidate rather than just shrinking the grid.
+    # a director/actor past PERSON_CREDIT_CAP -- draws from the full scored list
+    # (not just the display cap) so a skipped slot gets backfilled instead of
+    # just shrinking the grid.
     selected = []
     person_credit_counts = defaultdict(int)
     for item in scored:
@@ -1894,15 +1790,10 @@ def _raw_axis_deltas(rated, avg_rating) -> dict:
 # to read in a grid tile rather than a full-width row.
 _DELTA_INSIGHT_TEXT = '{value} — {delta:+.1f}★ vs. avg'
 
-# Only 2 of the 7 axes _all_axis_deltas/_raw_axis_deltas compute get a slot in the
-# combined insight grid at all (see _AXIS_INSIGHT_SLOTS below) -- this grid exists
-# to say something the rest of the dashboard doesn't, and every other axis already
-# has a home of its own: genre/country/language have their own "Highest rated" tab
-# (_rating_by_genre/_country/_language), showing the exact same raw
-# average this grid uses (see _raw_axis_deltas); director/actor have their own
-# Favorite Directors/Actors cards. A tile repeating any of those would be a pure
-# duplicate, not just a rephrase. Decade and runtime have no dashboard tab of their
-# own at all, so both are unconditionally new information here.
+# Only 2 of the 7 axes get a slot in the combined insight grid (_AXIS_INSIGHT_SLOTS
+# below) -- genre/country/language already have their own "Highest rated" tab and
+# director/actor their own cards, so a tile for those would be a pure duplicate.
+# Decade and runtime have no tab of their own, so both are new information here.
 
 # Icon shown next to a decade/runtime insight when no representative film's
 # poster resolves (see _rating_insights/_best_film_per_bucket). Not meant to be
@@ -2789,27 +2680,19 @@ def _rewatch_leaderboard(diary) -> dict:
         # looks visibly softer than w342 even scaled down to the same final size.
         row['poster_url'] = _tmdb_image_url(row.pop('poster_path'), 'w342')
 
-    # FAVORITE_PEOPLE_GRID_CAP, not REWATCH_GRID_DISPLAY_CAP, even though both are
-    # .favs--six now and happen to share the same value -- this renders as the
-    # same clickable headshot grid as Favorite Directors (headshots, w185), not
-    # most_rewatched_films' poster grid (w342) above, so it shares that card's
-    # own cap/image-size convention rather than coincidentally matching this one.
-    # count__gte=2, same "one occurrence isn't a pattern" bar as
-    # most_rewatched_films' own watch_count__gt=1 above -- a director credited
-    # on a single rewatched film shouldn't read as someone this person
-    # specifically rewatches, any more than a single rewatched film alone
-    # would.
+    # FAVORITE_PEOPLE_GRID_CAP, not REWATCH_GRID_DISPLAY_CAP -- this renders as
+    # the same clickable headshot grid as Favorite Directors (w185), not
+    # most_rewatched_films' poster grid (w342) above, so it follows that card's
+    # cap/image-size convention even though the values happen to match.
+    # count__gte=2 mirrors most_rewatched_films' watch_count__gt=1 -- a single
+    # occurrence isn't a pattern for a director either.
     #
-    # Filtered to rewatched_film_keys, not just rewatch=True -- a diary row's
-    # rewatch flag means "I'd watched this before, ever" (Letterboxd's own
-    # definition), which can be true even when THIS diary queryset only
-    # contains one of that film's watches (e.g. year mode, when the first
-    # watch happened in an earlier year). Confirmed for real: without this
-    # filter, a single 2026 rewatch-flagged watch of a film first seen in 2024
-    # counted as a "2026 Nolan rewatch" even though 2026's own diary rows only
-    # show it once -- same "count every log, but only within what this scope
-    # can actually see" fix most_rewatched_films' own grouped-by-(title, year)
-    # count above already gets for free by construction.
+    # Filtered to rewatched_film_keys, not just rewatch=True -- Letterboxd's
+    # rewatch flag means "I'd watched this before, ever," which can be true even
+    # when this diary queryset (e.g. year mode) only contains one of that film's
+    # watches. Without this filter, a 2026 rewatch-flagged watch of a film first
+    # seen in 2024 counted as a "2026 Nolan rewatch" even though 2026's own
+    # diary rows only show it once.
     director_rewatch_rows = diary.filter(rewatch=True, movie__directors__isnull=False).values(
         'title', 'year', 'movie__directors__name', 'movie__directors__profile_path', 'movie__directors__tmdb_id',
     )
@@ -2907,20 +2790,11 @@ def _viewing_calendar(diary, year=None) -> dict:
     dates = sorted(date_counts)
     longest_streak, longest_gap = _streak_and_gap(dates)
 
-    # Days watched % (year view only, Watching Habits' 4th calendar stat) --
-    # needs a fixed, known-length denominator to mean anything ("42% of the
-    # year" reads as a real consistency stat), which only a single calendar
-    # year has. An all-time version would need "days since account start",
-    # an irregular, hard-to-picture number that isn't the same kind of fact.
-    #
-    # For the current, still-in-progress year, the denominator is days
-    # elapsed so far (today's ordinal day), not the full 365/366 -- dividing
-    # a partial year by its eventual full length would understate the
-    # percentage for every year until it's actually over. A past year uses
-    # its own full length as before. date(...).timetuple().tm_yday gives the
-    # ordinal day count either way (366 for a leap year's Dec 31, or today's
-    # position in the current year) -- simpler than importing the stdlib
-    # calendar module for one leap-year check.
+    # Days watched % (year view only) needs a fixed, known-length denominator
+    # to mean anything -- an all-time version would need "days since account
+    # start," which isn't the same kind of fact. For the current, in-progress
+    # year, the denominator is days elapsed so far (not the full 365/366), so
+    # the percentage isn't understated until the year is actually over.
     days_watched_count = days_elapsed = days_watched_pct = None
     if year is not None:
         days_watched_count = len(dates)
@@ -2933,13 +2807,10 @@ def _viewing_calendar(diary, year=None) -> dict:
         'weekday_distribution': weekday_distribution,
         'longest_streak_days': longest_streak,
         'longest_gap_days': longest_gap,
-        # Year view only -- the all-time page used to let you browse any past
-        # year's own calendar grid here, but that's what switching to that
-        # year's own Wrapped-style page is for now, so it's simply absent
-        # (empty years list) in all-time mode. The template's existing
-        # {% if calendar.heatmap.years %} guard already hides the whole
-        # "Activity by year" block for an empty one, same as every other
-        # year-view-only card on this page.
+        # Year view only -- switching to that year's own Wrapped-style page
+        # replaces the old all-time cross-year browser, so this is simply
+        # absent in all-time mode. The template's {% if calendar.heatmap.years %}
+        # guard hides the block for an empty one.
         'heatmap': _viewing_heatmap(date_counts) if year is not None else {'years': [], 'default_year': None, 'data': {}},
         'days_watched_count': days_watched_count,
         'days_elapsed': days_elapsed,

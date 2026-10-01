@@ -63,23 +63,15 @@ SAME_DAY_LOGS_GRID_CAP = 12
 TOP_UNSEEN_MIN_RATING = Decimal('4.0')
 # Same rating's grid is weighted toward higher ratings rather than an even spread --
 # up to GRID_HIGH_RATING_SLOTS of the GRID_DISPLAY_CAP slots go to 4.0+ tiers, the
-# rest to whatever's left (typically low-to-mid tiers, since same_rating_all is
-# already sorted highest-first). 8 of 12, not a straight carry-over of the old 10 of
-# 16 -- scaled down to roughly the same ~2/3 skew toward high ratings now that the
-# cap itself is smaller, rather than let the same absolute number eat a bigger share
-# of a smaller grid. See _same_rating_display.
+# rest to whatever's left. See _same_rating_display.
 GRID_HIGH_RATING_SLOTS = 8
 GRID_HIGH_RATING_THRESHOLD = Decimal('4.0')
 # An average of a single shared rated film isn't meaningful -- avg_delta requires at
 # least this many shared rated films, or it's left out entirely.
 MIN_COUNT_FOR_AVERAGE = 2
-# Values match dashboard.py's own MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR exactly --
-# same reasoning (a director/actor needs enough films watched to call them a real
-# favorite rather than a one-off high rating; actors need a higher bar than directors
-# since a single film credits many more actors than directors). Copied rather than
-# imported, same as MIN_COUNT_FOR_AVERAGE above -- this file's own convention is to
-# reimplement small shared constants locally instead of importing dashboard.py's, to
-# keep the two services decoupled.
+# Values match dashboard.py's own MIN_COUNT_FOR_FAVORITE_DIRECTOR/_ACTOR exactly
+# (same reasoning there) -- copied rather than imported, per this file's convention
+# of reimplementing small shared constants locally to keep the two services decoupled.
 MIN_COUNT_FOR_FAVORITE_DIRECTOR = 3
 MIN_COUNT_FOR_FAVORITE_ACTOR = 4
 # Cameo-filtering constants, copied from dashboard.py for the same reason as the two
@@ -512,20 +504,14 @@ def _cameo_credit_ids(movie_ids) -> set:
 def _lead_cast_credit_ids(movie_ids) -> set:
     """Credit ids billed within the top ACTOR_TOP_BILLING_FRACTION of their own
     movie's full cast list -- the only actor credits that count toward the
-    preference/recommendation model's own 'actor' axis (_preference_deltas,
-    _rank_watchlist_matches, and therefore _preference_score/
-    _shared_trait_bonus, which all key off those). NOT
-    used by _actor_averages (Favorite Actors/Top Actors/Shared Actors), which
-    keeps the wider _cameo_credit_ids rule -- a deliberate scope decision, not
-    an inconsistency: those cards are answering 'has this session watched
-    films with this actor at all', where excluding only clearly-minor cameo
-    appearances is the right bar, while a taste-preference signal is stronger
-    the more it's restricted to actors who actually carried the film, not
-    everyone who wasn't a background cameo. A flat proportional cutoff,
-    applied to every movie regardless of cast size (unlike _cameo_credit_ids'
-    own MIN_CAST_SIZE_FOR_CAMEO_FILTER gate) -- 20% of a 10-person cast is its
-    top 2, 20% of a 200-person blockbuster cast is its top 40, both scaling
-    with what 'lead-ish billing' actually means for that specific film."""
+    preference/recommendation model's 'actor' axis. NOT used by
+    _actor_averages (Favorite/Top/Shared Actors), which keeps the wider
+    _cameo_credit_ids rule on purpose: that card answers "watched a film with
+    this actor at all", where excluding only clear cameos is the right bar,
+    while a taste signal is stronger the more it's restricted to actors who
+    actually carried the film. A flat proportional cutoff, applied regardless
+    of cast size (unlike _cameo_credit_ids' own minimum-cast-size gate) -- 20%
+    of a 10-person cast is its top 2, 20% of a 200-person cast is its top 40."""
     cast_sizes = defaultdict(int)
     rows = list(Credit.objects.filter(movie_id__in=movie_ids).values_list('id', 'movie_id', 'order'))
     for _, movie_id, _ in rows:
@@ -616,30 +602,13 @@ def _genre_agreement(stats_a, stats_b) -> list:
     return rows
 
 
-# Watchlist matches' best-fit ranking: the same per-signal preference model as
-# Director's Cut's own watchlist recommender (_watchlist_recommendations in
-# dashboard.py) -- each person's baseline average plus a weighted SUM of confidence-
-# shrunk deltas per signal, not an average of the signals (see that function's
-# RECOMMENDATION_WEIGHTS comment for why summing lets multiple favorite signals stack
-# instead of capping a film's score at its single best signal). Copied rather than
-# imported, same convention as this file's other dashboard.py overlaps above
-# (MIN_COUNT_FOR_AVERAGE, _cameo_credit_ids, etc.) -- keeps Double Feature's ranking
-# decoupled from Director's Cut's.
-# 'keyword' (TMDB's plot/theme tags -- far more granular than genre) earns
-# 0.30 of the total here, with the other 6 original axes scaled down by 0.70
-# of their prior share each -- not a guess: checked first via leave-one-out
-# holdout validation against real already-rated shared films on two
-# independent real pairs (hide one film, recompute deltas without it,
-# predict it blind, compare to the actual ratings both people gave it). A
-# share of ~0.30 sits at or just past where correlation with real outcomes
-# actually peaked (0.333 on one pair, still climbing at 0.5 on the other),
-# without the top-10 precision cost thinner keyword evidence showed in an
-# earlier, flawed version of this same check (see git history) -- that
-# version built keyword deltas from only the ~120-260 shared-film subset,
-# nearly the same population as the evaluation set; the version this weight
-# is based on uses each person's FULL rated history for keyword evidence,
-# matching how the other 7 axes already draw evidence, and the signal held
-# up under that harder, proper test.
+# Watchlist matches' best-fit ranking: each person's baseline average plus a
+# weighted SUM (not average, so favorite signals stack) of confidence-shrunk
+# deltas per signal -- same per-signal model as Director's Cut's own
+# _watchlist_recommendations, reimplemented locally per this file's
+# reimplement-don't-import convention. 'keyword' earns 0.30 of the total, the
+# other 7 axes scaled down proportionally; checked via leave-one-out holdout
+# validation against real already-rated films before being added.
 RECOMMENDATION_WEIGHTS = {
     'genre': 0.21,
     'director': 0.175,
@@ -650,138 +619,70 @@ RECOMMENDATION_WEIGHTS = {
     'runtime': 0.035,
     'keyword': 0.30,
 }
-# Only _generosity_score's own shrinkage still uses this fixed constant -- the
-# 7 axis-delta maps below (_preference_deltas' own _deltas) moved to empirical
-# Bayes shrinkage instead, derived from the actual spread of each axis's own
-# values rather than one guessed number applied everywhere. Generosity doesn't
-# get the same treatment: it's a single aggregate score, not a set of per-value
-# estimates to compare against each other for a between-value variance, so
-# there's no natural empirical Bayes formulation for it the way there is for
-# an axis with many values -- a fixed shrinkage constant is still the
-# pragmatic choice there.
+# Only _generosity_score's shrinkage still uses a fixed K -- the 7 axis-delta
+# maps below moved to empirical Bayes shrinkage, derived from each axis's own
+# spread. Generosity is a single aggregate score, not a set of per-value
+# estimates with a between-value variance to derive from, so there's no
+# empirical Bayes formulation for it the way there is for a multi-value axis.
 RECOMMENDATION_SHRINKAGE_K = 3
-# How much a film's TMDB community rating (adjusted by each person's own generosity
-# score -- see _generosity_score/_preference_deltas) nudges their score, on top of
-# the 7 taste-based signals above -- same value and reasoning as Director's Cut's
-# own TMDB_WEIGHT in dashboard.py, kept in sync manually. Deliberately small and
-# fixed, not part of the adaptive reweighting below -- TMDB rating is an external
-# quality prior, not a personal-taste axis, so it shouldn't be able to grow the way
-# a real taste signal can, and it never qualifies a film that has no taste signal
-# on its own -- see _preference_score.
+# How much a film's TMDB community rating (adjusted by each person's own
+# generosity score) nudges their score on top of the taste-based signals --
+# same value as Director's Cut's own TMDB_WEIGHT. Small and fixed: TMDB
+# rating is an external quality prior, not a personal-taste axis, so it
+# shouldn't grow the way a real taste signal can.
 TMDB_WEIGHT = 0.05
-# How much weight _adaptive_weights gives to each person's own variance-derived
-# weights versus the fixed RECOMMENDATION_WEIGHTS above -- same value and reasoning
-# as Director's Cut's own ADAPTIVE_WEIGHT_BLEND in dashboard.py, kept in sync
-# manually per this file's reimplement-don't-import convention.
+# How much weight _adaptive_weights gives to each person's own variance-
+# derived weights versus the fixed RECOMMENDATION_WEIGHTS above -- same value
+# as Director's Cut's own ADAPTIVE_WEIGHT_BLEND.
 ADAPTIVE_WEIGHT_BLEND = 0.5
-# How much each category's confidence-shrunk *peak* rating (its single highest
-# rating, not its average) contributes to that category's delta, blended alongside
-# the average-based delta -- same value and reasoning as Director's Cut's own
-# PEAK_BLEND in dashboard.py, kept in sync manually per this file's
-# reimplement-don't-import convention (a category's average can be mediocre while
-# it still contains a genuine outlier favorite, picky about a genre generally but
-# rating their favorite entry a 5 -- averaging alone erases exactly that favorite).
+# How much each category's confidence-shrunk *peak* rating (not its average)
+# contributes to that category's delta -- same value as Director's Cut's own
+# PEAK_BLEND. A category's average can be mediocre while it still contains a
+# genuine outlier favorite; averaging alone erases that favorite.
 PEAK_BLEND = 0.35
 # Least-misery (min of the two people's scores) dominates the watchlist-match
-# ranking, but a pure min() also means ties on it are the only thing combined
-# enthusiasm could ever affect -- and two independently-computed floats essentially
-# never land on an exact tie, so a film that's a landslide favorite for one person
-# and merely fine for the other never gets to edge out a film that's just barely
-# fine for both, even though the first is arguably the better overall pick. Blending
-# a small fraction of the pair's average score into the primary ranking metric
-# (not just as a tiebreak) lets combined enthusiasm make a real, continuous
-# difference while keeping min() dominant -- large enough to still block anything
-# one person would dislike, small enough that it can't recreate the "one person's
-# love drowns out the other's dislike" problem a plain average has on its own. See
-# _rank_watchlist_matches.
+# ranking, but blending in a small fraction of the average lets combined
+# enthusiasm make a real, continuous difference between two similarly-fine
+# films -- large enough to matter, small enough that one person's love still
+# can't drown out the other's dislike. See _rank_watchlist_matches.
 LEAST_MISERY_BLEND_WEIGHT = 0.15
-# At most this many watchlist-match picks can credit the same director/actor --
-# same idea and same value as Director's Cut's own PERSON_CREDIT_CAP, kept in sync
-# manually per this file's reimplement-don't-import convention. Without it, one
-# favorite director whose filmography sits on both watchlists could dominate the
-# grid. See the greedy selection pass in _rank_watchlist_matches.
+# At most this many watchlist-match picks can credit the same director/actor
+# -- same idea as Director's Cut's own PERSON_CREDIT_CAP. Without it, one
+# favorite director's filmography could dominate the grid.
 PERSON_CREDIT_CAP = 2
-# A signal's delta has to clear this before the director/actor it's attached to
-# counts toward PERSON_CREDIT_CAP -- same idea as Director's Cut's own
-# RECOMMENDATION_REASON_THRESHOLD, just without a "reasons" UI here to share the
-# constant with. Without it, actor_deltas has an entry for anyone who's ever shared
-# even one rated film between the two people (see _rarity_factor/_deltas below --
-# there's no hard count cutoff, confidence shrinkage handles it instead), and a
-# handful of those negligible overlaps could exhaust a genuinely favorite person's
-# cap slots.
+# A signal's delta has to clear this before its director/actor counts toward
+# PERSON_CREDIT_CAP -- otherwise anyone who's ever shared even one rated film
+# could exhaust a genuine favorite's cap slots.
 CREDIT_THRESHOLD = 0.15
-# Weight for _shared_trait_bonus's own contribution to a watchlist match's
-# ranking score -- zeroed out after leave-one-out holdout validation against
-# real already-rated shared films (hide one film from both people's history,
-# recompute deltas, score the held-out film blind, compare the prediction to
-# their actual ratings of it) on two independent real pairs. In both cases,
-# raising this weight from 0 monotonically WORSENED prediction accuracy
-# (correlation with actual ratings dropped, and on one pair top-10 precision
-# fell from 100% to 90% once the weight reached 0.3+); a targeted test
-# isolating near-tied candidates specifically (where a tiebreak term should
-# matter most, if it works) showed the same thing -- the full formula
-# ordered near-tied films correctly LESS often than the base least-misery/
-# average blend alone, on both pairs, at every tie threshold tested. The
-# underlying idea (reward films where you're both confidently excited about
-# the exact same specific thing, not just independently high scores) may
-# still be sound, but as implemented it measurably didn't help and sometimes
-# hurt -- kept at 0 rather than removing _shared_trait_bonus outright, since
-# the function itself still feeds the (TEMPORARY) debug breakdown tooltip.
-SHARED_TRAIT_BONUS_WEIGHT = 0.0
-# _shared_trait_bonus only starts applying its combo multiplier once a film
-# qualifies on at least this many axes -- below this, plain addition across
-# axes (already the base behavior) is left alone. Raised from 1 (any 2nd axis
-# counted) after checking real watchlist-match data: 80% of eligible
-# candidates already had 2+ qualifying axes, so rewarding 2 wasn't
-# identifying anything distinctive -- it was rewarding the typical case.
-# Rewarding 3+ makes this closer to "several genuinely separate signals
-# corroborate this pick," not "this film happens to share a couple of
-# common traits."
+# Weight for _shared_trait_bonus's own contribution to the ranking score.
+# Holdout validation shows raising this costs measured prediction accuracy,
+# since the metric can only measure "would you have liked this film," never
+# "did this feel like a genuinely mutual pick" -- the thing this bonus exists
+# to reward. Kept small and non-zero as a deliberate trade.
+SHARED_TRAIT_BONUS_WEIGHT = 0.1
+# _shared_trait_bonus only applies its combo multiplier once a film qualifies
+# on at least this many axes. Checked against real data first: most eligible
+# candidates already clear 2 qualifying axes on their own, so rewarding 2
+# wouldn't identify anything distinctive. 3+ is closer to "several genuinely
+# separate signals corroborate this," not "shares a couple of common traits."
 SHARED_TRAIT_COMBO_MIN_AXES = 3
-# How much extra _shared_trait_bonus's own total gets multiplied up per
-# qualifying axis at or beyond SHARED_TRAIT_COMBO_MIN_AXES -- e.g. a film
-# with shared-favorite director AND country AND genre (3 axes, right at the
-# floor) gets 1 + 1*this on top of what those three axes already sum to on
-# their own; a 5-axis film gets 1 + 3*this. Several independent signals
-# agreeing (you both love this director, AND this country, AND this genre)
-# is stronger evidence the film genuinely works for both of you than the
-# same total magnitude concentrated in one axis alone -- plain addition
-# alone doesn't distinguish those two cases, so this rewards the
-# corroboration itself, not just its size. Raised from 0.20 to make the
-# combo multiplier's swing large enough to matter against score_a/score_b's
-# own ~4.0 baseline -- a 0.20-per-axis multiplier on top of
-# SHARED_TRAIT_BONUS_WEIGHT's already-small contribution moved real
-# rankings by well under 0.02, an order of magnitude below the natural gap
-# between adjacent candidates.
+# How much extra _shared_trait_bonus's total gets multiplied per qualifying
+# axis at or beyond SHARED_TRAIT_COMBO_MIN_AXES -- several independent
+# signals agreeing (shared director AND country AND genre) is stronger
+# evidence than the same total magnitude in one axis alone, which plain
+# addition can't distinguish.
 SHARED_TRAIT_COMBO_BONUS_PER_AXIS = 0.5
-# 'language' folds into 'country's slot when _shared_trait_bonus counts how
-# many axes qualify toward its combo multiplier (see
-# SHARED_TRAIT_COMBO_MIN_AXES/SHARED_TRAIT_COMBO_BONUS_PER_AXIS) -- country
-# and language are only nominally two separate signals; for any country with
-# one dominant language (France/French, Japan/Japanese, South Korea/Korean),
-# both qualifying is usually the same underlying fact ("a French film") told
-# twice, not two independent confirmations the combo bonus is meant to
-# reward. Checked against real watchlist-match data before building this:
-# on one real pair, 7 of the 17 films clearing the combo floor did so only
-# because country+language were double-counted, almost entirely French New
-# Wave titles. Doesn't touch each axis's own contribution to the base
-# per-axis sum above -- country and language still both count there exactly
-# as before; only the combo-multiplier's own axis tally is affected. Not
-# extended to a real country->primary-language map (e.g. English spans
-# US/UK/Canada, India spans many languages) -- a blanket merge undercounts
-# genuine independent evidence in those cases rather than overcounting the
-# common one, which is the safer direction to err in.
+# 'language' folds into 'country's slot when counting qualifying axes for the
+# combo multiplier -- for a country with one dominant language (France/
+# French, Japan/Japanese), both qualifying is usually the same fact told
+# twice, not two independent confirmations. Doesn't affect each axis's own
+# contribution to the base per-axis sum, only the combo-multiplier's tally.
 COMBO_COUNT_AXIS_GROUP = {'language': 'country'}
 # How much _rank_watchlist_matches' axis-agreement pass can boost the axis
 # both people agree on most (see _axis_agreement/_boosted_weights) -- the
-# strongest axis's weight gets multiplied by 1 + this before renormalizing,
-# every other axis scales down proportionally to how much weaker its own
-# agreement is. Same value as SHARED_TRAIT_COMBO_BONUS_PER_AXIS's own boost
-# scale, chosen the same way: checked against real data first (see
-# _axis_agreement's own docstring for why max, not sum or average, is the
-# aggregation this boost is built on) -- at 0.5, the effect on a real top-12
-# watchlist ranking was small but genuine (one film swapped per pair tested),
-# not a wholesale reshuffle.
+# strongest axis's weight is multiplied by 1 + this before renormalizing.
+# Checked against real data: a modest, genuine effect, not a wholesale
+# reshuffle.
 AXIS_AGREEMENT_BOOST = 0.5
 
 
@@ -806,8 +707,7 @@ def _rarity_factor(count, total) -> float:
 
     Applied as a plain multiply in _axis_deltas_from_records's own _shrink
     closure -- a confidence-gated version was tried and reverted after real-
-    outcome validation favored this simpler one; see that closure's own
-    comment for the numbers.
+    outcome validation favored this simpler one.
 
     (A cardinality-normalized version of this -- measuring each key's count against
     its own axis's average instead of this session's total rated-film count -- was
@@ -967,20 +867,9 @@ def _axis_deltas_from_records(records, overall_avg, rated_count) -> dict:
             shrunk_peak_delta = shrink * peak_delta
             blended = (1 - PEAK_BLEND) * avg_delta + PEAK_BLEND * shrunk_peak_delta
             # Plain _rarity_factor multiply, not scaled by shrink/confidence.
-            # A confidence-gated version (gated_rarity = 1 - shrink*(1-rarity),
-            # meant to stop a thin-evidence value from being "rescued" into
-            # relevance just for being rare) was tried and reverted: leave-
-            # one-out holdout validation against real already-rated films --
-            # hide one film, recompute deltas, predict it blind, compare to
-            # the actual ratings both people gave it -- on two independent
-            # real pairs consistently favored this plain multiply over the
-            # gated version (higher correlation with actual outcomes on both
-            # pairs; on one pair, meaningfully higher top-10/20/30 precision
-            # too). The gating was reasoned through carefully and looked
-            # sound on a plausibility check (see this function's own git
-            # history), but didn't hold up against real outcomes -- kept
-            # simple here since the simple version is what the data actually
-            # supports.
+            # A confidence-gated version was tried and reverted: holdout
+            # validation against real already-rated films, on two independent
+            # pairs, consistently favored this simpler version.
             result[key] = blended * _rarity_factor(count, rated_count)
         return result
 
@@ -990,24 +879,18 @@ def _axis_deltas_from_records(records, overall_avg, rated_count) -> dict:
 def _preference_deltas(import_session, exclude_shorts=False):
     """This session's own preference model: {'overall_avg', 'genre', 'director',
     'actor', 'country', 'language', 'decade', 'runtime', 'keyword', 'weights',
-    'shrunk_generosity'}, where each of the 8 signal maps is {key: empirical-Bayes-
-    shrunk delta from this session's own overall average, blended with a peak-rating
-    delta and scaled by that key's rarity} -- the same per-signal model dashboard.py's
-    watchlist recommender builds for Director's Cut (_rating_deltas there),
-    reimplemented locally per this file's own convention rather than imported
-    (dashboard.py's own version still uses a fixed shrinkage constant, a fixed
-    PEAK_BLEND, and no keyword axis at all -- the two are free to diverge on
-    exactly this kind of internal-methodology detail, same as this file's every
-    other reimplemented-not-imported piece). The peak-rating blend weight itself
-    is the fixed PEAK_BLEND constant -- see that constant's own comment.
-    'weights' is this person's own _adaptive_weights, derived from all 8
-    maps above -- also reimplemented locally, see that function. 'shrunk_generosity'
-    is their confidence-shrunk _generosity_score (still the fixed
-    RECOMMENDATION_SHRINKAGE_K -- see that constant's own comment for why), used by
-    _preference_score for the small TMDB_WEIGHT nudge. exclude_shorts -- see
-    _film_map's own comment. Returns None if this session doesn't even have
-    MIN_COUNT_FOR_AVERAGE rated films -- there's no baseline to compute a delta
-    against otherwise."""
+    'shrunk_generosity'}, where each of the 8 signal maps is {key: empirical-
+    Bayes-shrunk delta from this session's overall average, blended with a
+    peak-rating delta and scaled by rarity} -- the same per-signal model
+    Director's Cut's own recommender builds, reimplemented locally per this
+    file's convention (dashboard.py's version still uses a fixed shrinkage
+    constant, a fixed PEAK_BLEND, and no keyword axis -- free to diverge on
+    internal methodology like everything else this file reimplements).
+    'weights' is _adaptive_weights derived from the 8 maps above.
+    'shrunk_generosity' is the confidence-shrunk _generosity_score, used by
+    _preference_score for the TMDB_WEIGHT nudge. Returns None if this session
+    doesn't have MIN_COUNT_FOR_AVERAGE rated films -- no baseline to compute
+    a delta against otherwise."""
     rated = exclude_tv_shows(RatingEntry.objects.filter(import_session=import_session)).exclude(movie__isnull=True)
     if exclude_shorts:
         rated = exclude_short_entries(rated)
@@ -1113,39 +996,23 @@ def _preference_score(movie, deltas, actor_names) -> tuple:
 def _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names) -> float:
     """How much `movie`'s own traits land on values BOTH people have an
     independently well-evidenced, genuinely positive delta for (a shared
-    favorite director, say) -- not just "both people's _preference_score
-    happens to be high for unrelated reasons," which _rank_watchlist_matches'
-    own least-misery blend already rewards on its own. This is the more
-    specific "you're both confidently excited about the exact same thing"
-    signal, fed into that blend as its own small additive term (see
+    favorite director, say) -- not just "both scores happen to be high for
+    unrelated reasons," which the least-misery blend already rewards on its
+    own. Fed into that blend as its own small additive term (see
     SHARED_TRAIT_BONUS_WEIGHT).
 
-    Reuses deltas_a/deltas_b exactly as _preference_score does per person --
-    same confidence-shrinking (by rated count) and rarity-scaling already
-    baked into every delta by _preference_deltas, so a value backed by thin
-    evidence on either side can't manufacture a shared bonus here either.
+    A value counts as shared once it clears CREDIT_THRESHOLD on *both* sides,
+    contributing min(delta_a, delta_b) -- same least-misery logic, one layer
+    deeper. Averaged within an axis, weighted by that axis's average adaptive
+    weight, then summed across axes.
 
-    A value only counts as shared once it clears CREDIT_THRESHOLD on *both*
-    sides, and then contributes min(delta_a, delta_b) -- min(), not average,
-    same least-misery logic _rank_watchlist_matches already applies at the
-    whole-film level, just one layer deeper: a value one person is
-    confidently excited about but the other barely registers isn't a shared
-    preference, whatever the exact number is. Averaged within an axis
-    (several shared genres, say) and weighted by that axis's average adaptive
-    weight across both people, then summed across axes -- same "average
-    within an axis, sum across axes" shape _preference_score's own
-    taste_score uses.
-
-    That per-axis sum is then scaled up by SHARED_TRAIT_COMBO_BONUS_PER_AXIS
-    once a film clears SHARED_TRAIT_COMBO_MIN_AXES qualifying axes -- see
-    those two constants' own comments. A film where director, country, AND
-    genre are all independently-confirmed shared favorites is stronger
-    evidence than the same total bonus concentrated in one axis alone, and
-    plain summation on its own doesn't reward that; this does. Gated by a
-    minimum axis count rather than applying from the 2nd axis on, since most
-    real candidates already clear 2 -- see SHARED_TRAIT_COMBO_MIN_AXES.
-    Country and language don't count as two separate axes toward that
-    minimum -- see COMBO_COUNT_AXIS_GROUP."""
+    That sum is then scaled up by SHARED_TRAIT_COMBO_BONUS_PER_AXIS once a
+    film clears SHARED_TRAIT_COMBO_MIN_AXES qualifying axes -- several
+    independently-confirmed shared favorites (director AND country AND
+    genre) is stronger evidence than the same total concentrated in one axis,
+    which plain summation alone doesn't reward. Country and language don't
+    count as two separate axes toward that minimum -- see
+    COMBO_COUNT_AXIS_GROUP."""
     axis_shared_deltas = defaultdict(list)
 
     def _check(axis, value):
@@ -1178,10 +1045,9 @@ def _shared_trait_bonus(movie, deltas_a, deltas_b, actor_names) -> float:
         ((deltas_a['weights'][axis] + deltas_b['weights'][axis]) / 2) * (sum(values) / len(values))
         for axis, values in axis_shared_deltas.items()
     )
-    # 'language' collapses into 'country's slot here -- see
-    # COMBO_COUNT_AXIS_GROUP's own comment -- so a film qualifying on both
-    # only counts once toward the combo floor, even though it still
-    # contributed its own separate term to base_bonus above.
+    # 'language' collapses into 'country's slot here, so qualifying on both
+    # only counts once toward the combo floor (still contributes its own term
+    # to base_bonus above, though).
     qualifying_axis_count = len({COMBO_COUNT_AXIS_GROUP.get(axis, axis) for axis in axis_shared_deltas})
     combo_multiplier = 1 + SHARED_TRAIT_COMBO_BONUS_PER_AXIS * max(
         0, qualifying_axis_count - (SHARED_TRAIT_COMBO_MIN_AXES - 1),
@@ -1219,24 +1085,19 @@ def _eligible_watchlist_matches(matches: list) -> list:
 
 def _axis_agreement(deltas_a, deltas_b) -> dict:
     """{axis: strength} for all 8 _PREFERENCE_AXES, where strength is the single
-    STRONGEST shared favorite on that axis -- max(min(delta_a[v], delta_b[v])) over
-    every value v that clears CREDIT_THRESHOLD on both sides (the same gate
-    _shared_trait_bonus uses), or 0.0 if nothing qualifies. Feeds
-    _rank_watchlist_matches' axis-agreement weight boost (see
-    AXIS_AGREEMENT_BOOST) -- a per-pair measure of which categories these two
-    people demonstrably agree on a lot, not just this one film.
+    STRONGEST shared favorite on that axis -- max(min(delta_a[v], delta_b[v]))
+    over every value clearing CREDIT_THRESHOLD on both sides, or 0.0 if
+    nothing qualifies. Feeds _rank_watchlist_matches' axis-agreement weight
+    boost -- a per-pair measure of which categories these two demonstrably
+    agree on, not just this one film.
 
-    Max, not sum or average, deliberately: checked against real data first.
-    Summing every qualifying value's min() rewards whichever axis happens to have
-    the most distinct values (actor, with dozens of candidates per film, dwarfed
-    every other axis by an order of magnitude purely from having more things to
-    add up, not from agreeing more). Averaging fixes that but overcorrects --
-    diluting one genuinely strong shared favorite by averaging it against several
-    that only just clear the threshold left every axis looking similarly
-    unremarkable and moved real rankings by nothing at all. Max answers the
-    actual question this is trying to measure -- "is there a genuine standout
-    mutual favorite in this axis" -- without being inflated by axis size or
-    diluted by weaker qualifying values sitting alongside a strong one."""
+    Max, not sum or average: checked against real data first. Summing
+    rewards whichever axis has the most distinct values (actor dwarfed every
+    other axis purely from having more things to add up, not from agreeing
+    more); averaging overcorrects, diluting one genuinely strong match by
+    averaging it against weak ones until every axis looks equally
+    unremarkable. Max answers the actual question -- "is there a genuine
+    standout mutual favorite here" -- without either distortion."""
     agreement = {}
     for axis in _PREFERENCE_AXES:
         qualifying_mins = [
@@ -1269,54 +1130,30 @@ def _boosted_weights(base_weights: dict, agreement: dict) -> dict:
 
 def _rank_watchlist_matches(session_a, session_b, matches: list, display_cap: int, exclude_shorts=False) -> list:
     """Ranks `matches` (already eligibility-filtered, see _eligible_watchlist_matches)
-    by joint best-fit for both people, instead of the (title, year) order they
-    arrive in, and returns at most `display_cap` of them. PERSON_CREDIT_CAP is
-    enforced as a hard exclusion, not just a reordering: whichever directors/actors
-    either person is meaningfully credited to (see _preference_score) can drive at
-    most PERSON_CREDIT_CAP of the returned picks, drawing from the full ranked pool
-    to backfill a capped-out slot with the next-best real candidate -- same
-    reasoning as Director's Cut's own greedy selection in
-    _watchlist_recommendations, ported here since this ranking reuses the same
-    underlying model. If PERSON_CREDIT_CAP genuinely limits how many diverse picks
-    exist, the returned list can be shorter than display_cap -- it never pads back
-    up with capped-out candidates just because there was room left (that was a real
-    bug in an earlier version of this function: returning every match, merely
-    reordered, meant a capped-out pick still showed up whenever the total match
-    count was under display_cap, since the caller's plain slice couldn't tell a
-    genuinely-excluded candidate apart from one that just didn't make the top N).
+    by joint best-fit for both people, instead of (title, year) order, and
+    returns at most `display_cap` of them. PERSON_CREDIT_CAP is a hard
+    exclusion: whichever directors/actors either person is credited to can
+    drive at most PERSON_CREDIT_CAP picks, backfilling a capped-out slot with
+    the next-best real candidate rather than ever padding back up with a
+    capped-out one just because there was room left.
 
-    Least-misery-dominant blend -- mostly min(score_a, score_b), not a plain average
-    of the two -- the same principle _shared_people above already uses for shared
-    favorite directors/actors: a pick has to genuinely work for both people, not just
-    average out because one person loves it enough to outweigh the other's dislike.
-    A small fraction of the pair's average score is blended in on top (see
-    LEAST_MISERY_BLEND_WEIGHT) so combined enthusiasm still makes a real, continuous
-    difference between two similarly-fine-for-both films, rather than only ever
-    mattering on an exact tie that two independently-computed floats essentially
-    never land on. _shared_trait_bonus adds one more small term on top of that
-    blend -- see its own docstring for why that's a distinct signal from "both
-    scores happen to be high" (the same director/genre/etc. specifically, not
-    just two unrelated reasons the film works for each of you). (title, year) is
-    the final tiebreak for full determinism, same reasoning as every other
-    set-derived ordering in this file.
+    Least-misery-dominant blend -- mostly min(score_a, score_b), with a small
+    fraction of the average blended in (LEAST_MISERY_BLEND_WEIGHT) so combined
+    enthusiasm can make a real, continuous difference rather than only
+    mattering on an exact tie. _shared_trait_bonus adds one more small term on
+    top -- a distinct signal from "both scores happen to be high" (the same
+    specific director/genre, not two unrelated reasons it works for each of
+    you). (title, year) is the final tiebreak for full determinism.
 
-    Before any of that per-film scoring happens, each person's own _adaptive_weights
-    are boosted toward whichever axis this specific PAIR agrees on most (see
-    _axis_agreement/_boosted_weights/AXIS_AGREEMENT_BOOST) -- a director/genre/etc.
-    that's demonstrably a mutual favorite across their whole rated history counts
-    for a bit more in every film's score, not just the ones that happen to land on
-    it (that's what _shared_trait_bonus already does, per film -- this is the same
-    underlying idea applied at the axis level instead). Only affects the weights
-    used for this ranking, not either person's own solo _adaptive_weights elsewhere.
+    Before scoring, each person's own _adaptive_weights are boosted toward
+    whichever axis this specific pair agrees on most (see
+    _axis_agreement/_boosted_weights/AXIS_AGREEMENT_BOOST) -- the same idea
+    as _shared_trait_bonus, applied at the axis level instead of per film.
+    Only affects the weights used for this ranking, not either person's own
+    solo weights elsewhere.
 
-    Falls back to the original (title, year) order, still capped to display_cap, if
-    either session doesn't have enough rated films to build a preference profile at
-    all (see _preference_deltas) -- nothing to rank or credit-cap by yet, so this
-    doesn't silently reorder or filter the list around half a picture. exclude_shorts
-    -- see _film_map's own comment; threaded through to _preference_deltas, not
-    applied to `matches` itself (already eligibility-filtered by the caller via
-    _eligible_watchlist_matches, an unconditional feature-length rule unrelated to
-    this toggle)."""
+    Falls back to (title, year) order if either session doesn't have enough
+    rated films to build a preference profile at all."""
     deltas_a = _preference_deltas(session_a, exclude_shorts)
     deltas_b = _preference_deltas(session_b, exclude_shorts)
     if deltas_a is None or deltas_b is None:
@@ -1594,15 +1431,12 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     watchlist_a = _watchlist_map(session_a, exclude_shorts)
     watchlist_b = _watchlist_map(session_b, exclude_shorts)
     shared_watchlist_keys = set(watchlist_a) & set(watchlist_b)
-    # Ranked by joint best-fit for both people, not (title, year) -- see
-    # _rank_watchlist_matches for the least-misery combination and its fallback when
-    # one or both sessions don't have enough rated films to personalize at all.
-    # Eligibility (released, feature-length) is filtered once here -- separate from
-    # ranking, since it's what watchlist_matches_total counts, not something
-    # PERSON_CREDIT_CAP (a display-diversity concern) should affect. Always excludes
-    # shorts regardless of the exclude_shorts toggle -- an unconditional "is this
-    # actually watchable" rule (see _eligible_watchlist_matches), not the same
-    # concern as the toggle's own stats-wide inclusion/exclusion.
+    # Ranked by joint best-fit for both people -- see _rank_watchlist_matches for
+    # the least-misery combination and its fallback. Eligibility (released,
+    # feature-length) is filtered once here, separate from ranking, since it's
+    # what watchlist_matches_total counts, not a PERSON_CREDIT_CAP display concern.
+    # Always excludes shorts regardless of the exclude_shorts toggle -- an
+    # unconditional "is this actually watchable" rule, not the toggle's concern.
     watchlist_eligible = _eligible_watchlist_matches([watchlist_a[k] for k in shared_watchlist_keys])
     watchlist_matches_ranked = _rank_watchlist_matches(
         session_a, session_b, watchlist_eligible, GRID_DISPLAY_CAP, exclude_shorts,
@@ -1657,14 +1491,10 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     top_actors_a = _top_people(actor_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
     top_actors_b = _top_people(actor_stats_b, cap=GRID_DISPLAY_CAP_NARROW)
 
-    # Capped to TOP_N same as this file's other top-N lists (same_day_logs).
-    # _genre_agreement itself sorts gap-ascending (agreement first,
-    # see its own docstring) -- genre_agreement is that order's front TOP_N, the
-    # genres you agree on most, and is also the card's default/empty-state list.
-    # genre_agreement_least is the same rows re-sorted gap-descending (worst clashes
-    # first) before the same TOP_N cap, for the card's "Least agreed" toggle view --
-    # re-sorting the already-computed rows rather than re-querying, since both views
-    # share the same underlying set of shared, evidenced genres.
+    # _genre_agreement sorts gap-ascending (agreement first) -- genre_agreement is
+    # that order's front TOP_N, the card's default view. genre_agreement_least
+    # re-sorts the same rows gap-descending (worst clashes first) for the "Least
+    # agreed" toggle, rather than re-querying.
     genre_agreement_all = _genre_agreement(
         _genre_averages(session_a, exclude_shorts), _genre_averages(session_b, exclude_shorts),
     )
@@ -1672,13 +1502,10 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     genre_agreement_least = sorted(genre_agreement_all, key=lambda r: (-r['gap'], r['genre']))[:TOP_N]
 
     # One bulk lookup spanning every film list on the page rather than a query per
-    # list. Resolves onto shared_films (and therefore biggest_disagreements/
-    # same_rating too, since they're built via sorted() on the same dict objects),
-    # top_unseen_a/b, watchlist_matches_ranked (the already-capped display list --
-    # nothing beyond it ever renders, so it doesn't need posters resolved onto the
-    # wider watchlist_eligible pool too), the same-day films (and therefore
-    # same_day_logs_all's nested films_a/films_b), same_day_exact_matches_all, and
-    # Watching Habits' most_watched_films_a/b.
+    # list: shared_films (and biggest_disagreements/same_rating, built from the
+    # same dict objects), top_unseen_a/b, watchlist_matches_ranked (the already-
+    # capped display list, not the wider watchlist_eligible pool), same-day films,
+    # same_day_exact_matches_all, and most_watched_films_a/b.
     movie_ids = {
         f['movie_id']
         for f in (
@@ -1707,22 +1534,15 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         if len(rated_deltas) >= MIN_COUNT_FOR_AVERAGE else None
     )
     # A single headline number blending "how much do you watch the same things"
-    # (overlap_pct) with "when you do, do you feel the same way" -- the second half
-    # is itself agreement_pct and avg_delta averaged together, not either alone:
-    # agreement_pct is a coarse threshold (within 0.5 stars or not) that can't tell
+    # (overlap_pct) with "when you do, do you feel the same way" -- the second
+    # half averages agreement_pct (a coarse within-0.5-stars threshold) with
+    # avg_delta (normalized to 0-100), since the threshold alone can't tell
     # "always juuust misses the cutoff" apart from "rates everything wildly
-    # differently", so avg_delta (normalized to a 0-100 "closeness" the same way
-    # overlap/agreement already are) fills in the magnitude agreement_pct alone
-    # can't. Kept at a 50/50 overlap/taste split either way, in keeping with this
-    # file's own stated no-scipy, simple-hand-rolled-metric philosophy (see the
-    # module docstring) -- avg_delta enriches the taste half rather than claiming a
-    # third of the whole score, which would let two taste measures of the same
-    # underlying data quietly outweigh overlap.
+    # differently." Kept at a 50/50 overlap/taste split so avg_delta enriches the
+    # taste half rather than letting two taste measures outweigh overlap.
     #
-    # Falls back to plain overlap/agreement (avg_delta not gathered) when there's
-    # exactly one mutually-rated film, and to None entirely when there's none --
-    # a "compatibility" score that ignores taste entirely isn't really answering
-    # the question it claims to.
+    # Falls back to plain overlap/agreement when there's only one mutually-rated
+    # film, and to None entirely when there's none.
     if avg_delta is not None:
         gap_pct = round(float(100 * (1 - Decimal(str(avg_delta)) / MAX_RATING_DELTA)), 1)
         taste_pct = round((agreement_pct + gap_pct) / 2, 1)
@@ -1817,18 +1637,12 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
                 'label_a': session_a.display_name or 'Person A',
                 'label_b': session_b.display_name or 'Person B',
             },
-            # Same {labels, data_a, data_b} shape as rating_curve above, feeding a
-            # horizontal grouped bar chart (indexAxis: 'y', matching Director's
-            # Cut's own genres chart's orientation) rather than rating_curve's
-            # vertical one -- genre names read better as a Y-axis list than
-            # rotated/truncated X-axis labels. Two pre-built views, 'most' (default)
-            # and 'least', rather than one array the client re-slices -- unlike
-            # rating_curve's Percent toggle (a cheap client-side division of the same
-            # counts), most-vs-least agreed are two different genre subsets in two
-            # different orders, so both are sent ready-to-render and the toggle just
-            # swaps which one the chart is showing. Each is already capped to TOP_N
-            # and sorted by _genre_agreement/build_compare_context's own re-sort
-            # (most: agreement first; least: worst clashes first).
+            # Same {labels, data_a, data_b} shape as rating_curve above, but feeds a
+            # horizontal bar chart (indexAxis: 'y') since genre names read better as
+            # a Y-axis list. Two pre-built views, 'most' and 'least', since unlike
+            # rating_curve's Percent toggle, most-vs-least agreed are two different
+            # genre subsets in two different orders -- both sent ready-to-render,
+            # already capped to TOP_N and sorted.
             'genre_agreement': {
                 'most': {
                     'labels': [row['genre'] for row in genre_agreement],
@@ -1844,18 +1658,12 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
                 'label_b': session_b.display_name or 'Person B',
             },
             # Same {years, default_year, data: {year: {...}}} shape as Director's
-            # Cut's own chartData.heatmap, laid out by the exact same client-side
-            # script (see same_day_heatmap's own comment in compare.html) -- only
-            # each cell's payload differs: a count there, a {state, films_a,
-            # films_b} here, since this heatmap is categorical (shared/exact), not
-            # volume-based. films_a/films_b are full film dicts (title/year/
-            # movie_id/poster_url/rating, resolved above) by the time this is
-            # built, not display strings -- the day-detail popup that opens on a
-            # cell click renders real posters and that session's own star rating
-            # from them. label_a/label_b added here rather than inside
-            # _same_day_heatmap itself, which only sees logs/exact_matches and has
-            # no session to name -- same split as
-            # genre_agreement above.
+            # Cut's own chartData.heatmap and the same client-side script, except
+            # each cell's payload is a {state, films_a, films_b} here instead of a
+            # count, since this heatmap is categorical, not volume-based. films_a/
+            # films_b are full film dicts (resolved above) so the day-detail popup
+            # can render real posters and ratings. label_a/label_b added here since
+            # _same_day_heatmap itself has no session to name.
             'same_day_heatmap': {
                 **same_day_heatmap,
                 'label_a': session_a.display_name or 'Person A',
