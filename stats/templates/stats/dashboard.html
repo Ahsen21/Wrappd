@@ -5,66 +5,144 @@
   <div class="loading-bar" id="dashboard-loading-bar"></div>
 
   <div id="dashboard-content">
-    <div class="loading-label">Loading your stats…</div>
-    <div class="skeleton" style="width: 16rem; height: 1.9rem; margin-bottom: 0.6rem;"></div>
-    <div class="skeleton" style="width: 10rem; height: 0.9rem; margin-bottom: 2rem;"></div>
+    <!-- A shape of the real page, not a generic placeholder: static chrome (labels,
+         section-nav, card titles) renders for real since none of it depends on data
+         that isn't known yet -- only the numbers/names/posters/charts are skeletoned.
+         Swapped out wholesale once stats/_dashboard_content.html arrives below. -->
+    <div class="hero">
+      <div class="hero-top-row">
+        <p class="hero-eyebrow">Director's Cut</p>
+        <div class="hero-top-row-controls">
+          <span class="shorts-toggle" aria-hidden="true">
+            Exclude shorts
+            <span class="shorts-toggle-track"><span class="shorts-toggle-thumb"></span></span>
+          </span>
+        </div>
+      </div>
+      <div class="hero-heading">
+        <div class="skeleton" style="width: 14rem; height: 2rem;"></div>
+        <button type="button" class="hero-share-btn" aria-hidden="true" tabindex="-1" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+          </svg>
+        </button>
+        <div class="toggle-group year-picker">
+          {% if year %}
+            <span class="toggle-btn">All time</span>
+            <span class="toggle-btn active">{{ year }}</span>
+          {% else %}
+            <span class="toggle-btn active">All time</span>
+          {% endif %}
+          <span class="skeleton" style="width: 2.75rem; height: 1.6rem; border-radius: 999px;"></span>
+          <span class="skeleton" style="width: 2.75rem; height: 1.6rem; border-radius: 999px;"></span>
+        </div>
+      </div>
 
-    <div class="skeleton-grid skeleton-grid--4" style="margin-bottom: 2.5rem;">
-      <div class="skeleton-card">
-        <div class="skeleton" style="width: 4rem; height: 0.65rem;"></div>
-        <div class="skeleton" style="width: 6rem; height: 1.4rem;"></div>
+      <h2 class="sr-only">Overview</h2>
+      <div class="grid hero-grid">
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Films watched</div></div>
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Hours watched</div></div>
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Films logged</div></div>
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Films rated</div></div>
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Likes</div></div>
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Reviews</div></div>
+        <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Rewatches</div></div>
+        {% if not year %}
+          <div class="stat"><div class="skeleton" style="width: 3.5rem; height: 1.6rem; margin-bottom: 0.3rem;"></div><div class="label">Watchlist</div></div>
+        {% endif %}
       </div>
-      <div class="skeleton-card">
-        <div class="skeleton" style="width: 4rem; height: 0.65rem;"></div>
-        <div class="skeleton" style="width: 6rem; height: 1.4rem;"></div>
-      </div>
-      <div class="skeleton-card">
-        <div class="skeleton" style="width: 4rem; height: 0.65rem;"></div>
-        <div class="skeleton" style="width: 6rem; height: 1.4rem;"></div>
-      </div>
-      <div class="skeleton-card">
-        <div class="skeleton" style="width: 4rem; height: 0.65rem;"></div>
-        <div class="skeleton" style="width: 6rem; height: 1.4rem;"></div>
+
+      <div class="hero-favs">
+        <h2 class="hero-favs-label">Favorites</h2>
+        <div class="favs">
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3; border-radius: 6px;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3; border-radius: 6px;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3; border-radius: 6px;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3; border-radius: 6px;"></div></div>
+        </div>
       </div>
     </div>
 
-    <div class="skeleton" style="width: 11rem; height: 1.1rem; margin-bottom: 1.1rem;"></div>
-    <div class="skeleton-grid skeleton-grid--6" style="margin-bottom: 2.5rem;">
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton skeleton-circle" style="width: 4.5rem; height: 4.5rem;"></div>
-        <div class="skeleton" style="width: 4.4rem; height: 0.7rem;"></div>
-      </div>
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton skeleton-circle" style="width: 4.5rem; height: 4.5rem;"></div>
-        <div class="skeleton" style="width: 4.4rem; height: 0.7rem;"></div>
-      </div>
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton skeleton-circle" style="width: 4.5rem; height: 4.5rem;"></div>
-        <div class="skeleton" style="width: 4.4rem; height: 0.7rem;"></div>
-      </div>
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton skeleton-circle" style="width: 4.5rem; height: 4.5rem;"></div>
-        <div class="skeleton" style="width: 4.4rem; height: 0.7rem;"></div>
-      </div>
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton skeleton-circle" style="width: 4.5rem; height: 4.5rem;"></div>
-        <div class="skeleton" style="width: 4.4rem; height: 0.7rem;"></div>
-      </div>
-      <div class="skeleton-card skeleton-card--center">
-        <div class="skeleton skeleton-circle" style="width: 4.5rem; height: 4.5rem;"></div>
-        <div class="skeleton" style="width: 4.4rem; height: 0.7rem;"></div>
-      </div>
-    </div>
+    <nav class="section-nav">
+      {% if year %}
+        <span class="section-nav-link active">{{ year }} Releases</span>
+      {% endif %}
+      <span class="section-nav-link{% if not year %} active{% endif %}">Ratings</span>
+      <span class="section-nav-link">What You Watch</span>
+      <span class="section-nav-link">Favorite People</span>
+      <span class="section-nav-link">Watching Habits</span>
+      {% if not year %}
+        <span class="section-nav-link">Rewatches</span>
+      {% endif %}
+    </nav>
 
-    <div class="skeleton" style="width: 11rem; height: 1.1rem; margin-bottom: 1.1rem;"></div>
-    <div class="skeleton-grid skeleton-grid--6">
-      <div class="skeleton skeleton-poster"></div>
-      <div class="skeleton skeleton-poster"></div>
-      <div class="skeleton skeleton-poster"></div>
-      <div class="skeleton skeleton-poster"></div>
-      <div class="skeleton skeleton-poster"></div>
-      <div class="skeleton skeleton-poster"></div>
-    </div>
+    {% if year %}
+      <h2 class="section-heading"><span class="section-heading-tick">{{ year }} Releases</span></h2>
+      <p class="muted">How caught up you were on {{ year }}'s new releases.</p>
+
+      <div class="card">
+        <h3>Ratings</h3>
+        <div class="skeleton" style="width: 100%; height: 10rem;"></div>
+      </div>
+
+      <div class="card" style="position: relative; max-height: 9rem; overflow: hidden;">
+        <h3>Your favorite films of {{ year }}</h3>
+        <div class="favs favs--six">
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3;"></div></div>
+          <div class="fav-card"><div class="skeleton" style="aspect-ratio: 2 / 3;"></div></div>
+        </div>
+        <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 3rem; background: linear-gradient(to bottom, transparent, var(--bg));"></div>
+      </div>
+    {% else %}
+      <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
+      <p class="muted">What you watch and how you rate it.</p>
+
+      <div class="card">
+        <h3>Highlights</h3>
+        <p class="muted">Some featured insights about your ratings.</p>
+        <div class="ib-grid">
+          <div class="ib-tile">
+            <div class="ib-media"><div class="skeleton" style="width: 100%; aspect-ratio: 1 / 1; border-radius: 8px;"></div></div>
+            <div class="ib-foot">
+              <div class="skeleton" style="width: 60%; height: 9px; margin-bottom: 6px;"></div>
+              <div class="skeleton" style="width: 40%; height: 13px;"></div>
+            </div>
+          </div>
+          <div class="ib-tile">
+            <div class="ib-media"><div class="skeleton" style="width: 100%; aspect-ratio: 1 / 1; border-radius: 8px;"></div></div>
+            <div class="ib-foot">
+              <div class="skeleton" style="width: 60%; height: 9px; margin-bottom: 6px;"></div>
+              <div class="skeleton" style="width: 40%; height: 13px;"></div>
+            </div>
+          </div>
+          <div class="ib-tile">
+            <div class="ib-media"><div class="skeleton" style="width: 100%; aspect-ratio: 1 / 1; border-radius: 8px;"></div></div>
+            <div class="ib-foot">
+              <div class="skeleton" style="width: 60%; height: 9px; margin-bottom: 6px;"></div>
+              <div class="skeleton" style="width: 40%; height: 13px;"></div>
+            </div>
+          </div>
+          <div class="ib-tile">
+            <div class="ib-media"><div class="skeleton" style="width: 100%; aspect-ratio: 1 / 1; border-radius: 8px;"></div></div>
+            <div class="ib-foot">
+              <div class="skeleton" style="width: 60%; height: 9px; margin-bottom: 6px;"></div>
+              <div class="skeleton" style="width: 40%; height: 13px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="position: relative; max-height: 9rem; overflow: hidden;">
+        <h3>Rating distribution</h3>
+        <div class="skeleton" style="width: 100%; height: 10rem;"></div>
+        <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 3rem; background: linear-gradient(to bottom, transparent, var(--bg));"></div>
+      </div>
+    {% endif %}
   </div>
 
   <script>
