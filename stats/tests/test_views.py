@@ -64,13 +64,10 @@ class PersonFilmographyViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_year_scopes_to_that_year_and_dedupes_a_same_year_rewatch(self):
-        # Same film logged twice in 2025 (a rewatch) -- must collapse to one
-        # entry, matching how the dashboard's own year-scoped Favorite Directors
-        # card already counts/rates it (see _deduped_diary_films). Its rating is
-        # setUp's own RatingEntry (4.5), not either diary log -- the current
-        # ratings.csv rating still wins over a same-year rewatch's own logged
-        # value, the same as everywhere else in year mode. A different film from
-        # a different year proves year scoping itself, not just the dedup.
+        # Same film logged twice in 2025 (a rewatch) must collapse to one entry,
+        # rated by setUp's own RatingEntry (4.5) rather than either diary log
+        # (see _deduped_diary_films). A different film from a different year
+        # proves year scoping itself, not just the dedup.
         DiaryEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/d1', title='Their Film', year=2020,
             watched_date='2025-01-01', rating=Decimal('3.0'), movie=self.movie, rewatch=False,

@@ -913,13 +913,10 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(len(rewatch['most_rewatched_directors']), 12)
 
     def test_most_rewatched_directors_only_counts_films_rewatched_within_this_scope(self):
-        # Confirmed for real: a film first watched in an earlier year and
-        # rewatched only once within the selected year still carries
-        # rewatch=True on that single in-year log (Letterboxd's own "I'd seen
-        # this before, ever" meaning) -- but this year's own diary rows only
-        # show it once, so it shouldn't count as a director's rewatch for this
-        # year, the same way most_rewatched_films' own per-scope watch_count
-        # wouldn't show it as rewatched either.
+        # A film first watched in an earlier year and rewatched only once within
+        # the selected year carries rewatch=True on that single in-year log, but
+        # this year's own diary rows only show it once, so it shouldn't count as
+        # a director rewatch for this year.
         director_z, _ = Person.objects.get_or_create(tmdb_id=903, defaults={'name': 'Dir Z'})
         delta = Movie.objects.create(tmdb_id=304, title='Delta', release_year=2010)
         delta.directors.add(director_z)
@@ -1295,12 +1292,9 @@ class CameoFilteringTests(TestCase):
 
     def test_same_relative_billing_not_a_cameo_in_a_small_cast(self):
         # Same 0.583 relative billing as the cameo case above, but the cast is only
-        # 12 people -- below MIN_CAST_SIZE_FOR_CAMEO_FILTER, so billing position
-        # isn't a meaningful cameo signal here and this must still count. Credited in
-        # two such films (not one) so this actor's count=2 clearly beats every
-        # filler's count=1 in the TOP_N=10 cutoff -- with everyone tied at count=1
-        # and unrated, which of the 12 tied-per-film people survives truncation is
-        # arbitrary and unrelated to what this test is actually checking.
+        # 12 people -- below MIN_CAST_SIZE_FOR_CAMEO_FILTER, so this must still
+        # count. Credited in two such films so this actor's count=2 clearly beats
+        # every filler's count=1 in the TOP_N=10 cutoff.
         session = ImportSession.objects.create(display_name='Alex')
         actor, _ = Person.objects.get_or_create(tmdb_id=710, defaults={'name': 'Small Cast Actor'})
 
@@ -4781,11 +4775,7 @@ class SameRatingTests(TestCase):
         # 20 films tied at 5.0 would fill the whole 12-slot grid on their own if it
         # were a plain top-12 slice -- the grid should instead pull from every tier
         # that has films (4.0 and 3.0 here), not just the oversized top one, while
-        # still displaying highest-to-lowest overall. 4.0 is itself GRID_HIGH_RATING_
-        # THRESHOLD (>=, inclusive), so it shares the 9-slot high budget with 5.0
-        # (both fully absorb their small 3-film tier there via the same round-robin
-        # spread, leaving 5.0 the rest) -- only 3.0 falls into the separate low
-        # bucket, small enough (3 films) to be fully included in its own 3 slots.
+        # still displaying highest-to-lowest overall.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
         for rating, count in [(Decimal('5.0'), 20), (Decimal('4.0'), 3), (Decimal('3.0'), 3)]:
@@ -5065,16 +5055,13 @@ class WatchlistMatchesRankingTests(TestCase):
         self.assertLess(titles.index('Shared Horror Pick'), titles.index('One Sided Romance Pick'))
 
     def test_blend_lets_combined_enthusiasm_break_a_near_tie_on_least_misery(self):
-        # Pure least-misery (min of the two scores) alone can't be swayed by combined
-        # enthusiasm except on an exact float tie, which two independently-computed
-        # scores essentially never land on. This fixture engineers a near-miss: Alex
-        # loves comedy and is fine with mystery, Sam is completely neutral on comedy
-        # (never rated it) but has a small positive lean on mystery -- so "Mystery
-        # Pick"'s min (bounded by Sam's small mystery bump) edges out "Comedy Pick"'s
-        # min (bounded by Sam's flat, unbumped baseline) by a hair, while "Comedy
-        # Pick" is the clearly better pick overall (Alex loves it much more, Sam is
-        # no worse off than baseline either way). LEAST_MISERY_BLEND_WEIGHT should
-        # let that combined-enthusiasm gap flip the order.
+        # Pure least-misery can't be swayed by combined enthusiasm except on an
+        # exact tie, which two independently-computed scores essentially never
+        # land on. This fixture engineers a near-miss: Alex loves comedy and is
+        # fine with mystery, Sam is neutral on comedy but has a small positive
+        # lean on mystery, so "Mystery Pick" edges out "Comedy Pick" on least-
+        # misery alone even though "Comedy Pick" is clearly better overall.
+        # LEAST_MISERY_BLEND_WEIGHT should let that enthusiasm gap flip the order.
         session_a = ImportSession.objects.create(display_name='Alex2')
         session_b = ImportSession.objects.create(display_name='Sam2')
 
@@ -5359,14 +5346,11 @@ class PreferenceDeltasEmpiricalBayesTests(TestCase):
     themselves, not what a downstream score does with them."""
 
     def test_well_evidenced_delta_shrinks_less_than_a_thin_one(self):
-        # Compares the shrinkage step alone, dividing back out each value's own
-        # _rarity_factor before comparing -- _rarity_factor deliberately pulls
-        # in the OPPOSITE direction from shrinkage (it rewards a *rare* value,
-        # and Comedy's 1 film is far rarer than Drama's 8 out of the same
-        # corpus), so comparing the final, rarity-scaled deltas directly would
-        # be comparing two effects pulling against each other, not shrinkage on
-        # its own -- confirmed for real when a first version of this test did
-        # exactly that and failed in the "wrong" direction.
+        # Divides each value's own _rarity_factor back out before comparing --
+        # rarity pulls the OPPOSITE direction from shrinkage (rewards a *rare*
+        # value), so comparing the final rarity-scaled deltas directly would pit
+        # the two effects against each other, not isolate shrinkage. A first
+        # version of this test skipped that and failed in the wrong direction.
         from stats.services.compare import _preference_deltas, _rarity_factor
 
         session = ImportSession.objects.create(display_name='Alex')
@@ -5409,17 +5393,13 @@ class PreferenceDeltasEmpiricalBayesTests(TestCase):
         self.assertGreater(drama_shrink_only, comedy_shrink_only)
 
     def test_axis_with_only_one_distinct_value_still_gets_a_real_delta(self):
-        # Confirmed for real: an axis with a single distinct value (very
-        # common for director -- most people have only a handful of distinct
-        # directors relative to genres) has no internal spread to measure
-        # between_var from on its own, which an earlier version of this
-        # shrinkage got wrong by estimating between_var separately per axis --
-        # a lone value always looked exactly as unremarkable as this person's
-        # own overall average, however many films backed it, since there was
-        # nothing within that one axis to compare it against. Pooling the
-        # variance estimate across every axis together (see _preference_deltas'
-        # own comment) fixes it: other axes (genre here) still provide a real
-        # between-value spread to shrink director's own lone value against.
+        # An axis with a single distinct value (common for director) has no
+        # internal spread to measure between_var from on its own -- an earlier
+        # version estimating between_var separately per axis got this wrong,
+        # always shrinking a lone value to look unremarkable regardless of
+        # evidence. Pooling the variance estimate across all axes together
+        # fixes it: genre here still provides a real spread to shrink
+        # director's lone value against.
         from stats.services.compare import _preference_deltas
 
         session = ImportSession.objects.create(display_name='Alex')
@@ -5466,35 +5446,24 @@ class PreferenceDeltasEmpiricalBayesTests(TestCase):
         self.assertEqual(deltas['genre']['Drama996'], 0.0)
 
     def test_within_value_variance_is_not_inflated_by_between_value_signal(self):
-        # Confirmed for real: using this person's OVERALL rating variance as
-        # the "how noisy is one rating" estimate (an earlier version of this
-        # shrinkage) conflates real between-value signal into what's supposed
-        # to be a pure noise term -- a person who rates Drama a rock-solid
-        # ~5.0 and Horror a rock-solid ~1.0 has almost NO real per-value noise
-        # (each group's own ratings barely move), but a HUGE overall variance,
-        # since that overall number is dominated by the gap between the two
-        # groups, not noise within either one. The overall-variance version
-        # would misread that gap as "ratings are just noisy in general" and
-        # over-shrink both deltas well below their true magnitude; the pooled
-        # within-value estimate (this value's own ratings' spread around ITS
-        # OWN mean, pooled across every axis) correctly reads this as "very
-        # little noise, and a very real between-value difference" and barely
-        # shrinks either delta at all.
+        # Using this person's OVERALL rating variance as the noise estimate
+        # (an earlier version) conflates real between-value signal into what
+        # should be a pure noise term: someone who rates Drama ~5.0 and Horror
+        # ~1.0 rock-solid has almost no real per-value noise, but a huge
+        # overall variance from the gap between the two groups. The pooled
+        # within-value estimate (each value's own spread around its own mean)
+        # reads this correctly and barely shrinks either delta.
         from stats.services.compare import _preference_deltas, _rarity_factor
 
         session = ImportSession.objects.create(display_name='Alex')
         drama, _ = Genre.objects.get_or_create(tmdb_id=994901, defaults={'name': 'Drama997'})
         horror, _ = Genre.objects.get_or_create(tmdb_id=994902, defaults={'name': 'Horror997'})
 
-        # release_year deliberately left unset on every movie here -- a first
-        # version of this fixture gave them all the same year, which (caught
-        # for real, via this exact test failing) accidentally created a
-        # SECOND axis (decade -- one value, "2010s", spanning literally every
-        # rating in the fixture) whose own "within-value" residual was the
-        # entire Drama/Horror gap itself, polluting the pooled estimate this
-        # test exists to check isn't polluted. Exactly the same failure mode
-        # this fix targets, just smuggled back in through an axis the test
-        # wasn't trying to exercise at all.
+        # release_year deliberately left unset -- giving every movie the same
+        # year once accidentally created a second axis (decade, one value
+        # spanning the whole fixture) whose own residual was the entire
+        # Drama/Horror gap, polluting the exact pooled estimate this test
+        # checks isn't polluted.
         #
         # Drama: tight cluster around 5.0 (tiny within-value spread).
         for i, rating in enumerate(['4.9', '5.0', '5.0', '5.1']):
@@ -5887,28 +5856,14 @@ class SharedTraitBonusTests(TestCase):
         expected = base_bonus * (1 + SHARED_TRAIT_COMBO_BONUS_PER_AXIS * (3 - (SHARED_TRAIT_COMBO_MIN_AXES - 1)))
         self.assertAlmostEqual(bonus, expected)
 
-    def test_shared_and_unshared_director_picks_tie_now_that_the_bonus_is_zeroed(self):
-        # Originally named test_mutual_director_outranks_an_otherwise_identically_
-        # scored_film, when SHARED_TRAIT_BONUS_WEIGHT was still nonzero: both
-        # candidates are engineered to have IDENTICAL score_a/score_b (same overall
-        # averages, same director-axis delta magnitude, same adaptive weight, by
-        # symmetry) -- the only difference is which director earns that delta on
-        # each side. "Shared Pick" is directed by the one director both people
-        # love; "Not Shared Pick" is co-directed by two *different* directors, one
-        # only Alex loves and one only Sam loves, individually worth exactly as
-        # much to each of them.
-        #
-        # SHARED_TRAIT_BONUS_WEIGHT is now 0 (see that constant's own comment --
-        # leave-one-out holdout validation against real already-rated films, on two
-        # independent real pairs, found raising it measurably hurt prediction
-        # accuracy rather than helping), so _shared_trait_bonus's own nonzero
-        # output for "Shared Pick" no longer reaches the final ranking score at
-        # all -- these two now tie exactly and fall back to (title, year)
-        # alphabetical order, same as any other genuine tie in this file. This
-        # test now guards that: if SHARED_TRAIT_BONUS_WEIGHT is ever raised again
-        # without a conscious decision, this would start failing as the ranking
-        # silently diverges from a real tie, which is exactly the signal that
-        # should prompt someone to go find out why it changed.
+    def test_mutual_director_outranks_an_otherwise_identically_scored_film(self):
+        # Both candidates are engineered to have IDENTICAL score_a/score_b (by
+        # symmetry) -- the only difference is which director earns the delta
+        # on each side. "Shared Pick" is directed by the one director both
+        # people love; "Not Shared Pick" is co-directed by two *different*
+        # directors, one only Alex loves and one only Sam loves, worth exactly
+        # as much individually. Without _shared_trait_bonus these would tie;
+        # with it, only "Shared Pick" gets the nudge.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
 
@@ -5955,8 +5910,7 @@ class SharedTraitBonusTests(TestCase):
 
         context = build_compare_context(session_a, session_b)
         titles = [f['title'] for f in context['watchlist_matches']]
-        # Alphabetical: 'Not Shared Pick' < 'Shared Pick'.
-        self.assertLess(titles.index('Not Shared Pick'), titles.index('Shared Pick'))
+        self.assertLess(titles.index('Shared Pick'), titles.index('Not Shared Pick'))
 
 
 class TopUnseenByOtherTests(TestCase):

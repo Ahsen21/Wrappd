@@ -446,13 +446,11 @@ class EnrichImportSessionTests(TransactionTestCase):
         self.assertEqual(TitleYearLookup.objects.count(), 3)
 
     def test_enrich_fully_assigns_from_an_already_warm_cache_with_zero_api_calls(self):
-        # Regression test for a real bug: if every (title, year) pair this session
-        # references already has a TitleYearLookup row (e.g. someone else imported
-        # the same films first), the very first "how much work is left" check would
-        # see zero unattempted pairs and return immediately -- without ever calling
-        # enrich_import_session, which is the only thing that actually copies the
-        # cached movie onto *this* session's entries. Every entry was left null
-        # despite TMDB already having an answer for all of them.
+        # Regression test: if every (title, year) pair already has a
+        # TitleYearLookup row, the "how much work is left" check saw zero
+        # unattempted pairs and returned early -- without ever calling
+        # enrich_import_session, the only thing that copies the cached movie
+        # onto *this* session's entries. Every entry was left null regardless.
         session = _make_session_with_diary('Cached Film', 2020)
         movie = Movie.objects.create(tmdb_id=555, title='Cached Film', release_year=2020)
         TitleYearLookup.objects.create(title='Cached Film', year=2020, movie=movie)

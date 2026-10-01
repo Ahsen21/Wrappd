@@ -31,13 +31,11 @@ CSRF_TRUSTED_ORIGINS = config(
 
 TMDB_API_KEY = config('TMDB_API_KEY', default='')
 
-# Both ngrok (current temp-testing tunnel) and Render (the planned real deployment)
-# terminate HTTPS themselves and forward plain HTTP to this app, setting
-# X-Forwarded-Proto to say so. Without this, request.is_secure() (and anything built
-# from it, like build_absolute_uri() on the dashboard's share link) reports http://
-# even though the visitor is genuinely on https://. Safe to trust unconditionally
-# here since this app is never reached directly -- only through one of those two
-# proxies, which are the only things that can set this header in practice.
+# Both ngrok and Render terminate HTTPS themselves and forward plain HTTP to
+# this app, setting X-Forwarded-Proto to say so. Without this, is_secure()
+# (and build_absolute_uri() on the dashboard's share link) reports http:// even
+# on a genuinely https:// visit. Safe to trust unconditionally since this app
+# is only ever reached through one of those two proxies.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Only enforced when DEBUG=False (ngrok tunnel, Render) -- local `runserver` over plain

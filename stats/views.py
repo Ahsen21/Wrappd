@@ -11,13 +11,9 @@ from .services.insight_films import VALID_KINDS, build_insight_films
 from .services.person_filmography import build_person_filmography
 
 # build_dashboard_context is expensive (dozens of queries, real wall-clock cost on
-# Render's free-tier CPU) but its output only changes when a NEW import replaces
-# this session -- a READY session's own data never mutates in place under the
-# current architecture (enrichment runs to completion before READY, and a TMDB
-# "not found" result is cached permanently, never retried). A fresh upload gets a
-# brand-new ImportSession id, so it naturally gets a fresh cache key -- there's no
-# explicit invalidation to do. The TTL below is a safety net, not the reason this
-# is safe to cache.
+# Render's free-tier CPU), but a READY session's data never mutates in place, and
+# a fresh upload gets a brand-new ImportSession id -- so there's no explicit
+# invalidation to do. The TTL below is a safety net, not the reason this is safe.
 DASHBOARD_CONTEXT_CACHE_TTL = 3600  # seconds
 
 
@@ -27,18 +23,13 @@ def _dashboard_cache_key(import_session, exclude_shorts, year):
 
 def _render_dashboard(request, import_session):
     # ?shorts=exclude opts OUT of short films (under 60 min) across every stat on
-    # the page -- default stays "include" (today's existing behavior, unfiltered)
-    # so a plain dashboard link/share never silently shows different numbers than
-    # it used to. Every stat here is server-computed from the DB, not shipped to
-    # the browser as raw data, so this can't be an instant client-side toggle --
-    # the switch in the template reloads with this param, same as any other GET-
-    # driven filter on the site.
+    # the page -- default stays "include" so a plain dashboard link/share never
+    # silently shows different numbers. Server-computed, so the template's toggle
+    # reloads with this param rather than filtering client-side.
     exclude_shorts = request.GET.get('shorts') == 'exclude'
     # ?year=2024 switches to the "Wrapped for a single year" view (see
-    # build_dashboard_context's own docstring) -- absent/invalid falls back to
-    # the all-time page rather than erroring, same "don't trust the query string"
-    # posture as exclude_shorts above; a year with no matching diary entries just
-    # renders every card in its own already-established empty state.
+    # build_dashboard_context's docstring) -- absent/invalid falls back to the
+    # all-time page rather than erroring.
     year_param = request.GET.get('year')
     try:
         year = int(year_param) if year_param else None
@@ -49,14 +40,11 @@ def _render_dashboard(request, import_session):
     if context is None:
         context = build_dashboard_context(import_session, exclude_shorts, year)
         cache.set(cache_key, context, DASHBOARD_CONTEXT_CACHE_TTL)
-    # The dashboard's own URL doubles as its share link (see the "Share your
-    # dashboard" box) -- neither route this can be reached by has an ownership
-    # check tying it to this browser's session, so anyone holding either kind of
-    # link can already open it as is. canonical_dashboard_path prefers the
-    # account's permanent /dashboard/<username>/ link when there is one, even if
-    # this particular request came in on the raw UUID route. Carries the shorts/
-    # year toggles' current state along -- sharing a filtered view should hand
-    # the recipient that same filtered view, not silently reset to the default.
+    # The dashboard's own URL doubles as its share link -- neither route it can be
+    # reached by has an ownership check, so anyone holding either link can already
+    # open it. canonical_dashboard_path prefers the permanent /dashboard/<username>/
+    # link when there is one. Carries the shorts/year toggles' current state along
+    # so sharing a filtered view doesn't silently reset to the default.
     share_url = request.build_absolute_uri(import_session.canonical_dashboard_path())
     params = []
     if exclude_shorts:

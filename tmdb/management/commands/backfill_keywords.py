@@ -1,16 +1,11 @@
-"""One-time backfill for Movie.keywords -- see that field's own comment in
-tmdb/models.py for why it exists. Every Movie enriched from here on gets
-keywords for free (see enrichment.py's _populate_details, which now fetches
-them alongside credits), but rows created before that field existed each need
+"""One-time backfill for Movie.keywords -- every Movie enriched from here on
+gets keywords for free, but rows created before that field existed each need
 one extra TMDB call to fill them in.
 
-Safe to re-run: only ever targets rows with zero keywords, so an interrupted
-run (rate-limited, network hiccup, Ctrl-C) just picks up where it left off
-next time rather than redoing work. A film that genuinely has no keywords on
-TMDB will keep getting re-attempted -- there's no way to distinguish "checked,
-genuinely none" from "never checked" with a bare M2M, unlike vote_count's
-nullable field -- but that's a wasted API call at worst, not a correctness
-issue, and most real films have at least one keyword.
+Safe to re-run: only targets rows with zero keywords, so an interrupted run
+just picks up where it left off. A film that genuinely has no keywords on
+TMDB will keep getting re-attempted (no way to distinguish "checked, none"
+from "never checked" with a bare M2M), but that's a wasted call at worst.
 """
 
 from django.core.management.base import BaseCommand
