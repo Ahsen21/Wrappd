@@ -1,1291 +1,144 @@
 {% extends "core/base.html" %}
-{% load humanize %}
 {% block title %}Double Feature — {{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}{% endblock %}
 {% block content %}
-<div class="compare-page">
 
-  <div class="hero compare-overview-hero">
-    <div class="hero-top-row">
-      <p class="hero-eyebrow">Double Feature</p>
-      <a
-        href="{% if exclude_shorts %}{{ request.path }}{% else %}?shorts=exclude{% endif %}"
-        class="shorts-toggle{% if exclude_shorts %} shorts-toggle--on{% endif %}"
-        role="switch" aria-checked="{% if exclude_shorts %}true{% else %}false{% endif %}"
-        title="{% if exclude_shorts %}Showing films 60+ min only -- click to include shorts{% else %}Click to exclude short films (under 60 min) from every stat on this page{% endif %}"
-      >
-        Exclude shorts
-        <span class="shorts-toggle-track"><span class="shorts-toggle-thumb"></span></span>
-      </a>
-    </div>
-    <h1>{{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}</h1>
+  <div class="loading-bar" id="compare-loading-bar"></div>
 
-    <div class="two-col two-col--divided compare-overview-section">
-      <div>
-        <p class="compare-overview-name a-color">{{ session_a.display_name|default:"Person A" }}</p>
-        <div class="grid grid--rating-avg">
-          <div class="stat"><div class="value a-color">{{ watched_count_a|intcomma }}</div><div class="label"># films</div></div>
-          <div class="stat"><div class="value a-color">{% if avg_rating_a %}{{ avg_rating_a|floatformat:2 }} ★{% else %}—{% endif %}</div><div class="label">avg rating</div></div>
+  <div id="compare-content">
+    <!-- Same shape-of-the-real-page approach as stats/dashboard.html's own shell:
+         both session display names are already known here (resolved before this
+         renders, for the content_url/404 check), so the hero's names/labels are
+         real -- only the actual numbers/charts/posters are skeletoned. Swapped out
+         wholesale once stats/_compare_content.html arrives below. -->
+    <div class="compare-page">
+      <div class="hero compare-overview-hero">
+        <div class="hero-top-row">
+          <p class="hero-eyebrow">Double Feature</p>
+          <span class="shorts-toggle" aria-hidden="true">
+            Exclude shorts
+            <span class="shorts-toggle-track"><span class="shorts-toggle-thumb"></span></span>
+          </span>
         </div>
-      </div>
-      <div>
-        <p class="compare-overview-name b-color">{{ session_b.display_name|default:"Person B" }}</p>
-        <div class="grid grid--rating-avg">
-          <div class="stat"><div class="value b-color">{{ watched_count_b|intcomma }}</div><div class="label"># films</div></div>
-          <div class="stat"><div class="value b-color">{% if avg_rating_b %}{{ avg_rating_b|floatformat:2 }} ★{% else %}—{% endif %}</div><div class="label">avg rating</div></div>
-        </div>
-      </div>
-    </div>
+        <h1>{{ session_a.display_name|default:"Person A" }} vs {{ session_b.display_name|default:"Person B" }}</h1>
 
-    <div class="compare-overview-grid compare-overview-section">
-      <div class="compare-overview-pair">
-        <div class="stat"><div class="value a-color">{{ only_a_count|intcomma }}</div><div class="label">Only {{ session_a.display_name|default:"Person A" }}</div></div>
-        <div class="stat"><div class="value a-color">{{ rated_higher_a_count|intcomma }}</div><div class="label">{{ session_a.display_name|default:"Person A" }} rated higher</div></div>
-      </div>
-      <div class="compare-overview-pair">
-        <div class="stat"><div class="value">{{ shared_count|intcomma }}</div><div class="label">Both watched</div></div>
-        <div class="stat"><div class="value">{{ same_rating_total|intcomma }}</div><div class="label">Same rating</div></div>
-      </div>
-      <div class="compare-overview-pair">
-        <div class="stat"><div class="value b-color">{{ only_b_count|intcomma }}</div><div class="label">Only {{ session_b.display_name|default:"Person B" }}</div></div>
-        <div class="stat"><div class="value b-color">{{ rated_higher_b_count|intcomma }}</div><div class="label">{{ session_b.display_name|default:"Person B" }} rated higher</div></div>
-      </div>
-    </div>
-
-    <div class="compare-overview-grid compare-overview-section">
-      <div class="stat"><div class="value">{{ overlap_pct|floatformat:0|default:"—" }}%</div><div class="label"><span class="th-with-tip">Watched in common <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of every film either of you has watched that you've both watched.</span></span></span></div></div>
-      <div class="stat"><div class="value">{{ agreement_pct|floatformat:0|default:"—" }}{% if agreement_pct %}%{% endif %}</div><div class="label"><span class="th-with-tip">Rating agreement <span class="info-tip" tabindex="0">i<span class="tip-bubble">The share of films you've both rated where your ratings landed within half a star of each other.</span></span></span></div></div>
-      <div class="stat"><div class="value">{{ avg_delta|floatformat:2|default:"—" }}</div><div class="label"><span class="th-with-tip">Per-film rating gap <span class="info-tip" tabindex="0">i<span class="tip-bubble">The average difference between your ratings on films you've both rated</span></span></span></div></div>
-    </div>
-
-    {% if compatibility_pct is not None %}
-      <div class="compare-overview-alignment">
-        <div class="alignment-gauge">
-          <svg width="150" height="150" viewBox="0 0 150 150" role="img" aria-label="{{ compatibility_pct|floatformat:0 }}% overall alignment">
-            <circle cx="75" cy="75" r="60" fill="none" stroke="var(--border)" stroke-width="12"></circle>
-            <circle
-              cx="75" cy="75" r="60" fill="none" stroke="var(--accent)" stroke-width="12" stroke-linecap="round"
-              stroke-dasharray="376.99" stroke-dashoffset="{{ compatibility_gauge_offset }}"
-              transform="rotate(-90 75 75)"
-            ></circle>
-            <text x="75" y="86" text-anchor="middle" class="alignment-gauge-text">{{ compatibility_pct|floatformat:0 }}%</text>
-          </svg>
-          <p class="alignment-gauge-label"><span class="th-with-tip">Overall alignment <span class="info-tip" tabindex="0">i<span class="tip-bubble">Half Watched in common, half how closely you rate things (Rating agreement and the per-film gap combined) -- how much you watch the same things, and how similarly you feel about them.</span></span></span></p>
-        </div>
-        <p class="alignment-blurb">
-          You <span class="alignment-highlight">{{ alignment_blurb.overlap_clause }}</span>,
-          {{ alignment_blurb.connector }} <span class="alignment-highlight">{{ alignment_blurb.agreement_clause }}</span>.
-        </p>
-      </div>
-    {% else %}
-      <div class="stat"><div class="value">—</div><div class="label"><span class="th-with-tip">Overall alignment <span class="info-tip" tabindex="0">i<span class="tip-bubble">Half Watched in common, half how closely you rate things (Rating agreement and the per-film gap combined) -- how much you watch the same things, and how similarly you feel about them.</span></span></span></div></div>
-    {% endif %}
-  </div>
-
-  <nav class="section-nav">
-    <a href="#ratings" class="section-nav-link active" data-section="ratings">Ratings</a>
-    <a href="#whos-seen-what" class="section-nav-link" data-section="whos-seen-what">Who's Seen What</a>
-    <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
-    <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
-    <a href="#watching-together" class="section-nav-link" data-section="watching-together">Watching Together</a>
-  </nav>
-
-  <div class="jump-target" id="ratings">
-  <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
-  <p class="muted">What you both watch and how you rate them.</p>
-
-  <div class="card">
-    <h3>Rating distributions</h3>
-    <div class="toggle-group" data-chart-toggle="ratingCurve">
-      <button type="button" class="toggle-btn active" data-view="count">Films</button>
-      <button type="button" class="toggle-btn" data-view="percent">Percent</button>
-    </div>
-    <canvas id="ratingCurveChart"></canvas>
-  </div>
-
-  <div class="card">
-    <h3>Genre Comparison</h3>
-    {% if genre_agreement %}
-      <div class="toggle-group" data-chart-toggle="genreAgreement">
-        <button type="button" class="toggle-btn active" data-view="most">Most agreed</button>
-        <button type="button" class="toggle-btn" data-view="least">Least agreed</button>
-      </div>
-      <div class="h-chart h-chart--tall"><canvas id="genreAgreementChart"></canvas></div>
-    {% else %}
-      <p class="empty-state">Not enough shared genres rated yet</p>
-    {% endif %}
-  </div>
-  </div>
-
-  <div class="jump-target" id="whos-seen-what">
-  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Who's Seen What</span></h2>
-  <p class="muted">The films you've both watched and your different opinions about them.</p>
-
-  <div class="card">
-    <h3>Same rating</h3>
-    {% if same_rating_total %}
-      <p class="muted">You rated {{ same_rating_total|intcomma }} film{{ same_rating_total|pluralize }} exactly the same.</p>
-    {% endif %}
-    {% if same_rating %}
-      <div class="favs favs--six">
-        {% for film in same_rating %}
-          <div class="fav-card">
-            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            <p class="muted">{{ film.rating_a|floatformat:1 }} ★</p>
+        <div class="two-col two-col--divided compare-overview-section">
+          <div>
+            <p class="compare-overview-name a-color">{{ session_a.display_name|default:"Person A" }}</p>
+            <div class="grid grid--rating-avg">
+              <div class="stat"><div class="skeleton" style="width: 3rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label"># films</div></div>
+              <div class="stat"><div class="skeleton" style="width: 3rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">avg rating</div></div>
+            </div>
           </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No exact matches yet</p>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h3>Most different ratings</h3>
-    <div class="color-key">
-      <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
-      <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
-    </div>
-    {% if biggest_disagreements_total > biggest_disagreements|length %}
-      <p class="muted caption">Showing {{ biggest_disagreements|length }} of {{ biggest_disagreements_total|intcomma }}.</p>
-    {% endif %}
-    {% if biggest_disagreements %}
-      <div class="favs favs--six">
-        {% for film in biggest_disagreements %}
-          <div class="fav-card">
-            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            <p class="a-color">{{ film.rating_a|floatformat:1 }} ★</p>
-            <p class="b-color">{{ film.rating_b|floatformat:1 }} ★</p>
+          <div>
+            <p class="compare-overview-name b-color">{{ session_b.display_name|default:"Person B" }}</p>
+            <div class="grid grid--rating-avg">
+              <div class="stat"><div class="skeleton" style="width: 3rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label"># films</div></div>
+              <div class="stat"><div class="skeleton" style="width: 3rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">avg rating</div></div>
+            </div>
           </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No rated films in common yet</p>
-    {% endif %}
-  </div>
+        </div>
 
-  <div class="two-col">
-    <div class="card">
-      <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
-      {% if top_unseen_a %}
-        <div class="favs favs--four">
-          {% for film in top_unseen_a %}
-            <div class="fav-card">
-              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="empty-state">None yet</p>
-      {% endif %}
-    </div>
-    <div class="card">
-      <h3>{{ session_b.display_name|default:"Person B" }} loved it, {{ session_a.display_name|default:"Person A" }} hasn't seen it</h3>
-      {% if top_unseen_b %}
-        <div class="favs favs--four">
-          {% for film in top_unseen_b %}
-            <div class="fav-card">
-              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="empty-state">None yet</p>
-      {% endif %}
-    </div>
-  </div>
-  </div>
-
-  <div class="jump-target" id="favorite-people">
-  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Favorite People</span></h2>
-  <p class="muted">A combined view of your favorite directors and actors.</p>
-
-  <div class="card">
-    <h3>Favorite directors</h3>
-    <div class="toggle-group" data-toggle-group>
-      <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
-      <button type="button" class="toggle-btn" data-view="shared">Shared</button>
-    </div>
-    <div data-view-panel="split">
-      <div class="two-col two-col--divided">
-        <div>
-          <h4>{{ session_a.display_name|default:"Person A" }}</h4>
-          {% if top_directors_a %}
-            <div class="favs favs--four favs--headshots">
-              {% for row in top_directors_a %}
-                <div class="fav-card">
-                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-                  <button type="button" class="person-trigger" data-session-id="{{ session_a.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
-                  <p class="a-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <p class="empty-state">No data yet</p>
-          {% endif %}
-        </div>
-        <div>
-          <h4>{{ session_b.display_name|default:"Person B" }}</h4>
-          {% if top_directors_b %}
-            <div class="favs favs--four favs--headshots">
-              {% for row in top_directors_b %}
-                <div class="fav-card">
-                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-                  <button type="button" class="person-trigger" data-session-id="{{ session_b.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
-                  <p class="b-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <p class="empty-state">No data yet</p>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-    <div data-view-panel="shared" hidden>
-      {% if shared_directors %}
-        <div class="favs favs--six favs--headshots">
-          {% for row in shared_directors %}
-            <div class="fav-card">
-              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-              <button type="button" class="shared-person-trigger" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
-              <p class="a-color">{{ row.avg_a|floatformat:1 }} ★ ({{ row.count_a }} film{{ row.count_a|pluralize }})</p>
-              <p class="b-color">{{ row.avg_b|floatformat:1 }} ★ ({{ row.count_b }} film{{ row.count_b|pluralize }})</p>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="empty-state">No shared favorites yet</p>
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>Favorite actors</h3>
-    <div class="toggle-group" data-toggle-group>
-      <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
-      <button type="button" class="toggle-btn" data-view="shared">Shared</button>
-    </div>
-    <div data-view-panel="split">
-      <div class="two-col two-col--divided">
-        <div>
-          <h4>{{ session_a.display_name|default:"Person A" }}</h4>
-          {% if top_actors_a %}
-            <div class="favs favs--four favs--headshots">
-              {% for row in top_actors_a %}
-                <div class="fav-card">
-                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-                  <button type="button" class="person-trigger" data-session-id="{{ session_a.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
-                  <p class="a-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <p class="empty-state">No data yet</p>
-          {% endif %}
-        </div>
-        <div>
-          <h4>{{ session_b.display_name|default:"Person B" }}</h4>
-          {% if top_actors_b %}
-            <div class="favs favs--four favs--headshots">
-              {% for row in top_actors_b %}
-                <div class="fav-card">
-                  {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-                  <button type="button" class="person-trigger" data-session-id="{{ session_b.id }}" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
-                  <p class="b-color">{{ row.avg|floatformat:1 }} ★ ({{ row.count }} film{{ row.count|pluralize }})</p>
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <p class="empty-state">No data yet</p>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-    <div data-view-panel="shared" hidden>
-      {% if shared_actors %}
-        <div class="favs favs--six favs--headshots">
-          {% for row in shared_actors %}
-            <div class="fav-card">
-              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-              <button type="button" class="shared-person-trigger" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
-              <p class="a-color">{{ row.avg_a|floatformat:1 }} ★ ({{ row.count_a }} film{{ row.count_a|pluralize }})</p>
-              <p class="b-color">{{ row.avg_b|floatformat:1 }} ★ ({{ row.count_b }} film{{ row.count_b|pluralize }})</p>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="empty-state">No shared favorites yet</p>
-      {% endif %}
-    </div>
-  </div>
-  </div>
-
-  <div class="jump-target" id="watching-habits">
-  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watching Habits</span></h2>
-  <p class="muted">How much, how often, and when you each watch.</p>
-
-  <div class="card">
-    <h3>Films per year</h3>
-    <canvas id="filmsPerYearComparisonChart"></canvas>
-  </div>
-
-  <div class="card">
-    <h3>Most watched films</h3>
-    <div class="two-col two-col--divided">
-      <div>
-        <h4>{{ session_a.display_name|default:"Person A" }}</h4>
-        {% if most_watched_films_a %}
-          <div class="favs favs--four">
-            {% for film in most_watched_films_a %}
-              <div class="fav-card">
-                {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-                <p class="a-color">{{ film.watch_count }}×</p>
-              </div>
-            {% endfor %}
+        <div class="compare-overview-grid compare-overview-section">
+          <div class="compare-overview-pair">
+            <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Only {{ session_a.display_name|default:"Person A" }}</div></div>
+            <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">{{ session_a.display_name|default:"Person A" }} rated higher</div></div>
           </div>
-        {% else %}
-          <p class="empty-state">No rewatches yet</p>
-        {% endif %}
-      </div>
-      <div>
-        <h4>{{ session_b.display_name|default:"Person B" }}</h4>
-        {% if most_watched_films_b %}
-          <div class="favs favs--four">
-            {% for film in most_watched_films_b %}
-              <div class="fav-card">
-                {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-                <p class="b-color">{{ film.watch_count }}×</p>
-              </div>
-            {% endfor %}
+          <div class="compare-overview-pair">
+            <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Both watched</div></div>
+            <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Same rating</div></div>
           </div>
-        {% else %}
-          <p class="empty-state">No rewatches yet</p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>Viewing calendar</h3>
-    <div class="color-key">
-      <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
-      <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
-    </div>
-    <div class="grid grid--calendar-stats">
-      <div class="stat">
-        <div class="value stat-pair-value">
-          <span class="a-color">{{ viewing_habits_a.busiest_month_count }}</span><span class="stat-pair-separator">|</span><span class="b-color">{{ viewing_habits_b.busiest_month_count }}</span>
-        </div>
-        <div class="label">Busiest month (films)</div>
-      </div>
-      <div class="stat">
-        <div class="value stat-pair-value">
-          <span class="a-color">{{ viewing_habits_a.longest_streak_days }}</span><span class="stat-pair-separator">|</span><span class="b-color">{{ viewing_habits_b.longest_streak_days }}</span>
-        </div>
-        <div class="label">Longest streak (days)</div>
-      </div>
-      <div class="stat">
-        <div class="value stat-pair-value">
-          <span class="a-color">{{ viewing_habits_a.longest_gap_days }}</span><span class="stat-pair-separator">|</span><span class="b-color">{{ viewing_habits_b.longest_gap_days }}</span>
-        </div>
-        <div class="label">Longest dry spell (days)</div>
-      </div>
-    </div>
-    <h4>Day of week</h4>
-    <div class="toggle-group" data-chart-toggle="weekdayComparison">
-      <button type="button" class="toggle-btn active" data-view="count">Films</button>
-      <button type="button" class="toggle-btn" data-view="percent">Percent</button>
-    </div>
-    <div class="weekday-chart">
-      <canvas id="weekdayComparisonChart"></canvas>
-    </div>
-  </div>
-  </div>
-
-  <div class="jump-target" id="watching-together">
-  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watching Together</span></h2>
-  <p class="muted">Watchlist recommendations and shared viewing history.</p>
-  <div class="card">
-    <h3>Watchlist matches</h3>
-    <p class="muted">Sorted by your combined preferences.</p>
-    {% if watchlist_matches_total > watchlist_matches|length %}
-      <p class="muted caption">Showing {{ watchlist_matches|length }} of {{ watchlist_matches_total|intcomma }}.</p>
-    {% endif %}
-    {% if watchlist_matches %}
-      <div class="favs favs--six">
-        {% for film in watchlist_matches %}
-          <div class="fav-card">
-            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+          <div class="compare-overview-pair">
+            <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Only {{ session_b.display_name|default:"Person B" }}</div></div>
+            <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">{{ session_b.display_name|default:"Person B" }} rated higher</div></div>
           </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No shared watchlist films yet</p>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h3>Same day logs</h3>
-    <p class="muted">Days you both logged a film (not necessarily the same one).</p>
-    {% if same_day_logs_total %}
-      <div class="grid grid--rating-avg">
-        <div class="stat"><div class="value">{{ same_day_logs_total|intcomma }}</div><div class="label">Shared days</div></div>
-        <div class="stat"><div class="value">{{ same_day_exact_matches_total|intcomma }}</div><div class="label">Exact matches</div></div>
-      </div>
-    {% endif %}
-
-    {% if same_day_heatmap.years %}
-      <h4>Activity</h4>
-      {% if same_day_heatmap.years|length > 1 %}
-        <div class="toggle-group" data-chart-toggle="sameDayHeatmapYear">
-          {% for year in same_day_heatmap.years %}
-            <button
-              type="button" class="toggle-btn{% if year == same_day_heatmap.default_year %} active{% endif %}"
-              data-year="{{ year }}"
-            >{{ year }}</button>
-          {% endfor %}
         </div>
-      {% endif %}
-      <div class="heatmap-wrap">
-        <div class="heatmap-table">
-          <div class="heatmap-months" id="sameDayHeatmapMonths"></div>
-          <div class="heatmap-days" id="sameDayHeatmapDays"></div>
-          <div class="heatmap-grid heatmap-grid--same-day" id="sameDayHeatmapGrid"></div>
+
+        <div class="compare-overview-grid compare-overview-section">
+          <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Watched in common</div></div>
+          <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Rating agreement</div></div>
+          <div class="stat"><div class="skeleton" style="width: 2.5rem; height: 1.4rem; margin-bottom: 0.3rem;"></div><div class="label">Per-film rating gap</div></div>
         </div>
-        <div class="heatmap-tip" id="sameDayHeatmapTip" hidden></div>
-      </div>
-      <div class="heatmap-legend heatmap-legend--same-day">
-        <span class="legend-pair"><span class="heatmap-legend-swatch" data-state="0"></span>No shared day</span>
-        <span class="legend-pair"><span class="heatmap-legend-swatch" data-state="1"></span>Same day</span>
-        <span class="legend-pair"><span class="heatmap-legend-swatch" data-state="2"></span>Exact match</span>
-      </div>
-    {% endif %}
-  </div>
-  </div>
 
-  <div class="modal-backdrop" id="personModalBackdrop" hidden>
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="personModalTitle">
-      <div class="modal-header">
-        <h3 id="personModalTitle"></h3>
-        <button type="button" class="modal-close" id="personModalClose" aria-label="Close">&times;</button>
+        <div class="compare-overview-alignment">
+          <div class="alignment-gauge">
+            <div style="position: relative; width: 150px; height: 150px; margin: 0 auto;">
+              <svg width="150" height="150" viewBox="0 0 150 150" aria-hidden="true">
+                <circle cx="75" cy="75" r="60" fill="none" stroke="var(--border)" stroke-width="12"></circle>
+              </svg>
+              <div class="skeleton" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 3rem; height: 1.4rem;"></div>
+            </div>
+            <p class="alignment-gauge-label">Overall alignment</p>
+          </div>
+          <p class="alignment-blurb"><span class="skeleton" style="display: inline-block; width: 80%; height: 1rem;"></span></p>
+        </div>
       </div>
-      <div class="modal-body" id="personModalBody"></div>
+
+      <nav class="section-nav">
+        <span class="section-nav-link active">Ratings</span>
+        <span class="section-nav-link">Who's Seen What</span>
+        <span class="section-nav-link">Favorite People</span>
+        <span class="section-nav-link">Watching Habits</span>
+        <span class="section-nav-link">Watching Together</span>
+      </nav>
+
+      <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
+      <p class="muted">What you both watch and how you rate them.</p>
+
+      <div class="card">
+        <h3>Rating distributions</h3>
+        <div class="toggle-group">
+          <span class="toggle-btn active">Films</span>
+          <span class="toggle-btn">Percent</span>
+        </div>
+        <div class="skeleton" style="width: 100%; height: 12rem;"></div>
+      </div>
+
+      <div class="card" style="position: relative; max-height: 9rem; overflow: hidden;">
+        <h3>Genre Comparison</h3>
+        <div class="toggle-group">
+          <span class="toggle-btn active">Most agreed</span>
+          <span class="toggle-btn">Least agreed</span>
+        </div>
+        <div class="skeleton" style="width: 100%; height: 12rem;"></div>
+        <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 3rem; background: linear-gradient(to bottom, transparent, var(--bg));"></div>
+      </div>
     </div>
   </div>
 
-  <div class="modal-backdrop" id="sameDayModalBackdrop" hidden>
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="sameDayModalTitle">
-      <div class="modal-header">
-        <h3 id="sameDayModalTitle"></h3>
-        <button type="button" class="modal-close" id="sameDayModalClose" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body modal-body--same-day" id="sameDayModalBody"></div>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" id="sharedPersonModalBackdrop" hidden>
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="sharedPersonModalTitle">
-      <div class="modal-header">
-        <h3 id="sharedPersonModalTitle"></h3>
-        <button type="button" class="modal-close" id="sharedPersonModalClose" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body modal-body--same-day" id="sharedPersonModalBody"></div>
-    </div>
-  </div>
-
-  {{ chart_data|json_script:"chart-data" }}
   <script>
-    // Highlights whichever jump-nav group is currently in view in the sticky nav --
-    // mirrored exactly from dashboard.html's own copy (see that file for the full
-    // reasoning on the mid-viewport observer band and the click-vs-scrollend race).
+    // Same shell-fetches-content pattern as stats/dashboard.html's own script --
+    // see its comment for the full "why" (Render cold starts/build_compare_context's
+    // query cost shouldn't block the first response).
     (function () {
-      const sectionLinks = document.querySelectorAll('.section-nav-link');
-      const sections = [...sectionLinks].map(function (link) { return document.getElementById(link.dataset.section); });
+      const container = document.getElementById('compare-content');
+      const loadingBar = document.getElementById('compare-loading-bar');
 
-      function activate(id) {
-        sectionLinks.forEach(function (link) { link.classList.toggle('active', link.dataset.section === id); });
-      }
-
-      const observer = new IntersectionObserver(function (entries) {
-        entries.forEach(function (entry) {
-          if (entry.isIntersecting) activate(entry.target.id);
-        });
-      }, { rootMargin: '-45% 0px -50% 0px' });
-      sections.forEach(function (section) { if (section) observer.observe(section); });
-
-      let reconnectTimer = null;
-      sectionLinks.forEach(function (link) {
-        link.addEventListener('click', function () {
-          activate(link.dataset.section);
-          observer.disconnect();
-          clearTimeout(reconnectTimer);
-          const reconnect = function () {
-            window.removeEventListener('scrollend', reconnect);
-            clearTimeout(reconnectTimer);
-            sections.forEach(function (section) { if (section) observer.observe(section); });
-          };
-          window.addEventListener('scrollend', reconnect, { once: true });
-          reconnectTimer = setTimeout(reconnect, 1000);
-        });
-      });
-    })();
-
-    // Generic toggle-group/view-panel wiring, mirrored from dashboard.html -- lets a
-    // card swap between markup panels (e.g. Favorite directors' Side-by-side/Shared)
-    // purely via data attributes, no per-feature JS needed.
-    document.querySelectorAll('[data-toggle-group]').forEach(function (group) {
-      const card = group.closest('.card');
-      group.querySelectorAll('.toggle-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          group.querySelectorAll('.toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          const view = btn.dataset.view;
-          card.querySelectorAll('[data-view-panel]').forEach(function (panel) {
-            panel.hidden = panel.dataset.viewPanel !== view;
-          });
-        });
-      });
-    });
-
-    const chartData = JSON.parse(document.getElementById('chart-data').textContent);
-    const gridColor = 'rgba(138, 153, 168, 0.15)';
-    const textColor = '#e5e9ec';
-    Chart.defaults.color = textColor;
-    // These Chart.js globals don't persist across page loads -- each page's own
-    // inline script has to set them independently. Mirrors dashboard.html exactly
-    // (see that file for why font/animation are mutated in place, not reassigned).
-    Chart.defaults.font.family = "'Sora', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
-    Chart.defaults.font.size = 11;
-    Chart.defaults.animation.duration = 500;
-    Chart.defaults.animation.easing = 'easeOutQuart';
-
-    function lighten(hex, amount) {
-      const num = parseInt(hex.slice(1), 16);
-      const r = Math.min(255, (num >> 16) + amount);
-      const g = Math.min(255, ((num >> 8) & 0xff) + amount);
-      const b = Math.min(255, (num & 0xff) + amount);
-      return 'rgb(' + r + ', ' + g + ', ' + b + ')';
-    }
-
-    // Blue = session A, orange = session B -- this page's own color convention
-    // (distinct from Director's Cut's topic-based coloring), applied consistently
-    // anywhere the two people's data needs telling apart at a glance (matches the
-    // .a-color/.b-color classes used on every table's per-person values). Green is
-    // deliberately not used here -- it's the site's general interactive accent
-    // (toggle-btn.active, .stat .value's default), and reusing it as "person A" too
-    // would blur that meaning on a page that's fundamentally about two people.
-    // Films-vs-Percent toggle: counts are the raw server data, percent is derived
-    // client-side (count / that session's own rated total) so a person who's rated
-    // far more films doesn't just visually dominate every bucket -- the toggle is
-    // about comparing rating *tendency*, not volume.
-    function toPercent(counts, total) {
-      if (!total) return counts.map(function () { return 0; });
-      return counts.map(function (c) { return Math.round((c / total) * 1000) / 10; });
-    }
-
-    let ratingCurveMode = 'count';
-
-    const ratingCurveChart = new Chart(document.getElementById('ratingCurveChart'), {
-      type: 'bar',
-      data: {
-        labels: chartData.rating_curve.labels,
-        datasets: [
-          {
-            label: chartData.rating_curve.label_a,
-            data: chartData.rating_curve.data_a,
-            backgroundColor: '#40bcf4',
-            hoverBackgroundColor: lighten('#40bcf4', 40),
-            borderRadius: 4,
-          },
-          {
-            label: chartData.rating_curve.label_b,
-            data: chartData.rating_curve.data_b,
-            backgroundColor: '#ff8000',
-            hoverBackgroundColor: lighten('#ff8000', 40),
-            borderRadius: 4,
-          },
-        ],
-      },
-      options: {
-        scales: {
-          x: { grid: { color: gridColor } },
-          y: { grid: { color: gridColor }, beginAtZero: true, ticks: {} },
-        },
-        // Unlike Director's Cut's single-dataset charts (legend always off, redundant
-        // with the card title), this chart has two same-shaped datasets distinguished
-        // only by color -- the legend is what tells the two people's bars apart.
-        plugins: {
-          legend: { display: true },
-          tooltip: {
-            callbacks: {
-              label: function (context) {
-                const suffix = ratingCurveMode === 'percent' ? '%' : ' film' + (context.parsed.y === 1 ? '' : 's');
-                return context.dataset.label + ': ' + context.parsed.y + suffix;
-              },
-            },
-          },
-        },
-      },
-    });
-
-    document.querySelectorAll('[data-chart-toggle="ratingCurve"] .toggle-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        document.querySelectorAll('[data-chart-toggle="ratingCurve"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        ratingCurveMode = btn.dataset.view === 'percent' ? 'percent' : 'count';
-        const percent = ratingCurveMode === 'percent';
-        ratingCurveChart.data.datasets[0].data = percent
-          ? toPercent(chartData.rating_curve.data_a, chartData.rating_curve.count_a)
-          : chartData.rating_curve.data_a;
-        ratingCurveChart.data.datasets[1].data = percent
-          ? toPercent(chartData.rating_curve.data_b, chartData.rating_curve.count_b)
-          : chartData.rating_curve.data_b;
-        ratingCurveChart.options.scales.y.ticks.callback = percent ? function (value) { return value + '%'; } : undefined;
-        ratingCurveChart.update();
-      });
-    });
-
-    // Watching Habits' films-per-year and weekday-distribution charts -- same
-    // blue/orange grouped-bar shape as ratingCurveChart above, no toggle (unlike
-    // that chart's count/percent one): both x-axes are already directly
-    // comparable between the two people (a shared, zero-filled year range for
-    // films-per-year; the fixed 7-day week for weekday), so there's no second
-    // view to swap to.
-    if (document.getElementById('filmsPerYearComparisonChart')) {
-      new Chart(document.getElementById('filmsPerYearComparisonChart'), {
-        type: 'bar',
-        data: {
-          labels: chartData.films_per_year.labels,
-          datasets: [
-            {
-              label: chartData.films_per_year.label_a,
-              data: chartData.films_per_year.data_a,
-              backgroundColor: '#40bcf4',
-              hoverBackgroundColor: lighten('#40bcf4', 40),
-              borderRadius: 4,
-            },
-            {
-              label: chartData.films_per_year.label_b,
-              data: chartData.films_per_year.data_b,
-              backgroundColor: '#ff8000',
-              hoverBackgroundColor: lighten('#ff8000', 40),
-              borderRadius: 4,
-            },
-          ],
-        },
-        options: {
-          scales: {
-            x: { grid: { color: gridColor } },
-            y: { grid: { color: gridColor }, beginAtZero: true },
-          },
-          plugins: { legend: { display: true } },
-        },
-      });
-    }
-
-    if (document.getElementById('weekdayComparisonChart')) {
-      const weekdayComparisonChart = new Chart(document.getElementById('weekdayComparisonChart'), {
-        type: 'bar',
-        data: {
-          labels: chartData.weekday_distribution.labels,
-          datasets: [
-            {
-              label: chartData.weekday_distribution.label_a,
-              data: chartData.weekday_distribution.data_a,
-              backgroundColor: '#40bcf4',
-              hoverBackgroundColor: lighten('#40bcf4', 40),
-              borderRadius: 4,
-            },
-            {
-              label: chartData.weekday_distribution.label_b,
-              data: chartData.weekday_distribution.data_b,
-              backgroundColor: '#ff8000',
-              hoverBackgroundColor: lighten('#ff8000', 40),
-              borderRadius: 4,
-            },
-          ],
-        },
-        options: {
-          // Needed here (unlike filmsPerYearComparisonChart just above, a bare
-          // canvas with no wrapper) because this canvas sits in .weekday-chart,
-          // which forces a fixed height via CSS -- without this, Chart.js's
-          // default aspect-ratio sizing fights that forced height and renders
-          // into a small fallback box instead of filling it. Same fix
-          // Director's Cut's own weekdayChart already needed for the identical
-          // wrapper (see dashboard.html).
-          maintainAspectRatio: false,
-          scales: {
-            x: { grid: { color: gridColor } },
-            y: { grid: { color: gridColor }, beginAtZero: true, ticks: {} },
-          },
-          plugins: { legend: { display: true } },
-        },
-      });
-
-      // Films/Percent toggle -- same "count vs. client-side count/total" shape
-      // as ratingCurveChart's own toggle above (see toPercent), so a person who
-      // logs far more overall doesn't just visually dominate every day.
-      document.querySelectorAll('[data-chart-toggle="weekdayComparison"] .toggle-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          document.querySelectorAll('[data-chart-toggle="weekdayComparison"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          const percent = btn.dataset.view === 'percent';
-          weekdayComparisonChart.data.datasets[0].data = percent
-            ? toPercent(chartData.weekday_distribution.data_a, chartData.weekday_distribution.count_a)
-            : chartData.weekday_distribution.data_a;
-          weekdayComparisonChart.data.datasets[1].data = percent
-            ? toPercent(chartData.weekday_distribution.data_b, chartData.weekday_distribution.count_b)
-            : chartData.weekday_distribution.data_b;
-          weekdayComparisonChart.options.scales.y.ticks.callback = percent ? function (value) { return value + '%'; } : undefined;
-          weekdayComparisonChart.update();
-        });
-      });
-    }
-
-    // Horizontal grouped bar -- genres on the y-axis (indexAxis: 'y', same
-    // orientation as Director's Cut's own genres chart, since a genre name reads
-    // better as a category label than a rotated/truncated x-axis tick), two
-    // datasets per genre (same blue/orange grouped-bar shape as ratingCurveChart
-    // just above, not a single dataset like the genres chart it borrows its
-    // orientation from -- this is fundamentally a two-person comparison, not a
-    // single count). x-axis capped at 5 -- the real ceiling of the rating scale,
-    // not whatever range the data happens to span, so a bar's length is always
-    // directly comparable to "how full is this out of 5 stars" at a glance.
-    // Most/Least agreed toggle: chartData.genre_agreement.most and .least are two
-    // separate server-computed {labels, data_a, data_b} sets (see build_compare_context),
-    // not one array re-sliced client-side -- swapping to 'least' replaces both the
-    // labels and the data in one go, same "reassign then .update()" shape as
-    // ratingCurveChart's toggle above, just swapping a whole view instead of
-    // recomputing one from the other.
-    if (document.getElementById('genreAgreementChart')) {
-      const genreAgreementChart = new Chart(document.getElementById('genreAgreementChart'), {
-        type: 'bar',
-        data: {
-          labels: chartData.genre_agreement.most.labels,
-          datasets: [
-            {
-              label: chartData.genre_agreement.label_a,
-              data: chartData.genre_agreement.most.data_a,
-              backgroundColor: '#40bcf4',
-              hoverBackgroundColor: lighten('#40bcf4', 40),
-              borderRadius: 4,
-            },
-            {
-              label: chartData.genre_agreement.label_b,
-              data: chartData.genre_agreement.most.data_b,
-              backgroundColor: '#ff8000',
-              hoverBackgroundColor: lighten('#ff8000', 40),
-              borderRadius: 4,
-            },
-          ],
-        },
-        options: {
-          indexAxis: 'y',
-          maintainAspectRatio: false,
-          scales: {
-            x: { grid: { color: gridColor }, beginAtZero: true, max: 5 },
-            y: { grid: { display: false }, ticks: { autoSkip: false } },
-          },
-          plugins: {
-            legend: { display: true },
-            tooltip: {
-              callbacks: {
-                label: function (context) { return context.dataset.label + ': ' + context.parsed.x.toFixed(1) + '★'; },
-              },
-            },
-          },
-        },
-      });
-
-      document.querySelectorAll('[data-chart-toggle="genreAgreement"] .toggle-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          document.querySelectorAll('[data-chart-toggle="genreAgreement"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          const view = btn.dataset.view === 'least' ? 'least' : 'most';
-          const picked = chartData.genre_agreement[view];
-          genreAgreementChart.data.labels = picked.labels;
-          genreAgreementChart.data.datasets[0].data = picked.data_a;
-          genreAgreementChart.data.datasets[1].data = picked.data_b;
-          genreAgreementChart.update();
-        });
-      });
-    }
-
-    // Same day logs' calendar heatmap -- same GitHub-contribution-style grid,
-    // cell-sizing, and tooltip-positioning logic as Director's Cut's own viewing
-    // heatmap (dashboard.html's heatmap script), copied rather than shared since
-    // the two pages don't share a JS module -- recolored categorically (no shared
-    // day / same day / exact match, via data-state) instead of volume-bucketed.
-    // Hovering (or focusing) any cell shows just its date, same lightweight
-    // .heatmap-tip as the viewing heatmap's own count tooltip -- the detail (which
-    // films) moved to a click-triggered popup instead of living in the tooltip
-    // text, since a poster grid needs a real modal, not a text bubble. Clicking
-    // (or Enter/Space-ing) a day that has films opens that popup -- own modal
-    // (#sameDayModalBackdrop), not a reuse of the person-filmography one below,
-    // same "each feature owns its state" split this file already keeps between
-    // e.g. the ratingCurve/genreAgreement toggles.
-    (function () {
-      const gridEl = document.getElementById('sameDayHeatmapGrid');
-      const monthsEl = document.getElementById('sameDayHeatmapMonths');
-      const daysEl = document.getElementById('sameDayHeatmapDays');
-      const tipEl = document.getElementById('sameDayHeatmapTip');
-      const wrapEl = gridEl ? gridEl.closest('.heatmap-wrap') : null;
-      if (!gridEl || !chartData.same_day_heatmap) return;
-
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      // Same Mon/Wed/Fri convention as the viewing heatmap's own dayLabels --
-      // see its comment for why (GitHub's own contribution graph does the same).
-      const dayLabels = [null, 'Mon', null, 'Wed', null, 'Fri', null];
-      const labelA = chartData.same_day_heatmap.label_a;
-      const labelB = chartData.same_day_heatmap.label_b;
-
-      // Manual YYYY-MM-DD formatting, not toISOString() -- see the same comment on
-      // the viewing heatmap's own isoDate() for why (a UTC conversion shifts local
-      // midnight to the previous day in any timezone behind UTC).
-      function isoDate(d) {
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return d.getFullYear() + '-' + month + '-' + day;
-      }
-
-      function hideTip() { tipEl.hidden = true; }
-
-      function showTip(cell, text) {
-        tipEl.textContent = text;
-        tipEl.hidden = false;
-        const margin = 8;
-        // Clamped against the card's own wrap, not window.innerWidth -- .heatmap-
-        // wrap sits well inside the card's own padding on a narrow phone (the card
-        // itself is inset from the page edge too), so a tip clamped only to the
-        // true viewport could still render past the card's own right edge, hanging
-        // off the dark card background into the page's outer margin even though
-        // it's technically still on-screen.
-        const wrapRect = wrapEl.getBoundingClientRect();
-        const cellRect = cell.getBoundingClientRect();
-        let left = cellRect.left;
-        const minLeft = wrapRect.left + margin;
-        const maxLeft = wrapRect.right - margin - tipEl.offsetWidth;
-        if (left > maxLeft) left = maxLeft;
-        if (left < minLeft) left = minLeft;
-        let top = cellRect.top - tipEl.offsetHeight - 6;
-        if (top < margin) top = cellRect.bottom + 6;
-        tipEl.style.left = left + 'px';
-        tipEl.style.top = top + 'px';
-      }
-
-      const modalBackdrop = document.getElementById('sameDayModalBackdrop');
-      const modalTitle = document.getElementById('sameDayModalTitle');
-      const modalBody = document.getElementById('sameDayModalBody');
-      const modalClose = document.getElementById('sameDayModalClose');
-      let lastTrigger = null;
-
-      function escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-      }
-
-      function openModal() {
-        modalBackdrop.hidden = false;
-        document.body.style.overflow = 'hidden';
-      }
-
-      function closeModal() {
-        modalBackdrop.hidden = true;
-        document.body.style.overflow = '';
-        if (lastTrigger) lastTrigger.focus();
-      }
-
-      // colorClass names the section (a-color/b-color, same text-color utility
-      // the rest of the page uses) -- side-by-side position is what tells the two
-      // sections apart here, not a poster outline, since each side already gets
-      // its own labeled half of the modal. Caption is that session's own star rating, same
-      // "blank if never rated" convention the person-filmography modal's own
-      // renderFilms uses, not the film's title -- the hover tooltip already
-      // covers title/year, same as every other poster on this page.
-      function filmSection(name, films, colorClass) {
-        const heading = '<h4 class="' + colorClass + '">' + escapeHtml(name) + '</h4>';
-        if (!films.length) {
-          return '<div>' + heading + '<p class="modal-empty">Nothing logged</p></div>';
-        }
-        const cards = films.map(function (film) {
-          const tooltip = escapeHtml(film.title + (film.year ? ' (' + film.year + ')' : ''));
-          const poster = film.poster_url
-            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
-            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
-          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
-          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
-        }).join('');
-        // Wrapped in one div, not returned as two sibling strings -- .modal-body--
-        // same-day is itself a 2-column grid, so two bare top-level elements per
-        // section (heading, then grid) would auto-place into alternating columns
-        // instead of stacking within the same one, scattering user 1's heading and
-        // user 2's posters into the same column.
-        return '<div>' + heading + '<div class="modal-film-grid">' + cards + '</div></div>';
-      }
-
-      function openDay(cell, dateLabel, entry) {
-        lastTrigger = cell;
-        modalTitle.textContent = dateLabel;
-        modalBody.innerHTML =
-          filmSection(labelA, entry.films_a, 'a-color') + filmSection(labelB, entry.films_b, 'b-color');
-        openModal();
-      }
-
-      // See the viewing heatmap's own renderDayLabels for why this is a
-      // separate function called once per renderYear.
-      function renderDayLabels(cellSize) {
-        daysEl.innerHTML = '';
-        daysEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
-        dayLabels.forEach(function (label, row) {
-          if (!label) return;
-          const el = document.createElement('div');
-          el.className = 'heatmap-day-label';
-          el.textContent = label;
-          el.style.gridRow = String(row + 1);
-          daysEl.appendChild(el);
+      function injectWithScripts(target, html) {
+        target.innerHTML = html;
+        target.querySelectorAll('script').forEach(function (oldScript) {
+          const newScript = document.createElement('script');
+          for (const attr of oldScript.attributes) newScript.setAttribute(attr.name, attr.value);
+          newScript.textContent = oldScript.textContent;
+          oldScript.parentNode.replaceChild(newScript, oldScript);
         });
       }
 
-      function renderYear(year) {
-        gridEl.innerHTML = '';
-        monthsEl.innerHTML = '';
-        hideTip();
-
-        const cells = chartData.same_day_heatmap.data[String(year)] || {};
-
-        const startOfYear = new Date(year, 0, 1);
-        const startOffset = startOfYear.getDay();
-        const daysInYear = Math.round((new Date(year + 1, 0, 1) - startOfYear) / 86400000);
-        const weekCount = Math.floor((startOffset + daysInYear - 1) / 7) + 1;
-
-        // daysColumnWidth/tableGap -- see the viewing heatmap's own comment on
-        // these same two constants in dashboard.html.
-        const gap = 3;
-        const daysColumnWidth = 24;
-        const tableGap = 4;
-        const availableWidth = wrapEl.clientWidth - daysColumnWidth - tableGap;
-        const rawSize = (availableWidth - (weekCount - 1) * gap) / weekCount;
-        const cellSize = Math.max(11, Math.floor(rawSize));
-        const columns = 'repeat(' + weekCount + ', ' + cellSize + 'px)';
-        gridEl.style.gridTemplateColumns = columns;
-        gridEl.style.gridTemplateRows = 'repeat(7, ' + cellSize + 'px)';
-        monthsEl.style.gridTemplateColumns = columns;
-        renderDayLabels(cellSize);
-
-        let dayIndex = startOffset;
-        let lastMonth = -1;
-
-        for (
-          let d = new Date(year, 0, 1);
-          d.getFullYear() === year;
-          d.setDate(d.getDate() + 1), dayIndex += 1
-        ) {
-          const row = d.getDay();
-          const col = Math.floor(dayIndex / 7);
-
-          if (d.getMonth() !== lastMonth) {
-            lastMonth = d.getMonth();
-            const label = document.createElement('div');
-            label.className = 'heatmap-month-label';
-            label.textContent = monthNames[lastMonth];
-            label.style.gridColumn = String(col + 1);
-            monthsEl.appendChild(label);
-          }
-
-          const iso = isoDate(d);
-          const entry = cells[iso];
-          const state = entry ? entry.state : 0;
-          const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-          const cell = document.createElement('div');
-          cell.className = 'heatmap-cell';
-          cell.dataset.state = String(state);
-          cell.style.gridRow = String(row + 1);
-          cell.style.gridColumn = String(col + 1);
-
-          cell.tabIndex = 0;
-          cell.addEventListener('mouseenter', function () { showTip(cell, dateLabel); });
-          cell.addEventListener('mouseleave', hideTip);
-          cell.addEventListener('focus', function () { showTip(cell, dateLabel); });
-          cell.addEventListener('blur', hideTip);
-
-          if (entry) {
-            const filmCount = entry.films_a.length + entry.films_b.length;
-            cell.setAttribute(
-              'aria-label',
-              filmCount + ' shared film' + (filmCount === 1 ? '' : 's') + ' — ' + dateLabel + ' — press Enter to view',
-            );
-            cell.addEventListener('click', function () { openDay(cell, dateLabel, entry); });
-            cell.addEventListener('keydown', function (e) {
-              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDay(cell, dateLabel, entry); }
-            });
-          } else {
-            cell.setAttribute('aria-label', 'No shared log — ' + dateLabel);
-          }
-          gridEl.appendChild(cell);
-        }
-      }
-
-      renderYear(chartData.same_day_heatmap.default_year);
-
-      document.querySelectorAll('[data-chart-toggle="sameDayHeatmapYear"] .toggle-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          document.querySelectorAll('[data-chart-toggle="sameDayHeatmapYear"] .toggle-btn').forEach(function (b) { b.classList.remove('active'); });
-          btn.classList.add('active');
-          renderYear(Number(btn.dataset.year));
+      fetch('{{ content_url }}')
+        .then(function (response) {
+          if (!response.ok) throw new Error('bad response');
+          return response.text();
+        })
+        .then(function (html) {
+          injectWithScripts(container, html);
+          if (loadingBar) loadingBar.remove();
+        })
+        .catch(function () {
+          container.innerHTML = (
+            '<div class="card muted">Something went wrong loading this comparison. '
+            + '<a href="javascript:location.reload()">Try refreshing</a>.</div>'
+          );
+          if (loadingBar) loadingBar.remove();
         });
-      });
-
-      modalClose.addEventListener('click', closeModal);
-      modalBackdrop.addEventListener('click', function (e) { if (e.target === modalBackdrop) closeModal(); });
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && !modalBackdrop.hidden) closeModal();
-      });
-    })();
-
-    // Person filmography modal -- click a director/actor's name (.person-trigger,
-    // wired up in Favorite Directors/Actors' Side-by-side tables) to fetch and show
-    // which of their films that session has watched. Mirrors Director's Cut's own
-    // copy of this feature (dashboard.html) almost exactly -- the one real
-    // difference is the URL needs a session_id too, not just a tmdb_id, since this
-    // page has two sessions and each trigger belongs to a specific one (data-session-id,
-    // set per table in the template) rather than a single page-wide import_session.
-    (function () {
-      const backdrop = document.getElementById('personModalBackdrop');
-      const titleEl = document.getElementById('personModalTitle');
-      const bodyEl = document.getElementById('personModalBody');
-      const closeBtn = document.getElementById('personModalClose');
-      // Sentinel session_id/tmdb_id swapped for the real ones at click time -- keeps
-      // this script decoupled from the URL's literal path shape rather than
-      // hardcoding "/dashboard/.../person/<id>/" directly.
-      const urlTemplate = "{% url 'stats:person_filmography' session_id='00000000-0000-0000-0000-000000000000' tmdb_id=999999999 %}";
-      let lastTrigger = null;
-
-      function escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-      }
-
-      function openModal() {
-        backdrop.hidden = false;
-        document.body.style.overflow = 'hidden';
-      }
-
-      function closeModal() {
-        backdrop.hidden = true;
-        document.body.style.overflow = '';
-        if (lastTrigger) lastTrigger.focus();
-      }
-
-      function renderFilms(data) {
-        if (!data.films.length) {
-          bodyEl.innerHTML = '<p class="modal-empty">No watched films from this session yet.</p>';
-          return;
-        }
-        const cards = data.films.map(function (film) {
-          const yearText = film.year ? ' (' + film.year + ')' : '';
-          const tooltip = escapeHtml(film.title + yearText);
-          const poster = film.poster_url
-            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
-            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
-          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
-          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
-        }).join('');
-        bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
-      }
-
-      // Delegated to the whole card, not just the .person-trigger button -- matches
-      // the hover affordance on .fav-card:has(.person-trigger) in base.css, and
-      // means a click anywhere on the poster/placeholder/name (or a keyboard
-      // activation of the button itself, which still bubbles here) all run through
-      // this one listener rather than needing separate handlers.
-      document.querySelectorAll('.fav-card').forEach(function (card) {
-        const trigger = card.querySelector('.person-trigger');
-        if (!trigger) return;
-        card.addEventListener('click', function () {
-          lastTrigger = trigger;
-          titleEl.textContent = trigger.textContent;
-          bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
-          openModal();
-          const url = urlTemplate
-            .replace('00000000-0000-0000-0000-000000000000', trigger.dataset.sessionId)
-            .replace('999999999', trigger.dataset.tmdbId) + '?role=' + trigger.dataset.role;
-          fetch(url)
-            .then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); })
-            .then(renderFilms)
-            .catch(function () {
-              bodyEl.innerHTML = '<p class="modal-error">Couldn’t load this person’s films. Try again.</p>';
-            });
-        });
-      });
-
-      closeBtn.addEventListener('click', closeModal);
-      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && !backdrop.hidden) closeModal();
-      });
-    })();
-
-    // Shared favorites modal -- click a director/actor's name in Favorite
-    // directors/actors' Shared panel (.shared-person-trigger, distinct from
-    // Side-by-side's own .person-trigger so the two don't both bind a handler to
-    // the same card) to fetch BOTH sessions' filmography for that one real person,
-    // side by side. Same 2-column layout as the same-day-logs modal above
-    // (.modal-body--same-day: two .modal-film-grid grids side by side, a 2x2
-    // each) -- reuses that CSS class, not that modal's own DOM/IIFE, matching
-    // this file's own convention of one self-contained IIFE per modal (see the
-    // person-filmography modal just above, which duplicates its own escapeHtml/
-    // openModal/closeModal rather than sharing them). No new endpoint needed --
-    // "both sessions' films from this one person" is just the existing
-    // person_filmography endpoint (session_id + tmdb_id + role) called twice,
-    // once per session, each with a fixed URL template since (unlike Side-by-
-    // side's triggers) a Shared card belongs to both sessions at once rather
-    // than needing a per-trigger data-session-id.
-    (function () {
-      const backdrop = document.getElementById('sharedPersonModalBackdrop');
-      const titleEl = document.getElementById('sharedPersonModalTitle');
-      const bodyEl = document.getElementById('sharedPersonModalBody');
-      const closeBtn = document.getElementById('sharedPersonModalClose');
-      const urlTemplateA = "{% url 'stats:person_filmography' session_id=session_a.id tmdb_id=999999999 %}";
-      const urlTemplateB = "{% url 'stats:person_filmography' session_id=session_b.id tmdb_id=999999999 %}";
-      const labelA = "{{ session_a.display_name|default:'Person A'|escapejs }}";
-      const labelB = "{{ session_b.display_name|default:'Person B'|escapejs }}";
-      let lastTrigger = null;
-
-      function escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-      }
-
-      function openModal() {
-        backdrop.hidden = false;
-        document.body.style.overflow = 'hidden';
-      }
-
-      function closeModal() {
-        backdrop.hidden = true;
-        document.body.style.overflow = '';
-        if (lastTrigger) lastTrigger.focus();
-      }
-
-      // Same shape as the same-day-logs modal's own filmSection -- one side's
-      // heading (a-color/b-color) plus its 2-column poster grid, wrapped in one
-      // div so .modal-body--same-day's own 2-column grid lays the two sides out
-      // side by side instead of interleaving heading/grid across its columns.
-      function filmSection(name, films, colorClass) {
-        const heading = '<h4 class="' + colorClass + '">' + escapeHtml(name) + '</h4>';
-        if (!films.length) {
-          return '<div>' + heading + '<p class="modal-empty">No matching films from this session yet.</p></div>';
-        }
-        const cards = films.map(function (film) {
-          const yearText = film.year ? ' (' + film.year + ')' : '';
-          const tooltip = escapeHtml(film.title + yearText);
-          const poster = film.poster_url
-            ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
-            : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
-          const ratingText = film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '';
-          return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(ratingText) + '</p></div>';
-        }).join('');
-        return '<div>' + heading + '<div class="modal-film-grid">' + cards + '</div></div>';
-      }
-
-      document.querySelectorAll('.fav-card').forEach(function (card) {
-        const trigger = card.querySelector('.shared-person-trigger');
-        if (!trigger) return;
-        card.addEventListener('click', function () {
-          lastTrigger = trigger;
-          titleEl.textContent = trigger.textContent;
-          bodyEl.innerHTML = '<p class="modal-loading">Loading…</p>';
-          openModal();
-          const query = '?role=' + trigger.dataset.role;
-          const urlA = urlTemplateA.replace('999999999', trigger.dataset.tmdbId) + query;
-          const urlB = urlTemplateB.replace('999999999', trigger.dataset.tmdbId) + query;
-          Promise.all([
-            fetch(urlA).then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); }),
-            fetch(urlB).then(function (resp) { if (!resp.ok) throw new Error('Request failed'); return resp.json(); }),
-          ])
-            .then(function (results) {
-              bodyEl.innerHTML =
-                filmSection(labelA, results[0].films, 'a-color') + filmSection(labelB, results[1].films, 'b-color');
-            })
-            .catch(function () {
-              bodyEl.innerHTML = '<p class="modal-error">Couldn’t load these films. Try again.</p>';
-            });
-        });
-      });
-
-      closeBtn.addEventListener('click', closeModal);
-      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && !backdrop.hidden) closeModal();
-      });
-    })();
-
-    // Tap-to-show poster tooltips -- touch has no hover, so every poster's title
-    // attribute (already there for the desktop hover tooltip) is otherwise
-    // unreachable on a phone. Only for genuinely decorative posters (no click
-    // handler of their own): .fav-card:has(.person-trigger) cards (and, same
-    // reasoning, :has(.shared-person-trigger) ones) already do something real on
-    // tap (open a filmography modal, matches the hover affordance those get in
-    // base.css) and would just fight a tooltip for the same tap. hover:none, not
-    // a width check -- this is about input capability
-    // (no cursor to hover with), not screen size, and matches how a touch-capable
-    // desktop/tablet should behave the same as a phone here.
-    // Delegated to one document-level listener rather than wiring each poster --
-    // both modals inject their own poster grids after page load (fetch/innerHTML),
-    // so a per-element listener would miss those; delegation covers them for free.
-    (function () {
-      if (!window.matchMedia('(hover: none)').matches) return;
-
-      const tipEl = document.createElement('div');
-      tipEl.className = 'poster-tip';
-      tipEl.hidden = true;
-      document.body.appendChild(tipEl);
-      let activeTarget = null;
-
-      function hideTip() {
-        tipEl.hidden = true;
-        activeTarget = null;
-      }
-
-      // Clamped against the poster's own card/modal panel, not window.innerWidth
-      // -- same reasoning as the same-day heatmap's own showTip fix just above:
-      // a card sits inset from the page edge, so clamping only to the viewport
-      // can still let the tip hang off the card's own visible edge.
-      function showTip(el, text) {
-        tipEl.textContent = text;
-        tipEl.hidden = false;
-        activeTarget = el;
-        const margin = 8;
-        const bounds = (el.closest('.modal-panel') || el.closest('.card') || document.body).getBoundingClientRect();
-        const elRect = el.getBoundingClientRect();
-        let left = elRect.left;
-        const minLeft = bounds.left + margin;
-        const maxLeft = bounds.right - margin - tipEl.offsetWidth;
-        if (left > maxLeft) left = maxLeft;
-        if (left < minLeft) left = minLeft;
-        let top = elRect.top - tipEl.offsetHeight - 6;
-        if (top < margin) top = elRect.bottom + 6;
-        tipEl.style.left = left + 'px';
-        tipEl.style.top = top + 'px';
-      }
-
-      document.addEventListener('click', function (e) {
-        const poster = e.target.closest('.fav-card img, .fav-card .fav-placeholder');
-        if (poster && !poster.closest('.fav-card:has(.person-trigger), .fav-card:has(.shared-person-trigger)')) {
-          const text = poster.getAttribute('title');
-          if (!text) return;
-          if (activeTarget === poster) { hideTip(); return; }
-          showTip(poster, text);
-          return;
-        }
-        hideTip();
-      });
-      window.addEventListener('scroll', hideTip, { passive: true, capture: true });
     })();
   </script>
-</div>
 {% endblock %}

@@ -45,7 +45,7 @@
         <h3>Director's Cut</h3>
         <p>Take a deep dive into your movie watching history, with detailed insights and analytics.</p>
       </a>
-      <a class="choice-card" href="{% url 'imports:compare_join' %}">
+      <a class="choice-card" href="{% url 'imports:compare_join' %}" data-warm-nav>
         <h3>Double Feature</h3>
         <p>Compare your watch history with a friend and see how similar, or different, your tastes are.</p>
         {% if not user.is_authenticated %}<p class="muted" style="font-size:0.85rem;">Requires a free account</p>{% endif %}

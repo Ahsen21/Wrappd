@@ -25,11 +25,11 @@
       </button>
       <div class="nav-menu-dropdown" id="nav-menu-dropdown" hidden>
         <a href="{% url 'imports:upload' %}" data-warm-nav>Director's Cut</a>
-        <a href="{% url 'imports:compare_join' %}">Double Feature</a>
+        <a href="{% url 'imports:compare_join' %}" data-warm-nav>Double Feature</a>
       </div>
     </div>
     <a class="nav-primary-link" href="{% url 'imports:upload' %}" data-warm-nav>Director's Cut</a>
-    <a class="nav-primary-link" href="{% url 'imports:compare_join' %}">Double Feature</a>
+    <a class="nav-primary-link" href="{% url 'imports:compare_join' %}" data-warm-nav>Double Feature</a>
     <span class="nav-spacer"></span>
     {% if user.is_authenticated %}
       <a href="{% url 'accounts:account' %}" class="nav-account-link">

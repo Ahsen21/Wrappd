@@ -411,12 +411,68 @@ class DashboardCachingTests(TestCase):
 
 
 class CompareViewTests(TestCase):
-    def test_shorts_exclude_param_is_read(self):
+    """stats:compare -- the shell route. Renders instantly without computing any
+    real comparison (see _render_compare_shell's own comment); it only resolves
+    both sessions and builds content_url, the URL its own JS fetches to get the
+    real page. CompareContentViewTests below covers the actual comparison."""
+
+    def test_works_for_two_guest_sessions(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
+
+        response = self.client.get(
+            reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_content_url_points_at_this_pairs_content_endpoint(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
+
+        response = self.client.get(
+            reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id})
+        )
+
+        self.assertEqual(
+            response.context['content_url'],
+            reverse('stats:compare_content', kwargs={'session_a': session_a.id, 'session_b': session_b.id}),
+        )
+
+    def test_shorts_exclude_param_is_carried_into_the_content_url(self):
         session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
         session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
 
         response = self.client.get(
             reverse('stats:compare', kwargs={'session_a': session_a.id, 'session_b': session_b.id}),
+            {'shorts': 'exclude'},
+        )
+
+        self.assertIn('shorts=exclude', response.context['content_url'])
+
+
+class CompareContentViewTests(TestCase):
+    """stats:compare_content is what the compare shell's own JS fetches and
+    injects once it resolves -- this is where the real comparison and
+    exclude_shorts are actually computed (the shell above never touches
+    either)."""
+
+    def test_works_for_two_guest_sessions(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
+
+        response = self.client.get(
+            reverse('stats:compare_content', kwargs={'session_a': session_a.id, 'session_b': session_b.id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_shorts_exclude_param_is_read(self):
+        session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
+        session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
+
+        response = self.client.get(
+            reverse('stats:compare_content', kwargs={'session_a': session_a.id, 'session_b': session_b.id}),
             {'shorts': 'exclude'},
         )
 
