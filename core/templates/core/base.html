@@ -24,11 +24,11 @@
         </svg>
       </button>
       <div class="nav-menu-dropdown" id="nav-menu-dropdown" hidden>
-        <a href="{% url 'imports:upload' %}">Director's Cut</a>
+        <a href="{% url 'imports:upload' %}" data-warm-nav>Director's Cut</a>
         <a href="{% url 'imports:compare_join' %}">Double Feature</a>
       </div>
     </div>
-    <a class="nav-primary-link" href="{% url 'imports:upload' %}">Director's Cut</a>
+    <a class="nav-primary-link" href="{% url 'imports:upload' %}" data-warm-nav>Director's Cut</a>
     <a class="nav-primary-link" href="{% url 'imports:compare_join' %}">Double Feature</a>
     <span class="nav-spacer"></span>
     {% if user.is_authenticated %}
@@ -44,6 +44,10 @@
       <a href="{% url 'accounts:signup' %}">Sign up</a>
     {% endif %}
   </nav>
+  <div class="page-transition-overlay" id="page-transition-overlay" hidden>
+    <div class="page-transition-spinner"></div>
+    <p>Loading…</p>
+  </div>
   <script>
     // The mobile-only dropdown attached to the brand (see .nav-menu-toggle/
     // .nav-primary-link in base.css) -- Director's Cut/Double Feature are hidden as
@@ -108,6 +112,31 @@
         tip.addEventListener('focus', reposition);
       });
     });
+
+    // Plain <a href> links into Director's Cut (data-warm-nav) can land on a cold
+    // Render instance -- there's no response at all until it wakes up, so the
+    // browser just sits on whatever page you clicked from with zero feedback in
+    // the meantime. Intercepting the click to show this overlay immediately, then
+    // firing the same request in the background before really navigating, moves
+    // that wait onto a page that can show something instead of a blank tab.
+    (function () {
+      const overlay = document.getElementById('page-transition-overlay');
+      if (!overlay) return;
+      document.addEventListener('click', function (event) {
+        const link = event.target.closest('[data-warm-nav]');
+        if (!link) return;
+        event.preventDefault();
+        overlay.hidden = false;
+        const controller = new AbortController();
+        const timeout = setTimeout(function () { controller.abort(); }, 45000);
+        fetch(link.href, { credentials: 'same-origin', signal: controller.signal })
+          .catch(function () {})
+          .finally(function () {
+            clearTimeout(timeout);
+            window.location.href = link.href;
+          });
+      });
+    })();
   </script>
   <div class="container">
     {% if messages %}

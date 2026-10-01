@@ -1,6 +1,7 @@
 from django.core.cache import cache
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 
 from imports.models import ImportSession
 from tmdb.models import Person
@@ -21,7 +22,7 @@ def _dashboard_cache_key(import_session, exclude_shorts, year):
     return f'dashboard_context:{import_session.id}:{exclude_shorts}:{year}'
 
 
-def _render_dashboard(request, import_session):
+def _dashboard_query_params(request):
     # ?shorts=exclude opts OUT of short films (under 60 min) across every stat on
     # the page -- default stays "include" so a plain dashboard link/share never
     # silently shows different numbers. Server-computed, so the template's toggle
@@ -35,6 +36,47 @@ def _render_dashboard(request, import_session):
         year = int(year_param) if year_param else None
     except ValueError:
         year = None
+    return exclude_shorts, year
+
+
+def _dashboard_query_string(exclude_shorts, year):
+    params = []
+    if exclude_shorts:
+        params.append('shorts=exclude')
+    if year is not None:
+        params.append(f'year={year}')
+    return ('?' + '&'.join(params)) if params else ''
+
+
+def _render_dashboard_shell(request, import_session):
+    # The real content (dozens of queries, real wall-clock cost on Render's
+    # free-tier CPU/cold start) is fetched by the shell's own JS after this
+    # renders, not computed here -- this view must stay cheap so a cold instance
+    # or an uncached dashboard shows a loading transition instead of hanging on
+    # a blank tab. See dashboard_content below and stats/dashboard.html.
+    exclude_shorts, year = _dashboard_query_params(request)
+    content_url = reverse('stats:dashboard_content', kwargs={'session_id': import_session.id})
+    content_url += _dashboard_query_string(exclude_shorts, year)
+    return render(request, 'stats/dashboard.html', {'import_session': import_session, 'content_url': content_url})
+
+
+def dashboard(request, session_id):
+    import_session = get_object_or_404(ImportSession, id=session_id)
+    return _render_dashboard_shell(request, import_session)
+
+
+def dashboard_by_username(request, username):
+    import_session = ImportSession.latest_for_owner_username(username)
+    if import_session is None:
+        raise Http404("This account doesn't have a finished upload yet.")
+    return _render_dashboard_shell(request, import_session)
+
+
+def dashboard_content(request, session_id):
+    # select_related('owner') -- share_url reads import_session.owner.username for
+    # every account-owned session, not just when explicitly asked for.
+    import_session = get_object_or_404(ImportSession.objects.select_related('owner'), id=session_id)
+    exclude_shorts, year = _dashboard_query_params(request)
     cache_key = _dashboard_cache_key(import_session, exclude_shorts, year)
     context = cache.get(cache_key)
     if context is None:
@@ -44,31 +86,14 @@ def _render_dashboard(request, import_session):
     # reached by has an ownership check, so anyone holding either link can already
     # open it. canonical_dashboard_path prefers the permanent /dashboard/<username>/
     # link when there is one. Carries the shorts/year toggles' current state along
-    # so sharing a filtered view doesn't silently reset to the default.
-    share_url = request.build_absolute_uri(import_session.canonical_dashboard_path())
-    params = []
-    if exclude_shorts:
-        params.append('shorts=exclude')
-    if year is not None:
-        params.append(f'year={year}')
-    if params:
-        share_url += '?' + '&'.join(params)
-    context['share_url'] = share_url
-    return render(request, 'stats/dashboard.html', context)
-
-
-def dashboard(request, session_id):
-    # select_related('owner') -- _share_url reads import_session.owner.username for
-    # every account-owned session, not just when explicitly asked for.
-    import_session = get_object_or_404(ImportSession.objects.select_related('owner'), id=session_id)
-    return _render_dashboard(request, import_session)
-
-
-def dashboard_by_username(request, username):
-    import_session = ImportSession.latest_for_owner_username(username)
-    if import_session is None:
-        raise Http404("This account doesn't have a finished upload yet.")
-    return _render_dashboard(request, import_session)
+    # so sharing a filtered view doesn't silently reset to the default. dashboard_path
+    # (the same canonical path, relative) is what the in-page shorts/year toggle
+    # links are built from -- this view's own request.path is the /content/ endpoint,
+    # not the page the browser is actually showing.
+    dashboard_path = import_session.canonical_dashboard_path()
+    share_url = request.build_absolute_uri(dashboard_path) + _dashboard_query_string(exclude_shorts, year)
+    context = {**context, 'share_url': share_url, 'dashboard_path': dashboard_path}
+    return render(request, 'stats/_dashboard_content.html', context)
 
 
 def person_filmography(request, session_id, tmdb_id):

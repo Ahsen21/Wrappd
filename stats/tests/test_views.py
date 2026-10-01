@@ -162,12 +162,13 @@ class InsightFilmsViewTests(TestCase):
 
 
 class DashboardViewTests(TestCase):
-    """Covers both dashboard routes -- the original UUID one (stats:dashboard,
+    """Covers both dashboard SHELL routes -- the original UUID one (stats:dashboard,
     always works, guest uploads included) and the newer username one
-    (stats:dashboard_by_username, account-owned uploads only) -- and the share_url
-    each hands the template, which is meant to always be the "nicest" link for
-    that particular session (username-based when there's an account to build one
-    from, the UUID link otherwise)."""
+    (stats:dashboard_by_username, account-owned uploads only). The shell renders
+    instantly without computing any real stats (see _render_dashboard_shell's own
+    comment) -- it only resolves the session and builds content_url, the URL its
+    own JS fetches to get the real page. DashboardContentViewTests below covers
+    the actual stats payload and share_url, both only computed there now."""
 
     def test_uuid_route_works_for_a_guest_session(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
@@ -176,22 +177,13 @@ class DashboardViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-    def test_uuid_route_share_url_stays_the_uuid_link_for_a_guest_session(self):
+    def test_uuid_route_content_url_points_at_this_sessions_content_endpoint(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
         response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}))
 
-        self.assertIn(str(session.id), response.context['share_url'])
-
-    def test_uuid_route_share_url_becomes_the_username_link_for_an_owned_session(self):
-        user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
-        session = ImportSession.objects.create(owner=user, status=ImportSession.Status.READY)
-
-        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}))
-
-        self.assertIn(
-            reverse('stats:dashboard_by_username', kwargs={'username': 'alex'}),
-            response.context['share_url'],
+        self.assertEqual(
+            response.context['content_url'], reverse('stats:dashboard_content', kwargs={'session_id': session.id})
         )
 
     def test_username_route_shows_the_accounts_most_recent_ready_session(self):
@@ -217,10 +209,87 @@ class DashboardViewTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_shorts_exclude_param_is_carried_into_the_content_url(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(
+            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'exclude'}
+        )
+
+        self.assertIn('shorts=exclude', response.context['content_url'])
+
+    def test_an_unrecognized_shorts_value_is_not_carried_into_the_content_url(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(
+            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'nonsense'}
+        )
+
+        self.assertNotIn('shorts=', response.context['content_url'])
+
+    def test_year_param_is_carried_into_the_content_url(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}), {'year': '2024'})
+
+        self.assertIn('year=2024', response.context['content_url'])
+
+    def test_a_non_integer_year_value_falls_back_to_all_time_rather_than_erroring(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}), {'year': 'nonsense'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('year=', response.context['content_url'])
+
+    def test_shorts_and_year_both_carry_into_the_content_url_together(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(
+            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'exclude', 'year': '2024'}
+        )
+
+        self.assertIn('shorts=exclude', response.context['content_url'])
+        self.assertIn('year=2024', response.context['content_url'])
+
+
+class DashboardContentViewTests(TestCase):
+    """stats:dashboard_content is what the dashboard shell's own JS fetches and
+    injects once it resolves -- this is where the real stats payload,
+    exclude_shorts/year, and share_url are actually computed (the shell above
+    never touches any of them). share_url is meant to always be the "nicest"
+    link for the session (username-based when there's an account to build one
+    from, the UUID link otherwise)."""
+
+    def test_works_for_a_guest_session(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session.id}))
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_share_url_stays_the_uuid_link_for_a_guest_session(self):
+        session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
+
+        response = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session.id}))
+
+        self.assertIn(str(session.id), response.context['share_url'])
+
+    def test_share_url_becomes_the_username_link_for_an_owned_session(self):
+        user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+        session = ImportSession.objects.create(owner=user, status=ImportSession.Status.READY)
+
+        response = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session.id}))
+
+        self.assertIn(
+            reverse('stats:dashboard_by_username', kwargs={'username': 'alex'}),
+            response.context['share_url'],
+        )
+
     def test_shorts_param_defaults_to_included(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
-        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}))
+        response = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session.id}))
 
         self.assertFalse(response.context['exclude_shorts'])
         self.assertNotIn('shorts=exclude', response.context['share_url'])
@@ -229,7 +298,7 @@ class DashboardViewTests(TestCase):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
         response = self.client.get(
-            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'exclude'}
+            reverse('stats:dashboard_content', kwargs={'session_id': session.id}), {'shorts': 'exclude'}
         )
 
         self.assertTrue(response.context['exclude_shorts'])
@@ -239,7 +308,7 @@ class DashboardViewTests(TestCase):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
         response = self.client.get(
-            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'nonsense'}
+            reverse('stats:dashboard_content', kwargs={'session_id': session.id}), {'shorts': 'nonsense'}
         )
 
         self.assertFalse(response.context['exclude_shorts'])
@@ -247,7 +316,7 @@ class DashboardViewTests(TestCase):
     def test_year_param_defaults_to_all_time(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
-        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}))
+        response = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session.id}))
 
         self.assertIsNone(response.context['year'])
         self.assertNotIn('year=', response.context['share_url'])
@@ -255,7 +324,9 @@ class DashboardViewTests(TestCase):
     def test_year_param_is_read_and_carried_into_the_share_url(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
-        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}), {'year': '2024'})
+        response = self.client.get(
+            reverse('stats:dashboard_content', kwargs={'session_id': session.id}), {'year': '2024'}
+        )
 
         self.assertEqual(response.context['year'], 2024)
         self.assertIn('year=2024', response.context['share_url'])
@@ -263,7 +334,9 @@ class DashboardViewTests(TestCase):
     def test_a_non_integer_year_value_falls_back_to_all_time_rather_than_erroring(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
-        response = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session.id}), {'year': 'nonsense'})
+        response = self.client.get(
+            reverse('stats:dashboard_content', kwargs={'session_id': session.id}), {'year': 'nonsense'}
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context['year'])
@@ -272,7 +345,8 @@ class DashboardViewTests(TestCase):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
 
         response = self.client.get(
-            reverse('stats:dashboard', kwargs={'session_id': session.id}), {'shorts': 'exclude', 'year': '2024'}
+            reverse('stats:dashboard_content', kwargs={'session_id': session.id}),
+            {'shorts': 'exclude', 'year': '2024'},
         )
 
         self.assertIn('shorts=exclude', response.context['share_url'])
@@ -282,8 +356,10 @@ class DashboardViewTests(TestCase):
 class DashboardCachingTests(TestCase):
     """build_dashboard_context is expensive -- see stats/views.py's own comment on
     DASHBOARD_CONTEXT_CACHE_TTL for why a READY session's result is safe to cache.
-    Clears the cache before/after each test since Django's LocMemCache is a single
-    process-wide store the test DB's rollback-per-test isolation doesn't touch."""
+    Exercised via stats:dashboard_content, the endpoint that actually calls it (the
+    shell route never does). Clears the cache before/after each test since
+    Django's LocMemCache is a single process-wide store the test DB's
+    rollback-per-test isolation doesn't touch."""
 
     def setUp(self):
         cache.clear()
@@ -293,7 +369,7 @@ class DashboardCachingTests(TestCase):
 
     def test_second_request_for_the_same_session_does_not_recompute(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
-        url = reverse('stats:dashboard', kwargs={'session_id': session.id})
+        url = reverse('stats:dashboard_content', kwargs={'session_id': session.id})
 
         with mock.patch('stats.views.build_dashboard_context', wraps=build_dashboard_context) as mocked:
             self.client.get(url)
@@ -302,7 +378,7 @@ class DashboardCachingTests(TestCase):
 
     def test_different_shorts_or_year_params_are_cached_separately(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
-        url = reverse('stats:dashboard', kwargs={'session_id': session.id})
+        url = reverse('stats:dashboard_content', kwargs={'session_id': session.id})
 
         with mock.patch('stats.views.build_dashboard_context', wraps=build_dashboard_context) as mocked:
             self.client.get(url)
@@ -314,8 +390,8 @@ class DashboardCachingTests(TestCase):
         session_a = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
         session_b = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Sam')
 
-        response_a = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session_a.id}))
-        response_b = self.client.get(reverse('stats:dashboard', kwargs={'session_id': session_b.id}))
+        response_a = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session_a.id}))
+        response_b = self.client.get(reverse('stats:dashboard_content', kwargs={'session_id': session_b.id}))
 
         self.assertEqual(response_a.context['import_session'], session_a)
         self.assertEqual(response_b.context['import_session'], session_b)
@@ -326,7 +402,7 @@ class DashboardCachingTests(TestCase):
         # or a cache hit that got mutated in place, could leak one request's
         # share_url into another's response.
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Guest')
-        url = reverse('stats:dashboard', kwargs={'session_id': session.id})
+        url = reverse('stats:dashboard_content', kwargs={'session_id': session.id})
 
         self.client.get(url)  # populates the cache
         response = self.client.get(url, {'year': '2024'})  # cache miss (different key) -- fresh share_url
