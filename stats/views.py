@@ -3,7 +3,7 @@ from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 
-from imports.models import ImportSession
+from imports.models import ImportSession, canonical_compare_path
 from tmdb.models import Person
 
 from .services.compare import build_compare_context
@@ -132,17 +132,29 @@ def insight_films(request, session_id):
     return JsonResponse(data)
 
 
-def _render_compare(request, session_a_obj, session_b_obj):
-    # See _render_dashboard's own comment on this same param.
+def _compare_query_string(exclude_shorts):
+    return '?shorts=exclude' if exclude_shorts else ''
+
+
+def _render_compare_shell(request, session_a_obj, session_b_obj):
+    # build_compare_context is just as expensive as the dashboard's own (two full
+    # sessions' worth of queries) -- see _render_dashboard_shell's own comment.
+    # This stays cheap and lets the shell's own JS fetch the real content async.
+    # See compare_content below and stats/compare.html.
     exclude_shorts = request.GET.get('shorts') == 'exclude'
-    context = build_compare_context(session_a_obj, session_b_obj, exclude_shorts)
-    return render(request, 'stats/compare.html', context)
+    content_url = reverse(
+        'stats:compare_content', kwargs={'session_a': session_a_obj.id, 'session_b': session_b_obj.id}
+    )
+    content_url += _compare_query_string(exclude_shorts)
+    return render(request, 'stats/compare.html', {
+        'session_a': session_a_obj, 'session_b': session_b_obj, 'content_url': content_url,
+    })
 
 
 def compare(request, session_a, session_b):
-    session_a_obj = get_object_or_404(ImportSession.objects.select_related('owner'), id=session_a)
-    session_b_obj = get_object_or_404(ImportSession.objects.select_related('owner'), id=session_b)
-    return _render_compare(request, session_a_obj, session_b_obj)
+    session_a_obj = get_object_or_404(ImportSession, id=session_a)
+    session_b_obj = get_object_or_404(ImportSession, id=session_b)
+    return _render_compare_shell(request, session_a_obj, session_b_obj)
 
 
 def compare_by_usernames(request, username_a, username_b):
@@ -150,4 +162,18 @@ def compare_by_usernames(request, username_a, username_b):
     session_b_obj = ImportSession.latest_for_owner_username(username_b)
     if session_a_obj is None or session_b_obj is None:
         raise Http404("One of these accounts doesn't have a finished upload yet.")
-    return _render_compare(request, session_a_obj, session_b_obj)
+    return _render_compare_shell(request, session_a_obj, session_b_obj)
+
+
+def compare_content(request, session_a, session_b):
+    # select_related('owner') -- canonical_compare_path reads each session's
+    # owner.username when both have one.
+    session_a_obj = get_object_or_404(ImportSession.objects.select_related('owner'), id=session_a)
+    session_b_obj = get_object_or_404(ImportSession.objects.select_related('owner'), id=session_b)
+    exclude_shorts = request.GET.get('shorts') == 'exclude'
+    context = build_compare_context(session_a_obj, session_b_obj, exclude_shorts)
+    # compare_path is what the in-page shorts toggle link is built from -- this
+    # view's own request.path is the /content/ endpoint, not the page the browser
+    # is actually showing. See _render_dashboard_shell's dashboard_path comment.
+    context['compare_path'] = canonical_compare_path(session_a_obj, session_b_obj)
+    return render(request, 'stats/_compare_content.html', context)
