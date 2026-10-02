@@ -352,7 +352,7 @@
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Favorite People</span></h2>
   <p class="muted">The directors and actors behind your favorite films{% if year %} in {{ year }}{% endif %}.</p>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Directors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
@@ -364,7 +364,7 @@
       {% if top_directors %}
         <div class="favs favs--six favs--headshots">
           {% for row in top_directors %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.directors__name }}</button>
               <p class="muted">{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %} </p>
@@ -380,7 +380,7 @@
       {% if favorite_people.favorite_directors %}
         <div class="favs favs--six favs--headshots">
           {% for row in favorite_people.favorite_directors %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
               <p class="muted">{{ row.avg|floatformat:1 }} ★</p>
@@ -397,7 +397,7 @@
       {% if favorite_people.favorite_directors_by_true_score %}
         <div class="favs favs--six favs--headshots">
           {% for row in favorite_people.favorite_directors_by_true_score %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
               <p class="muted">{{ row.true_score|floatformat:2 }} ★</p>
@@ -409,9 +409,10 @@
         <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3><span class="th-with-tip">Actors <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
@@ -423,7 +424,7 @@
       {% if top_actors %}
         <div class="favs favs--six favs--headshots">
           {% for row in top_actors %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
               <p class="muted">{% if row.avg_rating %}{{ row.avg_rating|floatformat:1 }} ★{% else %}—{% endif %}</p>
@@ -439,7 +440,7 @@
       {% if favorite_people.favorite_actors %}
         <div class="favs favs--six favs--headshots">
           {% for row in favorite_people.favorite_actors %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
               <p class="muted">{{ row.avg|floatformat:1 }} ★</p>
@@ -456,7 +457,7 @@
       {% if favorite_people.favorite_actors_by_true_score %}
         <div class="favs favs--six favs--headshots">
           {% for row in favorite_people.favorite_actors_by_true_score %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor">{{ row.person__name }}</button>
               <p class="muted">{{ row.true_score|floatformat:2 }} ★</p>
@@ -468,6 +469,7 @@
         <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
   </div>
 
@@ -506,12 +508,12 @@
     after Milestones -- both are "which films stood out" cards, before Viewing
     calendar/Most used tags' "how you watch" ones.
     {% endcomment %}
-    <div class="card">
+    <div class="card" data-view-more>
       <h3>Most watched films</h3>
       {% if rewatch.most_rewatched_films %}
         <div class="favs favs--six">
           {% for film in rewatch.most_rewatched_films %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > rewatch_grid_cap %} fav-card--extra{% endif %}">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
               <p class="muted">{{ film.watch_count }}×</p>
             </div>
@@ -520,6 +522,7 @@
       {% else %}
         <p class="empty-state">No rewatches yet</p>
       {% endif %}
+      <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
     </div>
   {% endif %}
 
@@ -590,12 +593,12 @@
   <div class="jump-target" id="rewatches">
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Rewatches</span></h2>
   <p class="muted">Your most rewatched films and directors.</p>
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Most rewatched films</h3>
     {% if rewatch.most_rewatched_films %}
       <div class="favs favs--six">
         {% for film in rewatch.most_rewatched_films %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter > rewatch_grid_cap %} fav-card--extra{% endif %}">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             <p class="muted">{{ film.watch_count }}×</p>
           </div>
@@ -604,6 +607,7 @@
     {% else %}
       <p class="empty-state">No rewatches yet</p>
     {% endif %}
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
   <div class="card">
@@ -711,6 +715,24 @@
           });
         });
       });
+    });
+
+    document.querySelectorAll('[data-view-more]').forEach(function (card) {
+      const row = card.querySelector('.view-more-row');
+      const btn = row.querySelector('.view-more-btn');
+      function sync() {
+        const panel = card.querySelector('[data-view-panel]:not([hidden])') || card;
+        row.hidden = !(panel && panel.querySelector('.fav-card--extra'));
+        btn.textContent = card.classList.contains('is-expanded') ? 'View less' : 'View more';
+      }
+      btn.addEventListener('click', function () {
+        card.classList.toggle('is-expanded');
+        sync();
+      });
+      card.querySelectorAll('[data-toggle-group] .toggle-btn').forEach(function (b) {
+        b.addEventListener('click', function () { setTimeout(sync, 0); });
+      });
+      sync();
     });
 
     const chartData = JSON.parse(document.getElementById('chart-data').textContent);

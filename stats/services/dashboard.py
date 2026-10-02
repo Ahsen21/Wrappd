@@ -59,6 +59,9 @@ TOP_N = 10
 # fills evenly instead of leaving a sparse partial last row. (Most rewatched
 # directors is capped separately -- see FAVORITE_PEOPLE_GRID_CAP.)
 REWATCH_GRID_DISPLAY_CAP = 12
+# Most rewatched films' "View more" reveals up to this many -- double the default
+# grid, sent up front (extra rows start hidden) rather than fetched on click.
+REWATCH_FILMS_EXPANDED_CAP = REWATCH_GRID_DISPLAY_CAP * 2
 # Biggest over-rates/under-rates render as a fixed poster grid (see .favs--six in
 # base.css), not a table -- 2 rows of 6 (12) rather than TOP_N's 10.
 TASTE_GRID_DISPLAY_CAP = 12
@@ -69,6 +72,10 @@ TASTE_GRID_DISPLAY_CAP = 12
 # grid's cap is about filling its shape evenly, not about 'top N' ranking"
 # convention, even though it's not TOP_N-derived.
 FAVORITE_PEOPLE_GRID_CAP = 12
+# Favorite Directors/Actors' "View more" button reveals up to this many -- double
+# the default grid, sent to the page up front (the extra rows start hidden) rather
+# than fetched on click.
+FAVORITE_PEOPLE_EXPANDED_CAP = FAVORITE_PEOPLE_GRID_CAP * 2
 # Same "grid's cap is about filling its shape evenly" convention as
 # FAVORITE_PEOPLE_GRID_CAP above -- the "{{ year }} Releases" grid (year view
 # only) is its own constant rather than reusing that one, since they're
@@ -473,7 +480,7 @@ def _top_directors_diary(films) -> tuple:
             'director_tmdb_id': tmdb_ids[name],
         })
     rows.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-    return rows[:FAVORITE_PEOPLE_GRID_CAP], ratings_by_director, profile_paths, tmdb_ids
+    return rows[:FAVORITE_PEOPLE_EXPANDED_CAP], ratings_by_director, profile_paths, tmdb_ids
 
 
 def _top_actors_diary(films) -> tuple:
@@ -515,7 +522,7 @@ def _top_actors_diary(films) -> tuple:
             'actor_tmdb_id': actor_tmdb_ids[name],
         })
     top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-    return top_actors[:FAVORITE_PEOPLE_GRID_CAP], actor_rating_lists, actor_profile_paths, actor_tmdb_ids
+    return top_actors[:FAVORITE_PEOPLE_EXPANDED_CAP], actor_rating_lists, actor_profile_paths, actor_tmdb_ids
 
 
 def _films_by_country_diary(films) -> list:
@@ -838,7 +845,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
             )
             row['profile_url'] = _tmdb_image_url(row.pop('profile_path'), 'w185')
         top_directors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-        top_directors = top_directors[:FAVORITE_PEOPLE_GRID_CAP]
+        top_directors = top_directors[:FAVORITE_PEOPLE_EXPANDED_CAP]
 
         actor_rating_lists, actor_profile_paths, actor_tmdb_ids, actor_watch_counts = _actor_rating_data(
             rated, watched_movies
@@ -854,7 +861,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
                 'profile_url': _tmdb_image_url(actor_profile_paths.get(name, ''), 'w185'),
             })
         top_actors.sort(key=lambda r: (r['count'], _rounded_or_unrated(r['avg_rating'])), reverse=True)
-        top_actors = top_actors[:FAVORITE_PEOPLE_GRID_CAP]
+        top_actors = top_actors[:FAVORITE_PEOPLE_EXPANDED_CAP]
 
         release_year_range = _release_year_range(watched_movies, rated)
         release_year_distribution = _release_year_distribution(watched_movies, release_year_range)
@@ -981,6 +988,8 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         'excluded_tv_titles': excluded_tv_titles,
         'top_genres': top_genres,
         'top_directors': top_directors,
+        'favorite_people_grid_cap': FAVORITE_PEOPLE_GRID_CAP,
+        'rewatch_grid_cap': REWATCH_GRID_DISPLAY_CAP,
         'top_actors': top_actors,
         'taste': taste,
         'release_year_distribution': release_year_distribution,
@@ -2671,7 +2680,7 @@ def _rewatch_leaderboard(diary) -> dict:
         diary.values('title', 'year')
         .annotate(watch_count=Count('id'), poster_path=Min('movie__poster_path'))
         .filter(watch_count__gt=1)
-        .order_by('-watch_count')[:REWATCH_GRID_DISPLAY_CAP]
+        .order_by('-watch_count')[:REWATCH_FILMS_EXPANDED_CAP]
     )
     for row in most_rewatched_films:
         # w342, not w185 -- this renders as a full poster card now (.favs--six), not
@@ -2956,9 +2965,9 @@ def _favorite_people(
             row['avg'], row['count'], TRUE_SCORE_SHRINKAGE_K, overall_avg_rating, row['five_star_count']
         )
     favorite_directors = sorted(favorite_directors_all, key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
-    favorite_directors = favorite_directors[:FAVORITE_PEOPLE_GRID_CAP]
+    favorite_directors = favorite_directors[:FAVORITE_PEOPLE_EXPANDED_CAP]
     favorite_directors_by_true_score = sorted(favorite_directors_all, key=lambda r: r['true_score'], reverse=True)
-    favorite_directors_by_true_score = favorite_directors_by_true_score[:FAVORITE_PEOPLE_GRID_CAP]
+    favorite_directors_by_true_score = favorite_directors_by_true_score[:FAVORITE_PEOPLE_EXPANDED_CAP]
 
     favorite_actors_all = [
         {
@@ -2977,9 +2986,9 @@ def _favorite_people(
             row['avg'], row['count'], TRUE_SCORE_SHRINKAGE_K, overall_avg_rating, row['five_star_count']
         )
     favorite_actors = sorted(favorite_actors_all, key=lambda r: (round(r['avg'], 1), r['count']), reverse=True)
-    favorite_actors = favorite_actors[:FAVORITE_PEOPLE_GRID_CAP]
+    favorite_actors = favorite_actors[:FAVORITE_PEOPLE_EXPANDED_CAP]
     favorite_actors_by_true_score = sorted(favorite_actors_all, key=lambda r: r['true_score'], reverse=True)
-    favorite_actors_by_true_score = favorite_actors_by_true_score[:FAVORITE_PEOPLE_GRID_CAP]
+    favorite_actors_by_true_score = favorite_actors_by_true_score[:FAVORITE_PEOPLE_EXPANDED_CAP]
 
     return {
         'favorite_directors': favorite_directors,
