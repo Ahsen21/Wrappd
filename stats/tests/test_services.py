@@ -880,11 +880,11 @@ class DashboardNewStatsTests(TestCase):
         director_names = {row['movie__directors__name'] for row in rewatch['most_rewatched_directors']}
         self.assertNotIn('Dir Y', director_names)
 
-    def test_rewatch_leaderboard_capped_at_grid_display_cap(self):
-        # Most rewatched films renders as a 2-rows-of-6 poster grid
-        # (REWATCH_GRID_DISPLAY_CAP=12), not TOP_N's 10.
+    def test_rewatch_leaderboard_capped_at_the_expanded_cap(self):
+        # Most rewatched films renders as a 2-rows-of-6 poster grid: 12 shown by
+        # default, up to REWATCH_FILMS_EXPANDED_CAP (24) behind "View more".
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(13):
+        for i in range(25):
             movie = _make_movie(2000 + i, f'Rewatch Film {i}', 2020, 100, 'Drama')
             for _ in range(2):
                 DiaryEntry.objects.create(
@@ -892,7 +892,7 @@ class DashboardNewStatsTests(TestCase):
                     year=movie.release_year, watched_date='2024-01-01', movie=movie,
                 )
         rewatch = build_dashboard_context(session)['rewatch']
-        self.assertEqual(len(rewatch['most_rewatched_films']), 12)
+        self.assertEqual(len(rewatch['most_rewatched_films']), 24)
 
     def test_rewatch_leaderboard_directors_capped_at_favorite_people_grid_cap(self):
         # Most rewatched directors renders as the same 2-rows-of-6 clickable
@@ -1011,20 +1011,21 @@ class DashboardNewStatsTests(TestCase):
         self.assertNotIn('Actor Zed', actor_names)
         self.assertNotIn('Actor Solo', actor_names)
 
-    def test_top_directors_capped_at_favorite_people_grid_cap(self):
-        # Renders as the .favs--six poster grid (FAVORITE_PEOPLE_GRID_CAP=12), not
-        # TOP_N's 10. top_directors has no MIN_COUNT_FOR_FAVORITE_DIRECTOR threshold
-        # (unlike favorite_directors above) -- one watched film each is enough to
-        # qualify for this "Most watched" list.
+    def test_top_directors_capped_at_the_expanded_cap(self):
+        # Renders as the .favs--six poster grid: 12 shown by default, up to
+        # FAVORITE_DIRECTORS_EXPANDED_CAP (24) behind "View more". top_directors has
+        # no MIN_COUNT_FOR_FAVORITE_DIRECTOR threshold (unlike favorite_directors
+        # above) -- one watched film each is enough to qualify for this "Most
+        # watched" list.
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(13):
+        for i in range(25):
             movie = _make_movie(6000 + i, f'Cap Dir Film {i}', 2020, 100, 'Drama', f'Cap Director {i}')
             WatchedEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/capdir{i}', title=movie.title,
                 year=movie.release_year, movie=movie,
             )
         context = build_dashboard_context(session)
-        self.assertEqual(len(context['top_directors']), 12)
+        self.assertEqual(len(context['top_directors']), 24)
 
 
 class FavoritePeopleTieBreakTests(TestCase):

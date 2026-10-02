@@ -1919,3 +1919,21 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   to { transform: rotate(360deg); }
 }
 .page-transition-overlay p { color: var(--muted); font-size: 0.9rem; margin: 0; }
+
+/* "View more" on a card's grid: rows past the default 12 ship in the page marked
+   .fav-card--extra and stay hidden until the card gets .is-expanded. */
+.card:not(.is-expanded) .fav-card--extra { display: none; }
+.view-more-row { display: flex; justify-content: center; margin-top: 1.25rem; }
+.view-more-row[hidden] { display: none; }
+.view-more-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.55rem 1.4rem;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.view-more-btn:hover, .view-more-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
