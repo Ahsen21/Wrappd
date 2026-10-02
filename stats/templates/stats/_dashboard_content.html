@@ -635,12 +635,12 @@
   <div class="jump-target" id="watchlist">
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watchlist</span></h2>
   <p class="muted">Recommended films from your watchlist.</p>
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Watchlist recommendations</h3>
     <p class="muted">Scored against your ratings across genre, director, cast, country, language, decade, and runtime.</p>
     <div class="favs favs--six">
       {% for rec in recommendations %}
-        <div class="fav-card">
+        <div class="fav-card{% if forloop.counter > recommendation_grid_cap %} fav-card--extra{% endif %}">
           {% if rec.movie.poster_url %}
             <img src="{{ rec.movie.poster_url }}" alt="{{ rec.movie.title }}" title="{{ rec.movie.title }} ({{ rec.movie.release_year }})">
           {% else %}
@@ -649,6 +649,7 @@
         </div>
       {% endfor %}
     </div>
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
   </div>
   {% endif %}

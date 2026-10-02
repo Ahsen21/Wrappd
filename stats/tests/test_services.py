@@ -1802,6 +1802,20 @@ class WatchlistRecommendationTests(TestCase):
         recommended_ids = {rec['movie'].tmdb_id for rec in recommendations}
         self.assertNotIn(self.no_signal.tmdb_id, recommended_ids)
 
+    def test_recommendations_capped_at_the_expanded_cap(self):
+        # 12 shown by default, up to RECOMMENDATION_EXPANDED_CAP (24) behind "View
+        # more" -- 25 more matching horror candidates must still stop at 24.
+        for i in range(25):
+            movie = Movie.objects.create(tmdb_id=8000 + i, title=f'Extra Horror {i}', release_year=2018)
+            movie.genres.add(self.horror)
+            WatchlistEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/extrah{i}', title=movie.title,
+                year=movie.release_year, movie=movie,
+            )
+
+        recommendations = build_dashboard_context(self.session)['recommendations']
+        self.assertEqual(len(recommendations), 24)
+
     def test_excludes_already_watched_films_even_if_still_on_watchlist(self):
         recommendations = build_dashboard_context(self.session)['recommendations']
         recommended_ids = {rec['movie'].tmdb_id for rec in recommendations}
@@ -1845,27 +1859,49 @@ class WatchlistRecommendationTests(TestCase):
         self.assertGreater(_rarity_factor(1, 10), _rarity_factor(9, 10))
         self.assertEqual(_rarity_factor(10, 10), 0.0)
 
-    def test_adaptive_weights_favor_axes_with_more_variance(self):
-        from stats.services.dashboard import RECOMMENDATION_WEIGHTS, _adaptive_weights
+    def test_keywords_that_restate_country_language_or_decade_are_ignored(self):
+        from stats.services.dashboard import _film_trait_records
 
-        # Genre deltas vary a lot (strong, differentiated opinions); director deltas
-        # barely vary at all (no real directorial preference) -- adaptive weighting
-        # should lean harder on genre for this person than the fixed weights alone.
-        axis_deltas = {
-            'genre': {'Horror': 0.8, 'Romance': -0.6, 'Comedy': 0.1},
-            'director': {'Director A': 0.01, 'Director B': -0.01, 'Director C': 0.0},
-            'actor': {}, 'country': {}, 'language': {}, 'decade': {}, 'runtime': {},
-        }
-        weights = _adaptive_weights(axis_deltas)
-        self.assertGreater(weights['genre'], RECOMMENDATION_WEIGHTS['genre'])
-        self.assertLess(weights['director'], RECOMMENDATION_WEIGHTS['director'])
-        self.assertAlmostEqual(sum(weights.values()), 1.0, places=6)
+        movie = Movie.objects.create(
+            tmdb_id=9501, title='Keyword Filter Film', release_year=1975, original_language='Japanese',
+        )
+        japan, _ = Country.objects.get_or_create(code='JP', defaults={'name': 'Japan'})
+        movie.countries.add(japan)
+        for index, name in enumerate(['japan', 'Japanese', '1970s', '19th century', 'jidaigeki', 'heist']):
+            keyword, _ = Keyword.objects.get_or_create(tmdb_id=9600 + index, defaults={'name': name})
+            movie.keywords.add(keyword)
+        RatingEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/kwfilter', title=movie.title,
+            year=1975, rating=Decimal('4.0'), movie=movie,
+        )
 
-    def test_adaptive_weights_fall_back_to_fixed_when_nothing_varies(self):
-        from stats.services.dashboard import RECOMMENDATION_WEIGHTS, _adaptive_weights
+        records = _film_trait_records(RatingEntry.objects.filter(import_session=self.session, movie=movie))
 
-        axis_deltas = {axis: {} for axis in RECOMMENDATION_WEIGHTS}
-        self.assertEqual(_adaptive_weights(axis_deltas), RECOMMENDATION_WEIGHTS)
+        self.assertEqual(sorted(records[0]['keyword']), ['heist', 'jidaigeki'])
+
+    def test_recommendation_weights_sum_to_one_with_every_trait_present(self):
+        from stats.services.dashboard import RECOMMENDATION_WEIGHTS, _PREFERENCE_AXES
+
+        self.assertAlmostEqual(sum(RECOMMENDATION_WEIGHTS.values()), 1.0, places=6)
+        self.assertEqual(set(RECOMMENDATION_WEIGHTS), set(_PREFERENCE_AXES))
+        self.assertGreaterEqual(min(RECOMMENDATION_WEIGHTS.values()), 0.07)
+
+    def test_all_axis_deltas_puts_every_axis_on_the_same_typical_size(self):
+        import math
+
+        from stats.services.dashboard import _all_axis_deltas
+
+        deltas = _all_axis_deltas(RatingEntry.objects.filter(import_session=self.session))
+        rms = [
+            math.sqrt(sum(d * d for d in axis.values()) / len(axis))
+            for axis in deltas.values() if axis
+        ]
+        # An axis whose values are all shared by every rated film has rarity 0 and
+        # therefore all-zero deltas -- nothing to rescale, so it stays at 0.
+        rms = [value for value in rms if value > 0]
+        self.assertGreaterEqual(len(rms), 2)
+        for value in rms:
+            self.assertAlmostEqual(value, rms[0], places=6)
 
     def test_person_credit_cap_limits_how_many_picks_credit_the_same_director(self):
         session = ImportSession.objects.create(display_name='DirectorFan')
