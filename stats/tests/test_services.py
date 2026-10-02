@@ -2126,7 +2126,7 @@ class BuildCompareContextTests(TestCase):
         # (GRID_DISPLAY_CAP=12), not the old table's TOP_N=10.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(13):
+        for i in range(25):
             uri, title = f'https://boxd.it/gap{i}', f'Gap Film {i}'
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('5.0'),
@@ -2135,8 +2135,9 @@ class BuildCompareContextTests(TestCase):
                 import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('1.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['biggest_disagreements']), 12)
-        self.assertEqual(context['biggest_disagreements_total'], 13)
+        # 12 shown by default, up to GRID_EXPANDED_CAP (24) behind "View more".
+        self.assertEqual(len(context['biggest_disagreements']), 24)
+        self.assertEqual(context['biggest_disagreements_total'], 25)
 
     def test_agreement_pct_uses_half_star_threshold(self):
         context = build_compare_context(self.session_a, self.session_b)
@@ -4796,7 +4797,7 @@ class SameRatingTests(TestCase):
         # the table-based TOP_N=10 lists elsewhere on the page.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(13):
+        for i in range(25):
             uri, title = f'https://boxd.it/tie{i}', f'Tie Film {i}'
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('4.0'),
@@ -4805,8 +4806,10 @@ class SameRatingTests(TestCase):
                 import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=Decimal('4.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['same_rating']), 12)
-        self.assertEqual(context['same_rating_total'], 13)
+        # 12 shown by default, up to GRID_EXPANDED_CAP (24) behind "View more".
+        self.assertEqual(len(context['same_rating']), 24)
+        self.assertEqual(len(context['same_rating_collapsed_positions']), 12)
+        self.assertEqual(context['same_rating_total'], 25)
 
     def test_displayed_subset_spreads_across_rating_tiers(self):
         # 20 films tied at 5.0 would fill the whole 12-slot grid on their own if it
@@ -4825,7 +4828,8 @@ class SameRatingTests(TestCase):
                     import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=rating,
                 )
         context = build_compare_context(session_a, session_b)
-        same_rating = context['same_rating']
+        positions = set(context['same_rating_collapsed_positions'])
+        same_rating = [f for i, f in enumerate(context['same_rating']) if i in positions]
         self.assertEqual(len(same_rating), 12)
 
         ratings_shown = [f['rating_a'] for f in same_rating]
@@ -4854,7 +4858,8 @@ class SameRatingTests(TestCase):
                     import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=rating,
                 )
         context = build_compare_context(session_a, session_b)
-        ratings_shown = [f['rating_a'] for f in context['same_rating']]
+        positions = set(context['same_rating_collapsed_positions'])
+        ratings_shown = [f['rating_a'] for i, f in enumerate(context['same_rating']) if i in positions]
         self.assertEqual(len(ratings_shown), 12)
         self.assertEqual(ratings_shown.count(Decimal('5.0')), 8)
         self.assertEqual(ratings_shown.count(Decimal('2.0')), 4)
@@ -4874,7 +4879,8 @@ class SameRatingTests(TestCase):
                     import_session=session_b, letterboxd_uri=uri, title=title, year=2020, rating=rating,
                 )
         context = build_compare_context(session_a, session_b)
-        ratings_shown = [f['rating_a'] for f in context['same_rating']]
+        positions = set(context['same_rating_collapsed_positions'])
+        ratings_shown = [f['rating_a'] for i, f in enumerate(context['same_rating']) if i in positions]
         self.assertEqual(len(ratings_shown), 12)
         self.assertEqual(ratings_shown.count(Decimal('2.0')), 2)
         self.assertEqual(ratings_shown.count(Decimal('4.5')), 10)
@@ -4935,7 +4941,7 @@ class WatchlistMatchesTests(TestCase):
         # not the table-based TOP_N=10 lists elsewhere on the page.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(13):
+        for i in range(25):
             title = f'Watchlist Film {i}'
             WatchlistEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/a-w{i}', title=title, year=2020,
@@ -4944,8 +4950,9 @@ class WatchlistMatchesTests(TestCase):
                 import_session=session_b, letterboxd_uri=f'https://boxd.it/b-w{i}', title=title, year=2020,
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['watchlist_matches']), 12)
-        self.assertEqual(context['watchlist_matches_total'], 13)
+        # 12 shown by default, up to GRID_EXPANDED_CAP (24) behind "View more".
+        self.assertEqual(len(context['watchlist_matches']), 24)
+        self.assertEqual(context['watchlist_matches_total'], 25)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')

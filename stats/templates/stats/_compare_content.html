@@ -117,7 +117,7 @@
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Who's Seen What</span></h2>
   <p class="muted">The films you've both watched and your different opinions about them.</p>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Same rating</h3>
     {% if same_rating_total %}
       <p class="muted">You rated {{ same_rating_total|intcomma }} film{{ same_rating_total|pluralize }} exactly the same.</p>
@@ -125,7 +125,7 @@
     {% if same_rating %}
       <div class="favs favs--six">
         {% for film in same_rating %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter0 not in same_rating_collapsed_positions %} fav-card--extra{% endif %}">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             <p class="muted">{{ film.rating_a|floatformat:1 }} ★</p>
           </div>
@@ -134,21 +134,22 @@
     {% else %}
       <p class="empty-state">No exact matches yet</p>
     {% endif %}
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Most different ratings</h3>
     <div class="color-key">
       <span class="color-key-item"><span class="color-key-dot a-color"></span>{{ session_a.display_name|default:"Person A" }}</span>
       <span class="color-key-item"><span class="color-key-dot b-color"></span>{{ session_b.display_name|default:"Person B" }}</span>
     </div>
-    {% if biggest_disagreements_total > biggest_disagreements|length %}
-      <p class="muted caption">Showing {{ biggest_disagreements|length }} of {{ biggest_disagreements_total|intcomma }}.</p>
+    {% if biggest_disagreements_total > grid_display_cap %}
+      <p class="muted caption" data-view-more-caption data-collapsed="{{ grid_display_cap }}" data-total="{{ biggest_disagreements_total|intcomma }}">Showing {{ grid_display_cap }} of {{ biggest_disagreements_total|intcomma }}.</p>
     {% endif %}
     {% if biggest_disagreements %}
       <div class="favs favs--six">
         {% for film in biggest_disagreements %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter > grid_display_cap %} fav-card--extra{% endif %}">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             <p class="a-color">{{ film.rating_a|floatformat:1 }} ★</p>
             <p class="b-color">{{ film.rating_b|floatformat:1 }} ★</p>
@@ -158,6 +159,7 @@
     {% else %}
       <p class="empty-state">No rated films in common yet</p>
     {% endif %}
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
   <div class="two-col">
@@ -402,16 +404,16 @@
   <div class="jump-target" id="watching-together">
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Watching Together</span></h2>
   <p class="muted">Watchlist recommendations and shared viewing history.</p>
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Watchlist matches</h3>
     <p class="muted">Sorted by your combined preferences.</p>
-    {% if watchlist_matches_total > watchlist_matches|length %}
-      <p class="muted caption">Showing {{ watchlist_matches|length }} of {{ watchlist_matches_total|intcomma }}.</p>
+    {% if watchlist_matches_total > grid_display_cap %}
+      <p class="muted caption" data-view-more-caption data-collapsed="{{ grid_display_cap }}" data-total="{{ watchlist_matches_total|intcomma }}">Showing {{ grid_display_cap }} of {{ watchlist_matches_total|intcomma }}.</p>
     {% endif %}
     {% if watchlist_matches %}
       <div class="favs favs--six">
         {% for film in watchlist_matches %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter > grid_display_cap %} fav-card--extra{% endif %}">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
           </div>
         {% endfor %}
@@ -419,6 +421,7 @@
     {% else %}
       <p class="empty-state">No shared watchlist films yet</p>
     {% endif %}
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
   <div class="card">
@@ -530,6 +533,27 @@
     // Generic toggle-group/view-panel wiring, mirrored from dashboard.html -- lets a
     // card swap between markup panels (e.g. Favorite directors' Side-by-side/Shared)
     // purely via data attributes, no per-feature JS needed.
+    document.querySelectorAll('[data-view-more]').forEach(function (card) {
+      const row = card.querySelector('.view-more-row');
+      const btn = row.querySelector('.view-more-btn');
+      const caption = card.querySelector('[data-view-more-caption]');
+      function sync() {
+        const expanded = card.classList.contains('is-expanded');
+        row.hidden = !card.querySelector('.fav-card--extra');
+        btn.textContent = expanded ? 'View less' : 'View more';
+        if (caption) {
+          const loaded = card.querySelectorAll('.fav-card').length;
+          const shown = expanded ? loaded : Math.min(loaded, Number(caption.dataset.collapsed));
+          caption.textContent = 'Showing ' + shown + ' of ' + caption.dataset.total + '.';
+        }
+      }
+      btn.addEventListener('click', function () {
+        card.classList.toggle('is-expanded');
+        sync();
+      });
+      sync();
+    });
+
     document.querySelectorAll('[data-toggle-group]').forEach(function (group) {
       const card = group.closest('.card');
       group.querySelectorAll('.toggle-btn').forEach(function (btn) {
