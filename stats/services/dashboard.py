@@ -14,10 +14,12 @@ Three data sources are used deliberately:
 import hashlib
 import math
 import random
+import re
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 from itertools import combinations
+from statistics import pvariance
 
 from django.db.models import Avg, Count, Max, Min, Q, Sum
 from django.db.models.functions import ExtractYear
@@ -26,7 +28,7 @@ from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry,
 from stats.services.filters import (
     SHORT_FILM_MAX_RUNTIME_MINUTES, exclude_short_entries, exclude_short_movies, exclude_tv_shows,
 )
-from tmdb.models import Credit, Movie
+from tmdb.models import Country, Credit, Movie
 
 WEEKDAY_NAMES = {1: 'Sunday', 2: 'Monday', 3: 'Tuesday', 4: 'Wednesday', 5: 'Thursday', 6: 'Friday', 7: 'Saturday'}
 # TMDB's production_countries gives full formal names -- shortened to their common
@@ -142,28 +144,49 @@ CAMEO_RELATIVE_BILLING_THRESHOLD = 0.4
 # film matching several loved things could never beat one matching just one.
 # Summing lets favorite signals stack and lets one standout (e.g. a beloved
 # director) carry an otherwise-neutral film. Sums to 1.0.
+#
+# Fit by leave-one-out holdout against real already-rated films (fit on one
+# account, tested on another), then flattened so no trait is negligible: every
+# weight is at least 7%, which cost under 0.01 of correlation versus the
+# unconstrained fit. Keywords were then lowered by hand from the fitted 20% to
+# 12% (about 0.005 of correlation) -- a film has many keywords and most of a
+# liked film's score positive, so they added a little to every good match and felt
+# over-weighted. The final numbers were then adjusted by hand (director raised,
+# decade/country/language eased up) -- the holdout is nearly flat across these.
 RECOMMENDATION_WEIGHTS = {
-    'genre': 0.30,
-    'director': 0.25,
-    'actor': 0.15,
+    'director': 0.18,
+    'genre': 0.18,
+    'actor': 0.16,
+    'keyword': 0.12,
+    'decade': 0.11,
     'country': 0.10,
-    'language': 0.05,
-    'decade': 0.10,
-    'runtime': 0.05,
+    'language': 0.08,
+    'runtime': 0.07,
 }
+# Weight for _favorite_trait_bonus's own contribution to the score -- same value
+# as Double Feature's SHARED_TRAIT_BONUS_WEIGHT. Holdout validation can only
+# measure "would you have liked this film", not "does this feel like a pick
+# backed by several of your favorite things", the thing this bonus rewards, so
+# it's kept small and non-zero as a deliberate choice rather than tuned to zero.
+FAVORITE_TRAIT_BONUS_WEIGHT = 0.1
+# The bonus's combo multiplier only applies once a film lands on favorite values
+# in at least this many distinct axes -- several independent signals agreeing
+# is stronger evidence than one axis alone.
+FAVORITE_TRAIT_COMBO_MIN_AXES = 3
+# Extra multiplier per qualifying axis at or beyond FAVORITE_TRAIT_COMBO_MIN_AXES.
+FAVORITE_TRAIT_COMBO_BONUS_PER_AXIS = 0.5
+# 'language' folds into 'country's slot when counting qualifying axes -- for a
+# country with one dominant language (France/French) both qualifying is usually
+# the same fact told twice, not two independent confirmations.
+COMBO_COUNT_AXIS_GROUP = {'language': 'country'}
 # How much a film's TMDB community rating (adjusted by the person's own
-# generosity score) nudges its score, on top of the 7 taste-based signals --
-# deliberately small and NOT part of RECOMMENDATION_WEIGHTS' adaptive
-# reweighting, since it's an external quality prior rather than a personal-
-# taste axis, and never qualifies a candidate on its own.
+# generosity score) nudges its score, on top of the 8 taste-based signals --
+# deliberately small and NOT part of RECOMMENDATION_WEIGHTS, since it's an
+# external quality prior rather than a personal-taste axis, and never qualifies
+# a candidate on its own.
 TMDB_WEIGHT = 0.05
-# Weight _adaptive_weights gives to a person's own variance-derived weights vs.
-# the fixed RECOMMENDATION_WEIGHTS above -- kept below 1.0 since a data-starved
-# axis' variance is noisy, not confident enough to fully replace the fixed
-# floor. See _adaptive_weights.
-ADAPTIVE_WEIGHT_BLEND = 0.5
 # How much a category's confidence-shrunk *peak* rating (not its average)
-# contributes to its delta -- see _rating_deltas. An average can be mediocre
+# contributes to its delta -- see _axis_deltas_from_records. An average can be mediocre
 # while still containing a genuine outlier favorite that averaging erases.
 # Kept below 1.0 so a peak from only one or two ratings can't swing the delta
 # on its own.
@@ -172,6 +195,9 @@ PEAK_BLEND = 0.35
 # 2-rows-of-6 shape (4x3 on mobile), same convention as Most rewatched films/
 # Biggest over-/under-rates.
 RECOMMENDATION_DISPLAY_CAP = 12
+# "View more" reveals up to this many -- double the default grid, sent up front
+# (the extra rows start hidden) rather than fetched on click.
+RECOMMENDATION_EXPANDED_CAP = RECOMMENDATION_DISPLAY_CAP * 2
 # A signal's delta has to clear this before it's worth naming as a "why" reason in
 # the UI -- otherwise a barely-above-baseline genre would clutter the tooltip
 # alongside a film's actually meaningful matches.
@@ -933,7 +959,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
 
     if year is None:
         favorites = _favorite_films(import_session)
-        axis_deltas = _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, rated_count)
+        axis_deltas = _all_axis_deltas(rated)
         recommendations = _watchlist_recommendations(
             watchlist, set(watched_movies.values_list('tmdb_id', flat=True)), avg_rating, axis_deltas,
             taste['generosity_score'], taste['rated_and_enriched_count'],
@@ -990,6 +1016,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         'top_directors': top_directors,
         'favorite_people_grid_cap': FAVORITE_PEOPLE_GRID_CAP,
         'rewatch_grid_cap': REWATCH_GRID_DISPLAY_CAP,
+        'recommendation_grid_cap': RECOMMENDATION_DISPLAY_CAP,
         'top_actors': top_actors,
         'taste': taste,
         'release_year_distribution': release_year_distribution,
@@ -1402,171 +1429,173 @@ def _rarity_factor(count, total) -> float:
     return math.log((total + 1) / (count + 1)) / math.log(total + 1)
 
 
-def _shrunk_delta(value, count, overall_avg_rating) -> float:
-    """Confidence-shrunk delta of `value` from overall_avg_rating -- reuses
-    _true_score's own evidence-weighted shrinkage (count/(count+k) confidence
-    toward the overall average) rather than a hard MIN_COUNT_FOR_AVERAGE cutoff.
-    `value` can be any single statistic about a group of `count` ratings (their
-    average, their max, ...) -- the shrinkage math is the same either way, it's
-    just asking "how much should I trust this number given how much evidence backs
-    it," not "is this number itself an average."""
-    return _true_score(value, count, TRUE_SCORE_SHRINKAGE_K, overall_avg_rating) - overall_avg_rating
+_PREFERENCE_AXES = ('genre', 'director', 'actor', 'country', 'language', 'decade', 'runtime', 'keyword')
 
 
-def _rating_deltas(pairs, overall_avg_rating, total_count) -> dict:
-    """Given an iterable of (key, rating) pairs, returns {key: confidence-shrunk
-    delta from overall_avg_rating, scaled by that key's rarity} for every key seen.
-    A key backed by just one or two ratings still contributes, just heavily
-    discounted, rather than being excluded outright the way it would be on the
-    dashboard's own display stats. total_count is the person's total rated-film
-    count, the denominator _rarity_factor measures each key's share against.
+_DECADE_KEYWORD = re.compile(r'^(\d{4}s|\d{4}|\d{1,2}(st|nd|rd|th) century)$')
 
-    Each key's delta blends two shrunk statistics, not just the average (see
-    PEAK_BLEND): the average rating in that key, and the single highest rating in
-    it. A key's average can be mediocre while it still contains a genuine outlier
-    favorite (picky about a genre generally, but rates their favorite entry a 5) --
-    averaging alone erases exactly that favorite, since "loved a couple, indifferent
-    to the rest" and "consistently lukewarm" can land on the same average. Both
-    statistics get the same confidence shrinkage, based on the key's real count --
-    a peak backed by only one or two ratings is barely trusted either, same as a
-    thin average would be."""
+
+def _redundant_keyword_check():
+    """Returns a predicate that's True for a keyword that only restates a trait the
+    country/language/decade axes already cover ('japan', 'korean', '1970s', '19th
+    century'), so it isn't counted twice. Deliberately narrow -- settings,
+    subgenre tags (jidaigeki) and looks (black and white) carry their own
+    information and are kept."""
+    country_names = {name.lower() for name in Country.objects.values_list('name', flat=True)}
+    language_names = {
+        name.lower() for name in Movie.objects.exclude(original_language='')
+        .values_list('original_language', flat=True).distinct()
+    }
+
+    def is_redundant(name) -> bool:
+        lowered = name.lower()
+        return bool(_DECADE_KEYWORD.match(lowered)) or lowered in country_names or lowered in language_names
+
+    return is_redundant
+
+
+def _film_trait_records(rated) -> list:
+    """One dict per enriched rated film: {'rating', <axis>: [values], ...} for every
+    _PREFERENCE_AXES entry, fetched in one pass so the axis deltas below can be
+    computed in Python instead of one query per axis. actor uses
+    _actors_by_movie_cast's non-cameo cast, so it matches the Favorite Actors
+    card's own definition."""
+    entries = list(
+        rated.exclude(movie__isnull=True).select_related('movie')
+        .prefetch_related('movie__genres', 'movie__directors', 'movie__countries', 'movie__keywords')
+    )
+    actors_by_movie = _actors_by_movie_cast({entry.movie_id for entry in entries})
+    is_redundant_keyword = _redundant_keyword_check()
+    records = []
+    for entry in entries:
+        movie = entry.movie
+        records.append({
+            'rating': float(entry.rating),
+            'genre': [g.name for g in movie.genres.all()],
+            'director': [d.name for d in movie.directors.all()],
+            'country': [c.name for c in movie.countries.all()],
+            'language': [movie.original_language] if movie.original_language else [],
+            'decade': [_decade_bucket(movie.release_year)] if movie.release_year else [],
+            'runtime': [_runtime_bucket(movie.runtime_minutes)] if movie.runtime_minutes else [],
+            'actor': [name for name, _profile_path, _person_id in actors_by_movie.get(movie.tmdb_id, [])],
+            'keyword': [k.name for k in movie.keywords.all() if not is_redundant_keyword(k.name)],
+        })
+    return records
+
+
+def _raw_stats_from_records(records, axis, overall_avg) -> dict:
+    """{value: (raw_mean_delta, raw_peak_delta, count, residual_ss)} for one axis --
+    the raw material _axis_deltas_from_records shrinks into final per-value deltas."""
     ratings_by_key = defaultdict(list)
-    for key, rating in pairs:
-        ratings_by_key[key].append(rating)
-
-    def _blended_delta(ratings):
-        count = len(ratings)
-        avg_delta = _shrunk_delta(sum(ratings) / count, count, overall_avg_rating)
-        peak_delta = _shrunk_delta(max(ratings), count, overall_avg_rating)
-        return (1 - PEAK_BLEND) * avg_delta + PEAK_BLEND * peak_delta
-
-    return {
-        key: _blended_delta(ratings) * _rarity_factor(len(ratings), total_count)
-        for key, ratings in ratings_by_key.items()
-    }
+    for record in records:
+        for value in record[axis]:
+            ratings_by_key[value].append(record['rating'])
+    result = {}
+    for key, ratings in ratings_by_key.items():
+        mean = sum(ratings) / len(ratings)
+        residual_ss = sum((r - mean) ** 2 for r in ratings)
+        result[key] = (mean - overall_avg, max(ratings) - overall_avg, len(ratings), residual_ss)
+    return result
 
 
-def _variance(values) -> float:
-    """Population variance of an iterable of numbers, or 0 for fewer than 2 values
-    -- variance needs at least 2 points to mean anything, and 0 is the right
-    fallback for _adaptive_weights specifically, where 0 already means "this axis
-    isn't informative"."""
-    values = list(values)
-    if len(values) < 2:
-        return 0.0
-    mean = sum(values) / len(values)
-    return sum((v - mean) ** 2 for v in values) / len(values)
+def _axis_deltas_from_records(records, overall_avg, rated_count) -> dict:
+    """{axis: {value: empirical-Bayes-shrunk delta}} for all _PREFERENCE_AXES --
+    the same model Double Feature's own watchlist ranking uses (see compare.py's
+    _axis_deltas_from_records, reimplemented here per this file's convention of
+    not importing from it).
+
+    How much each value's raw delta is trusted is derived from the data itself,
+    pooled across every axis: between_var (how much real taste spread exists
+    between values) against within_value_variance / count (how noisy a value's
+    own average is at that sample size). A value backed by many ratings keeps most
+    of its delta; one backed by one or two is pulled hard toward 0. The shrunk
+    average and peak deltas are blended (PEAK_BLEND) and scaled by
+    _rarity_factor, so a value shared by nearly every rated film says little."""
+    all_ratings = [record['rating'] for record in records]
+    rating_variance = pvariance(all_ratings) if len(all_ratings) >= 2 else 0.0
+    if rating_variance == 0.0:
+        rating_variance = 1.0
+
+    raw_stats_by_axis = {axis: _raw_stats_from_records(records, axis, overall_avg) for axis in _PREFERENCE_AXES}
+
+    total_residual_ss = sum(
+        residual_ss for stats in raw_stats_by_axis.values() for _, _, _, residual_ss in stats.values()
+    )
+    total_n = sum(count for stats in raw_stats_by_axis.values() for _, _, count, _ in stats.values())
+    total_groups = sum(len(stats) for stats in raw_stats_by_axis.values())
+    pooled_dof = total_n - total_groups
+    within_value_variance = (total_residual_ss / pooled_dof) if pooled_dof > 0 else rating_variance
+    if within_value_variance == 0.0:
+        within_value_variance = rating_variance
+
+    all_raw_means = [raw_mean for stats in raw_stats_by_axis.values() for raw_mean, _, _, _ in stats.values()]
+    all_counts = [count for stats in raw_stats_by_axis.values() for _, _, count, _ in stats.values()]
+    observed_var = pvariance(all_raw_means) if len(all_raw_means) >= 2 else 0.0
+    avg_sampling_var = (
+        sum(within_value_variance / count for count in all_counts) / len(all_counts) if all_counts else 0.0
+    )
+    between_var = max(0.0, observed_var - avg_sampling_var)
+
+    def _shrink(axis):
+        result = {}
+        for key, (raw_mean, peak_delta, count, _residual_ss) in raw_stats_by_axis[axis].items():
+            sampling_var = within_value_variance / count
+            shrink = between_var / (between_var + sampling_var) if (between_var + sampling_var) > 0 else 0.0
+            blended = (1 - PEAK_BLEND) * shrink * raw_mean + PEAK_BLEND * shrink * peak_delta
+            result[key] = blended * _rarity_factor(count, rated_count)
+        return result
+
+    return {axis: _shrink(axis) for axis in _PREFERENCE_AXES}
 
 
-def _adaptive_weights(axis_deltas: dict) -> dict:
-    """Per-person axis weights, blended with the fixed RECOMMENDATION_WEIGHTS (see
-    ADAPTIVE_WEIGHT_BLEND) rather than replacing them outright. Derived from how
-    much each axis's own deltas vary for this person, as a proxy for how much that
-    axis actually discriminates their taste -- an axis whose deltas all cluster near
-    0 isn't telling us anything about what this person likes, while one that swings
-    between strongly positive and negative clearly is. The fixed weights stay in the
-    blend as a floor because variance from a handful of data points is noisy, not a
-    confident signal on its own -- the same "don't let noise pass as signal"
-    principle as _rarity_factor and _true_score's own shrinkage elsewhere in this
-    file, just applied to entire axes instead of individual keys within one.
+def _all_axis_deltas(rated) -> dict:
+    """{axis: {value: delta}} for all 8 _PREFERENCE_AXES -- see
+    _axis_deltas_from_records. Returns {} with fewer than MIN_COUNT_FOR_AVERAGE
+    enriched rated films: there's no baseline to compute a delta against.
 
-    axis_deltas is {'genre': {...}, 'director': {...}, ...} -- the same 7 per-axis
-    delta maps _watchlist_recommendations already builds. Both RECOMMENDATION_WEIGHTS
-    and the variance-derived weights sum to 1.0 on their own, so blending them at a
-    fixed ratio does too, with no separate renormalization step needed."""
-    variances = {axis: _variance(deltas.values()) for axis, deltas in axis_deltas.items()}
-    total_variance = sum(variances.values())
-    if total_variance == 0:
-        # No axis shows any spread at all (e.g. someone who's rated everything the
-        # same) -- nothing to adapt to, so the fixed weights stand untouched.
-        return dict(RECOMMENDATION_WEIGHTS)
-    return {
-        axis: (
-            (1 - ADAPTIVE_WEIGHT_BLEND) * RECOMMENDATION_WEIGHTS[axis]
-            + ADAPTIVE_WEIGHT_BLEND * (variances[axis] / total_variance)
-        )
-        for axis in RECOMMENDATION_WEIGHTS
-    }
-
-
-def _all_axis_deltas(rated, avg_rating, actor_rating_lists, director_ratings, rated_count) -> dict:
-    """{'genre': {...}, 'director': {...}, 'actor': {...}, 'country': {...},
-    'language': {...}, 'decade': {...}, 'runtime': {...}} -- the confidence-shrunk,
-    peak-blended, rarity-scaled per-key delta maps (see _rating_deltas) for all 7
-    taste axes at once. Factored out from _watchlist_recommendations so
-    _rating_insights can reuse the exact same numbers rather than recomputing a
-    second, potentially-drifting copy -- an axis/key's delta can never disagree
-    between the recommendation grid and the insights card.
-
-    Returns {} if avg_rating is None (fewer than MIN_COUNT_FOR_AVERAGE rated films)
-    -- there's no baseline to compute a delta against. avg_rating arrives here as a
-    Decimal (RatingEntry.rating is a DecimalField) when not None; converted to float
-    up front since float * Decimal raises TypeError in _shrunk_delta below (same fix
-    _favorite_people applies)."""
-    if avg_rating is None:
+    Each axis's deltas are then rescaled so every axis has the same typical size
+    (the mean of the axes' RMS values) -- a weight in RECOMMENDATION_WEIGHTS means
+    the same thing for every axis instead of also compensating for how big that
+    axis's raw deltas happen to run."""
+    records = _film_trait_records(rated)
+    if len(records) < MIN_COUNT_FOR_AVERAGE:
         return {}
-    avg_rating = float(avg_rating)
-
-    genre_deltas = _rating_deltas(
-        rated.filter(movie__genres__isnull=False).values_list('movie__genres__name', 'rating'), avg_rating,
-        rated_count,
-    )
-    country_deltas = _rating_deltas(
-        rated.filter(movie__countries__isnull=False).values_list('movie__countries__name', 'rating'), avg_rating,
-        rated_count,
-    )
-    language_deltas = _rating_deltas(
-        rated.exclude(movie__isnull=True).exclude(movie__original_language='')
-        .values_list('movie__original_language', 'rating'),
-        avg_rating, rated_count,
-    )
-    decade_deltas = _rating_deltas(
-        (
-            (_decade_bucket(year), rating)
-            for rating, year in rated.filter(movie__release_year__isnull=False)
-            .values_list('rating', 'movie__release_year')
-        ),
-        avg_rating, rated_count,
-    )
-    runtime_deltas = _rating_deltas(
-        (
-            (_runtime_bucket(minutes), rating)
-            for rating, minutes in rated.filter(movie__runtime_minutes__isnull=False)
-            .values_list('rating', 'movie__runtime_minutes')
-        ),
-        avg_rating, rated_count,
-    )
-    # Directors/actors reuse the rating groupings already built in
-    # build_dashboard_context (director_ratings, actor_rating_lists) rather than
-    # rebuilding them, so cameo filtering and numbers stay consistent between
-    # views. Peak-blended like every other axis so an inconsistent director
-    # (one standout among average films) isn't invisible just because
-    # avg_rating alone doesn't show it.
-    director_deltas = {
-        name: (
-            (
-                (1 - PEAK_BLEND) * _shrunk_delta(stats['avg_rating'], stats['rating_count'], avg_rating)
-                + PEAK_BLEND * _shrunk_delta(stats['max_rating'], stats['rating_count'], avg_rating)
-            )
-            * _rarity_factor(stats['rating_count'], rated_count)
-        )
-        for name, stats in director_ratings.items()
+    overall_avg = sum(record['rating'] for record in records) / len(records)
+    deltas = _axis_deltas_from_records(records, overall_avg, len(records))
+    rms = {
+        axis: math.sqrt(sum(d * d for d in axis_deltas.values()) / len(axis_deltas))
+        for axis, axis_deltas in deltas.items() if axis_deltas
     }
-    actor_deltas = {
-        name: (
-            (
-                (1 - PEAK_BLEND) * _shrunk_delta(sum(ratings) / len(ratings), len(ratings), avg_rating)
-                + PEAK_BLEND * _shrunk_delta(max(ratings), len(ratings), avg_rating)
-            )
-            * _rarity_factor(len(ratings), rated_count)
-        )
-        for name, ratings in actor_rating_lists.items()
-    }
+    target = sum(rms.values()) / len(rms) if rms else 0.0
     return {
-        'genre': genre_deltas, 'director': director_deltas, 'actor': actor_deltas,
-        'country': country_deltas, 'language': language_deltas, 'decade': decade_deltas,
-        'runtime': runtime_deltas,
+        axis: {
+            key: (delta / rms[axis] * target if rms.get(axis) else delta) for key, delta in axis_deltas.items()
+        }
+        for axis, axis_deltas in deltas.items()
     }
+
+
+def _favorite_trait_bonus(components, weights) -> float:
+    """How strongly a candidate lands on values this person has an independently
+    well-evidenced, clearly positive delta for -- the single-person version of
+    Double Feature's shared-trait bonus. A value counts once its delta clears
+    RECOMMENDATION_REASON_THRESHOLD; each axis contributes its weight times the
+    average of its qualifying deltas, and the total is scaled up once the film
+    qualifies on FAVORITE_TRAIT_COMBO_MIN_AXES or more distinct axes (country and
+    language count as one -- see COMBO_COUNT_AXIS_GROUP), since several
+    independent favorites agreeing is stronger than the same total in one axis."""
+    favorite_deltas = defaultdict(list)
+    for axis, _label, delta in components:
+        if delta > RECOMMENDATION_REASON_THRESHOLD:
+            favorite_deltas[axis].append(delta)
+    if not favorite_deltas:
+        return 0.0
+    base_bonus = sum(weights[axis] * (sum(values) / len(values)) for axis, values in favorite_deltas.items())
+    qualifying_axis_count = len({COMBO_COUNT_AXIS_GROUP.get(axis, axis) for axis in favorite_deltas})
+    combo_multiplier = 1 + FAVORITE_TRAIT_COMBO_BONUS_PER_AXIS * max(
+        0, qualifying_axis_count - (FAVORITE_TRAIT_COMBO_MIN_AXES - 1),
+    )
+    return base_bonus * combo_multiplier
 
 
 def _watchlist_recommendations(
@@ -1575,7 +1604,7 @@ def _watchlist_recommendations(
     """Scores every watchlist film the user hasn't already watched, hasn't released
     yet, or is under an hour long (see the candidates queryset below) against their
     own rating history across genre, director, actor, country, language, decade, and
-    runtime, and returns the top RECOMMENDATION_DISPLAY_CAP as
+    runtime, and returns the top RECOMMENDATION_EXPANDED_CAP as
     {'movie', 'score', 'reasons'} dicts, highest score first (subject to
     PERSON_CREDIT_CAP -- see the greedy selection pass at the end). See
     RECOMMENDATION_WEIGHTS' comment for why this sums confidence-weighted deltas
@@ -1586,11 +1615,10 @@ def _watchlist_recommendations(
     someone's rated films says little about their specific taste even if their
     average rating within it is reliable, so it shouldn't compete on equal footing
     with a rare, specific match like a favorite director. The per-axis weights
-    themselves aren't the fixed RECOMMENDATION_WEIGHTS either -- see
-    _adaptive_weights for how they're nudged per-person toward whichever axes
-    actually vary for that person's own taste.
+    themselves are the fixed RECOMMENDATION_WEIGHTS, applied to deltas that
+    _all_axis_deltas has put on a common scale.
 
-    On top of those 7 taste-based signals, a film's TMDB community rating nudges the
+    On top of those 8 taste-based signals, a film's TMDB community rating nudges the
     score by a small, fixed TMDB_WEIGHT (see that constant) -- adjusted by the
     person's own generosity_score (their average delta from TMDB's crowd rating on
     films they HAVE rated, from _taste_vs_crowd) so a systematically harsher or more
@@ -1633,8 +1661,9 @@ def _watchlist_recommendations(
     language_deltas = axis_deltas['language']
     decade_deltas = axis_deltas['decade']
     runtime_deltas = axis_deltas['runtime']
+    keyword_deltas = axis_deltas['keyword']
 
-    weights = _adaptive_weights(axis_deltas)
+    weights = RECOMMENDATION_WEIGHTS
 
     # Excludes confirmed-unreleased films (only release_year is stored, not an
     # exact date) and confirmed shorts (runtime under 60 minutes). Both filters
@@ -1645,7 +1674,7 @@ def _watchlist_recommendations(
         .filter(Q(movie__release_year__isnull=True) | Q(movie__release_year__lte=date.today().year))
         .filter(Q(movie__runtime_minutes__isnull=True) | Q(movie__runtime_minutes__gte=SHORT_FILM_MAX_RUNTIME_MINUTES))
         .select_related('movie')
-        .prefetch_related('movie__genres', 'movie__countries', 'movie__directors')
+        .prefetch_related('movie__genres', 'movie__countries', 'movie__directors', 'movie__keywords')
     )
     candidate_movie_ids = {entry.movie_id for entry in candidates}
     # Cast, not just genre/director, needs its own pass -- computed once for every
@@ -1687,6 +1716,9 @@ def _watchlist_recommendations(
             bucket = _runtime_bucket(movie.runtime_minutes)
             if bucket in runtime_deltas:
                 components.append(('runtime', bucket, runtime_deltas[bucket]))
+        for keyword in movie.keywords.all():
+            if keyword.name in keyword_deltas:
+                components.append(('keyword', keyword.name, keyword_deltas[keyword.name]))
 
         if not components:
             continue
@@ -1712,6 +1744,7 @@ def _watchlist_recommendations(
             score = avg_rating + (1 - TMDB_WEIGHT) * taste_score + TMDB_WEIGHT * tmdb_delta
         else:
             score = avg_rating + taste_score
+        score += FAVORITE_TRAIT_BONUS_WEIGHT * _favorite_trait_bonus(components, weights)
 
         reasons = [
             label for _, label, delta in sorted(components, key=lambda c: c[2], reverse=True)
@@ -1742,7 +1775,7 @@ def _watchlist_recommendations(
         for name in item['people']:
             person_credit_counts[name] += 1
         selected.append(item)
-        if len(selected) == RECOMMENDATION_DISPLAY_CAP:
+        if len(selected) == RECOMMENDATION_EXPANDED_CAP:
             break
 
     return selected
