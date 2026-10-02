@@ -40,6 +40,10 @@ ALIGNMENT_GAUGE_CIRCUMFERENCE = round(2 * math.pi * ALIGNMENT_GAUGE_RADIUS, 2)
 # table -- capped at 2 full rows of 6 (12) rather than TOP_N's 10, since 10
 # left an awkward sparse second row of 4.
 GRID_DISPLAY_CAP = 12
+# Same rating, Most different ratings and Watchlist matches each ship up to this
+# many -- double the default grid -- and a "View more" button reveals the extra
+# rows (they start hidden), so expanding needs no request.
+GRID_EXPANDED_CAP = GRID_DISPLAY_CAP * 2
 # Top unseen (formerly "five-star exclusives") renders the same kind of poster grid,
 # but inside a .two-col half-width card rather than a full-width one -- 3 rows of 4
 # (12) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 6 fits a
@@ -65,6 +69,8 @@ TOP_UNSEEN_MIN_RATING = Decimal('4.0')
 # up to GRID_HIGH_RATING_SLOTS of the GRID_DISPLAY_CAP slots go to 4.0+ tiers, the
 # rest to whatever's left. See _same_rating_display.
 GRID_HIGH_RATING_SLOTS = 8
+# Same rating's high-rating share of GRID_EXPANDED_CAP, scaled with the cap.
+GRID_HIGH_RATING_SLOTS_EXPANDED = GRID_HIGH_RATING_SLOTS * 2
 GRID_HIGH_RATING_THRESHOLD = Decimal('4.0')
 # An average of a single shared rated film isn't meaningful -- avg_delta requires at
 # least this many shared rated films, or it's left out entirely.
@@ -1431,6 +1437,14 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     watchlist_a = _watchlist_map(session_a, exclude_shorts)
     watchlist_b = _watchlist_map(session_b, exclude_shorts)
     shared_watchlist_keys = set(watchlist_a) & set(watchlist_b)
+    same_rating_expanded = _same_rating_display(same_rating_all, GRID_EXPANDED_CAP, GRID_HIGH_RATING_SLOTS_EXPANDED)
+    same_rating_collapsed_ids = {
+        id(f) for f in _same_rating_display(same_rating_all, GRID_DISPLAY_CAP, GRID_HIGH_RATING_SLOTS)
+    }
+    same_rating_collapsed_positions = [
+        position for position, f in enumerate(same_rating_expanded) if id(f) in same_rating_collapsed_ids
+    ]
+
     # Ranked by joint best-fit for both people -- see _rank_watchlist_matches for
     # the least-misery combination and its fallback. Eligibility (released,
     # feature-length) is filtered once here, separate from ranking, since it's
@@ -1439,7 +1453,7 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     # unconditional "is this actually watchable" rule, not the toggle's concern.
     watchlist_eligible = _eligible_watchlist_matches([watchlist_a[k] for k in shared_watchlist_keys])
     watchlist_matches_ranked = _rank_watchlist_matches(
-        session_a, session_b, watchlist_eligible, GRID_DISPLAY_CAP, exclude_shorts,
+        session_a, session_b, watchlist_eligible, GRID_EXPANDED_CAP, exclude_shorts,
     )
 
     same_day = _same_day_logs(session_a, session_b, exclude_shorts)
@@ -1584,9 +1598,14 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'compatibility_gauge_offset': compatibility_gauge_offset,
         'alignment_blurb': alignment_blurb,
         'avg_delta': avg_delta,
-        'biggest_disagreements': biggest_disagreements_all[:GRID_DISPLAY_CAP],
+        'grid_display_cap': GRID_DISPLAY_CAP,
+        'biggest_disagreements': biggest_disagreements_all[:GRID_EXPANDED_CAP],
         'biggest_disagreements_total': len(biggest_disagreements_all),
-        'same_rating': _same_rating_display(same_rating_all, GRID_DISPLAY_CAP, GRID_HIGH_RATING_SLOTS),
+        'same_rating': same_rating_expanded,
+        # Positions in same_rating that belong to the default (collapsed) 12 --
+        # that selection spreads across rating tiers on its own, so it isn't just
+        # the first 12 of the expanded list.
+        'same_rating_collapsed_positions': same_rating_collapsed_positions,
         'same_rating_total': len(same_rating_all),
         'shared_directors': shared_directors,
         'shared_actors': shared_actors,
