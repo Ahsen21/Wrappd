@@ -260,7 +260,7 @@
     <canvas id="ratingDistributionChart"></canvas>
   </div>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Taste vs. the crowd</h3>
     <p class="muted">Your rating compared to TMDB's community average.</p>
     <div class="grid">
@@ -278,7 +278,7 @@
     {% if taste.overrates %}
       <div class="favs favs--six">
         {% for film in taste.overrates %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter > taste_grid_cap %} fav-card--extra{% endif %}">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
           </div>
@@ -291,7 +291,7 @@
     {% if taste.underrates %}
       <div class="favs favs--six">
         {% for film in taste.underrates %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter > taste_grid_cap %} fav-card--extra{% endif %}">
             {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             <p class="muted">{{ film.your_rating|floatformat:1 }} vs {{ film.crowd_rating|floatformat:1 }} ★</p>
           </div>
@@ -300,6 +300,7 @@
     {% else %}
       <p class="empty-state">No data yet</p>
     {% endif %}
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
   </div>
 
@@ -610,12 +611,12 @@
     <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Most rewatched directors</h3>
     {% if rewatch.most_rewatched_directors %}
       <div class="favs favs--six favs--headshots">
         {% for row in rewatch.most_rewatched_directors %}
-          <div class="fav-card">
+          <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
             {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
             <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
             <p class="muted">{{ row.count }}×</p>
@@ -625,6 +626,7 @@
     {% else %}
       <p class="empty-state">No data yet</p>
     {% endif %}
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
   </div>
   {% endif %}

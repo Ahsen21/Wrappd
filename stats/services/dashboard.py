@@ -67,6 +67,9 @@ REWATCH_FILMS_EXPANDED_CAP = REWATCH_GRID_DISPLAY_CAP * 2
 # Biggest over-rates/under-rates render as a fixed poster grid (see .favs--six in
 # base.css), not a table -- 2 rows of 6 (12) rather than TOP_N's 10.
 TASTE_GRID_DISPLAY_CAP = 12
+# "View more" reveals up to this many in each of the over-rates/under-rates grids --
+# double the default, sent up front (extra rows start hidden).
+TASTE_GRID_EXPANDED_CAP = TASTE_GRID_DISPLAY_CAP * 2
 # Favorite Directors/Actors render as a fixed poster grid (see .favs--six in
 # base.css -- shared with Double Feature's own Favorite directors/actors grids and,
 # now, every other poster grid on this page too), not a table -- 12 rather than
@@ -1015,6 +1018,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         'top_genres': top_genres,
         'top_directors': top_directors,
         'favorite_people_grid_cap': FAVORITE_PEOPLE_GRID_CAP,
+        'taste_grid_cap': TASTE_GRID_DISPLAY_CAP,
         'rewatch_grid_cap': REWATCH_GRID_DISPLAY_CAP,
         'recommendation_grid_cap': RECOMMENDATION_DISPLAY_CAP,
         'top_actors': top_actors,
@@ -1118,8 +1122,8 @@ def _taste_vs_crowd(rated) -> dict:
 
     raw_avg = _avg_or_none([d['delta'] for d in deltas])
     generosity_score = round(raw_avg, 2) if raw_avg is not None else None
-    overrates = sorted(deltas, key=lambda d: d['delta'], reverse=True)[:TASTE_GRID_DISPLAY_CAP]
-    underrates = sorted(deltas, key=lambda d: d['delta'])[:TASTE_GRID_DISPLAY_CAP]
+    overrates = sorted(deltas, key=lambda d: d['delta'], reverse=True)[:TASTE_GRID_EXPANDED_CAP]
+    underrates = sorted(deltas, key=lambda d: d['delta'])[:TASTE_GRID_EXPANDED_CAP]
 
     return {
         'rated_and_enriched_count': len(deltas),
@@ -1152,8 +1156,8 @@ def _taste_vs_crowd_diary(films) -> dict:
 
     raw_avg = _avg_or_none([d['delta'] for d in deltas])
     generosity_score = round(raw_avg, 2) if raw_avg is not None else None
-    overrates = sorted(deltas, key=lambda d: d['delta'], reverse=True)[:TASTE_GRID_DISPLAY_CAP]
-    underrates = sorted(deltas, key=lambda d: d['delta'])[:TASTE_GRID_DISPLAY_CAP]
+    overrates = sorted(deltas, key=lambda d: d['delta'], reverse=True)[:TASTE_GRID_EXPANDED_CAP]
+    underrates = sorted(deltas, key=lambda d: d['delta'])[:TASTE_GRID_EXPANDED_CAP]
 
     return {
         'rated_and_enriched_count': len(deltas),
@@ -2759,7 +2763,7 @@ def _rewatch_leaderboard(diary) -> dict:
         for name, count in director_counts.items() if count >= 2
     ]
     most_rewatched_directors.sort(key=lambda r: r['count'], reverse=True)
-    most_rewatched_directors = most_rewatched_directors[:FAVORITE_PEOPLE_GRID_CAP]
+    most_rewatched_directors = most_rewatched_directors[:FAVORITE_PEOPLE_EXPANDED_CAP]
 
     rewatch_qs = diary.filter(rewatch=True, rating__isnull=False)
     rewatch_avg = rewatch_qs.aggregate(avg=Avg('rating'))['avg'] if rewatch_qs.count() >= MIN_COUNT_FOR_AVERAGE else None

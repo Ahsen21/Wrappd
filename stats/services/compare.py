@@ -49,6 +49,9 @@ GRID_EXPANDED_CAP = GRID_DISPLAY_CAP * 2
 # (12) fits that narrower card the way GRID_DISPLAY_CAP's 2 rows of 6 fits a
 # full-width one.
 GRID_DISPLAY_CAP_NARROW = 12
+# Top unseen ("X loved it, Y hasn't seen it") ships up to this many behind a "View
+# more" button -- double the default, extra rows start hidden.
+GRID_EXPANDED_CAP_NARROW = GRID_DISPLAY_CAP_NARROW * 2
 # Favorite directors' "Shared" grid -- its own cap, not GRID_DISPLAY_CAP or
 # GRID_DISPLAY_CAP_NARROW, even though all three now share both the same
 # .favs--six shape and the same value: this is a headshot grid (people), not
@@ -1637,8 +1640,9 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         # heatmap, so this key is kept and still capped for its own test coverage.
         'same_day_exact_matches': same_day_exact_matches_all[:GRID_DISPLAY_CAP],
         'same_day_exact_matches_total': len(same_day_exact_matches_all),
-        'top_unseen_a': top_unseen_a_all[:GRID_DISPLAY_CAP_NARROW],
-        'top_unseen_b': top_unseen_b_all[:GRID_DISPLAY_CAP_NARROW],
+        'grid_display_cap_narrow': GRID_DISPLAY_CAP_NARROW,
+        'top_unseen_a': top_unseen_a_all[:GRID_EXPANDED_CAP_NARROW],
+        'top_unseen_b': top_unseen_b_all[:GRID_EXPANDED_CAP_NARROW],
         'avg_rating_a': curve_a['avg'],
         'avg_rating_b': curve_b['avg'],
         'chart_data': {

@@ -163,12 +163,12 @@
   </div>
 
   <div class="two-col">
-    <div class="card">
+    <div class="card" data-view-more>
       <h3>{{ session_a.display_name|default:"Person A" }} loved it, {{ session_b.display_name|default:"Person B" }} hasn't seen it</h3>
       {% if top_unseen_a %}
         <div class="favs favs--four">
           {% for film in top_unseen_a %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > grid_display_cap_narrow %} fav-card--extra{% endif %}">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             </div>
           {% endfor %}
@@ -176,13 +176,14 @@
       {% else %}
         <p class="empty-state">None yet</p>
       {% endif %}
+      <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
     </div>
-    <div class="card">
+    <div class="card" data-view-more>
       <h3>{{ session_b.display_name|default:"Person B" }} loved it, {{ session_a.display_name|default:"Person A" }} hasn't seen it</h3>
       {% if top_unseen_b %}
         <div class="favs favs--four">
           {% for film in top_unseen_b %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > grid_display_cap_narrow %} fav-card--extra{% endif %}">
               {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
             </div>
           {% endfor %}
@@ -190,6 +191,7 @@
       {% else %}
         <p class="empty-state">None yet</p>
       {% endif %}
+      <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
     </div>
   </div>
   </div>

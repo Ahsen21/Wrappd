@@ -763,19 +763,19 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(taste['underrates'][0]['title'], 'Beta')
         self.assertEqual(taste['underrates'][0]['delta'], Decimal('-2.0'))
 
-    def test_taste_capped_at_grid_display_cap(self):
-        # Biggest over-rates/under-rates render as a 2-rows-of-6 poster grid
-        # (TASTE_GRID_DISPLAY_CAP=12), not TOP_N's 10.
+    def test_taste_capped_at_the_expanded_cap(self):
+        # Biggest over-rates/under-rates render as a 2-rows-of-6 poster grid: 12 shown
+        # by default, up to TASTE_GRID_EXPANDED_CAP (24) behind "View more".
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(13):
+        for i in range(25):
             movie = Movie.objects.create(tmdb_id=3000 + i, title=f'Taste Film {i}', tmdb_rating=Decimal('5.0'))
             RatingEntry.objects.create(
                 import_session=session, letterboxd_uri=f'https://boxd.it/taste{i}', title=movie.title,
                 year=movie.release_year, rating=Decimal('5.0'), movie=movie,
             )
         taste = build_dashboard_context(session)['taste']
-        self.assertEqual(len(taste['overrates']), 12)
-        self.assertEqual(len(taste['underrates']), 12)
+        self.assertEqual(len(taste['overrates']), 24)
+        self.assertEqual(len(taste['underrates']), 24)
 
     def test_rating_by_genre(self):
         chart = build_dashboard_context(self.session)['chart_data']['rating_by_genre']
@@ -894,12 +894,12 @@ class DashboardNewStatsTests(TestCase):
         rewatch = build_dashboard_context(session)['rewatch']
         self.assertEqual(len(rewatch['most_rewatched_films']), 24)
 
-    def test_rewatch_leaderboard_directors_capped_at_favorite_people_grid_cap(self):
+    def test_rewatch_leaderboard_directors_capped_at_the_expanded_people_cap(self):
         # Most rewatched directors renders as the same 2-rows-of-6 clickable
-        # headshot grid as Favorite Directors (FAVORITE_PEOPLE_GRID_CAP=12),
-        # not most_rewatched_films' own 2-rows-of-8 poster grid.
+        # headshot grid as Favorite Directors: 12 shown by default, up to
+        # FAVORITE_PEOPLE_EXPANDED_CAP (24) behind "View more".
         session = ImportSession.objects.create(display_name='Alex')
-        for i in range(17):
+        for i in range(25):
             movie = _make_movie(2100 + i, f'Rewatch Dir Film {i}', 2020, 100, 'Drama', f'Rewatch Dir {i}')
             # 2 rewatch rows per director -- most_rewatched_directors requires at
             # least 2 before a director appears at all, so a single row each
@@ -910,7 +910,7 @@ class DashboardNewStatsTests(TestCase):
                     year=movie.release_year, watched_date=f'2024-01-0{j + 1}', movie=movie, rewatch=True,
                 )
         rewatch = build_dashboard_context(session)['rewatch']
-        self.assertEqual(len(rewatch['most_rewatched_directors']), 12)
+        self.assertEqual(len(rewatch['most_rewatched_directors']), 24)
 
     def test_most_rewatched_directors_only_counts_films_rewatched_within_this_scope(self):
         # A film first watched in an earlier year and rewatched only once within
@@ -6053,19 +6053,19 @@ class TopUnseenByOtherTests(TestCase):
         titles = [f['title'] for f in context['top_unseen_a']]
         self.assertEqual(titles, ['High Film', 'Upper Mid Film', 'Mid Film'])
 
-    def test_capped_at_grid_display_cap_narrow_but_total_stays_accurate(self):
-        # Renders as a 3-rows-of-4 poster grid (GRID_DISPLAY_CAP_NARROW=12), not the
-        # table-based TOP_N=10 lists elsewhere -- a hard cap on a fixed grid shape,
-        # not "top N by some ranking".
+    def test_capped_at_the_expanded_narrow_cap(self):
+        # Renders as a 3-rows-of-4 poster grid: 12 shown by default, up to
+        # GRID_EXPANDED_CAP_NARROW (24) behind "View more" -- a hard cap on a fixed
+        # grid shape, not "top N by some ranking".
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(13):
+        for i in range(25):
             RatingEntry.objects.create(
                 import_session=session_a, letterboxd_uri=f'https://boxd.it/five{i}', title=f'Five Star Film {i}',
                 year=2020, rating=Decimal('5.0'),
             )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['top_unseen_a']), 12)
+        self.assertEqual(len(context['top_unseen_a']), 24)
 
     def test_excludes_confirmed_tv(self):
         session_a = ImportSession.objects.create(display_name='Alex')
