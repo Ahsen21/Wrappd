@@ -22,6 +22,7 @@ from stats.services.dashboard import (
     MIN_COUNT_FOR_FAVORITE_ACTOR_YEAR,
     MIN_COUNT_FOR_FAVORITE_DIRECTOR,
     MIN_COUNT_FOR_FAVORITE_DIRECTOR_YEAR,
+    SAME_YEAR_RELEASES_EXPANDED_CAP,
     SAME_YEAR_RELEASES_GRID_CAP,
     _deduped_diary_films,
     _milestones,
@@ -556,7 +557,7 @@ class SameYearReleasesTests(TestCase):
         self.assertEqual(float(result['films'][0]['rating']), 3.0)
 
     def test_grid_sorted_highest_rated_first_and_capped(self):
-        for i in range(SAME_YEAR_RELEASES_GRID_CAP + 3):
+        for i in range(SAME_YEAR_RELEASES_EXPANDED_CAP + 3):
             movie = Movie.objects.create(tmdb_id=7100 + i, title=f'Film {i}', release_year=2024)
             # Descending ratings as i increases would make Film 0 the highest --
             # instead rate Film 0 lowest and the last one highest, so a bug that
@@ -565,8 +566,9 @@ class SameYearReleasesTests(TestCase):
             self._log(f'https://boxd.it/f{i}', f'Film {i}', movie, rating=1.0 + (i % 5) * 0.5)
         diary = DiaryEntry.objects.filter(import_session=self.session)
 
-        result = _same_year_releases(diary, 2024, films_watched_total=SAME_YEAR_RELEASES_GRID_CAP + 3, deduped_films=_deduped_diary_films(diary, self.session))
-        self.assertEqual(len(result['films']), SAME_YEAR_RELEASES_GRID_CAP)
+        result = _same_year_releases(diary, 2024, films_watched_total=SAME_YEAR_RELEASES_EXPANDED_CAP + 3, deduped_films=_deduped_diary_films(diary, self.session))
+        # 12 shown by default, up to SAME_YEAR_RELEASES_EXPANDED_CAP (24) behind "View more".
+        self.assertEqual(len(result['films']), SAME_YEAR_RELEASES_EXPANDED_CAP)
         ratings = [float(f['rating']) for f in result['films']]
         self.assertEqual(ratings, sorted(ratings, reverse=True))
 
@@ -2622,12 +2624,12 @@ class SharedPeopleTests(TestCase):
         context = build_compare_context(session_a, session_b)
         self.assertNotIn('Under-Qualified Actor', [row['name'] for row in context['shared_actors']])
 
-    def test_shared_directors_capped_at_shared_people_grid_cap(self):
-        # Renders as the .favs--six poster grid (SHARED_PEOPLE_GRID_CAP=12), not
-        # the table-based TOP_N=10.
+    def test_shared_directors_capped_at_the_expanded_cap(self):
+        # Renders as the .favs--six grid: 12 shown by default, up to
+        # SHARED_PEOPLE_EXPANDED_CAP (24) behind "View more".
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(17):
+        for i in range(25):
             movies = [
                 _make_movie(4000 + i * 10 + j, f'Cap Dir Film {i}-{j}', 2020, 100, 'Drama', f'Cap Director {i}')
                 for j in range(3)
@@ -2642,15 +2644,15 @@ class SharedPeopleTests(TestCase):
                     year=2020, rating=Decimal('5.0'), movie=movie,
                 )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['shared_directors']), 12)
+        self.assertEqual(len(context['shared_directors']), 24)
 
-    def test_shared_actors_capped_at_shared_people_grid_cap(self):
+    def test_shared_actors_capped_at_the_expanded_cap(self):
         # Same cap, actors' own path (non-cameo Credit-based, not the plain M2M
         # _director_averages uses) -- see _actor_averages for why they're separate
         # functions.
         session_a = ImportSession.objects.create(display_name='Alex')
         session_b = ImportSession.objects.create(display_name='Sam')
-        for i in range(17):
+        for i in range(25):
             actor = Person.objects.get_or_create(tmdb_id=5000 + i, defaults={'name': f'Cap Actor {i}'})[0]
             for j in range(4):
                 movie = _make_movie(5100 + i * 10 + j, f'Cap Actor Film {i}-{j}', 2020, 100, 'Drama')
@@ -2664,7 +2666,7 @@ class SharedPeopleTests(TestCase):
                     year=2020, rating=Decimal('5.0'), movie=movie,
                 )
         context = build_compare_context(session_a, session_b)
-        self.assertEqual(len(context['shared_actors']), 12)
+        self.assertEqual(len(context['shared_actors']), 24)
 
 
 class GenreAgreementTests(TestCase):

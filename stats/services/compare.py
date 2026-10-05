@@ -59,6 +59,9 @@ GRID_EXPANDED_CAP_NARROW = GRID_DISPLAY_CAP_NARROW * 2
 # cap independently without implying anything about the poster grids' caps
 # (or vice versa).
 SHARED_PEOPLE_GRID_CAP = 12
+# The "Shared" view's "View more" reveals up to this many -- double the default,
+# extra rows start hidden.
+SHARED_PEOPLE_EXPANDED_CAP = SHARED_PEOPLE_GRID_CAP * 2
 # Cap for the 'same_day_logs' context list -- no longer rendered directly (the
 # template shows the heatmap built from the uncapped same_day_logs_all instead),
 # but kept capped and covered by its own tests rather than removed outright, since
@@ -1501,8 +1504,8 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
     # Directors and actors both render as grids now (SHARED_PEOPLE_GRID_CAP/
     # GRID_DISPLAY_CAP_NARROW), same as this file's other poster grids -- not TOP_N,
     # which is the table view's own cap.
-    shared_directors = _shared_people(director_stats_a, director_stats_b, cap=SHARED_PEOPLE_GRID_CAP)
-    shared_actors = _shared_people(actor_stats_a, actor_stats_b, cap=SHARED_PEOPLE_GRID_CAP)
+    shared_directors = _shared_people(director_stats_a, director_stats_b, cap=SHARED_PEOPLE_EXPANDED_CAP)
+    shared_actors = _shared_people(actor_stats_a, actor_stats_b, cap=SHARED_PEOPLE_EXPANDED_CAP)
     top_directors_a = _top_people(director_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
     top_directors_b = _top_people(director_stats_b, cap=GRID_DISPLAY_CAP_NARROW)
     top_actors_a = _top_people(actor_stats_a, cap=GRID_DISPLAY_CAP_NARROW)
@@ -1602,6 +1605,7 @@ def build_compare_context(session_a, session_b, exclude_shorts=False) -> dict:
         'alignment_blurb': alignment_blurb,
         'avg_delta': avg_delta,
         'grid_display_cap': GRID_DISPLAY_CAP,
+        'shared_people_grid_cap': SHARED_PEOPLE_GRID_CAP,
         'biggest_disagreements': biggest_disagreements_all[:GRID_EXPANDED_CAP],
         'biggest_disagreements_total': len(biggest_disagreements_all),
         'same_rating': same_rating_expanded,

@@ -200,7 +200,7 @@
   <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Favorite People</span></h2>
   <p class="muted">A combined view of your favorite directors and actors.</p>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Favorite directors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
@@ -246,7 +246,7 @@
       {% if shared_directors %}
         <div class="favs favs--six favs--headshots">
           {% for row in shared_directors %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > shared_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="shared-person-trigger" data-tmdb-id="{{ row.tmdb_id }}" data-role="director">{{ row.name }}</button>
               <p class="a-color">{{ row.avg_a|floatformat:1 }} ★ ({{ row.count_a }} film{{ row.count_a|pluralize }})</p>
@@ -258,9 +258,10 @@
         <p class="empty-state">No shared favorites yet</p>
       {% endif %}
     </div>
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-view-more>
     <h3>Favorite actors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="split">Side by side</button>
@@ -306,7 +307,7 @@
       {% if shared_actors %}
         <div class="favs favs--six favs--headshots">
           {% for row in shared_actors %}
-            <div class="fav-card">
+            <div class="fav-card{% if forloop.counter > shared_people_grid_cap %} fav-card--extra{% endif %}">
               {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
               <button type="button" class="shared-person-trigger" data-tmdb-id="{{ row.tmdb_id }}" data-role="actor">{{ row.name }}</button>
               <p class="a-color">{{ row.avg_a|floatformat:1 }} ★ ({{ row.count_a }} film{{ row.count_a|pluralize }})</p>
@@ -318,6 +319,7 @@
         <p class="empty-state">No shared favorites yet</p>
       {% endif %}
     </div>
+    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
   </div>
   </div>
 
@@ -541,7 +543,8 @@
       const caption = card.querySelector('[data-view-more-caption]');
       function sync() {
         const expanded = card.classList.contains('is-expanded');
-        row.hidden = !card.querySelector('.fav-card--extra');
+        const panel = card.querySelector('[data-view-panel]:not([hidden])') || card;
+        row.hidden = !panel.querySelector('.fav-card--extra');
         btn.textContent = expanded ? 'View less' : 'View more';
         if (caption) {
           const loaded = card.querySelectorAll('.fav-card').length;
@@ -552,6 +555,9 @@
       btn.addEventListener('click', function () {
         card.classList.toggle('is-expanded');
         sync();
+      });
+      card.querySelectorAll('[data-toggle-group] .toggle-btn').forEach(function (b) {
+        b.addEventListener('click', function () { setTimeout(sync, 0); });
       });
       sync();
     });

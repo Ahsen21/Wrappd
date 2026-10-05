@@ -86,6 +86,8 @@ FAVORITE_PEOPLE_EXPANDED_CAP = FAVORITE_PEOPLE_GRID_CAP * 2
 # only) is its own constant rather than reusing that one, since they're
 # unrelated features that just happen to currently share a value.
 SAME_YEAR_RELEASES_GRID_CAP = 12
+# "View more" reveals up to this many -- double the default, extra rows start hidden.
+SAME_YEAR_RELEASES_EXPANDED_CAP = SAME_YEAR_RELEASES_GRID_CAP * 2
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
 # rather than asserting a fake average.
@@ -691,7 +693,7 @@ def _same_year_releases(diary, year, films_watched_total, deduped_films) -> dict
         for f in same_year_films if f['rating'] is not None
     ]
     films.sort(key=lambda f: f['rating'], reverse=True)
-    films = films[:SAME_YEAR_RELEASES_GRID_CAP]
+    films = films[:SAME_YEAR_RELEASES_EXPANDED_CAP]
 
     return {
         'count': count,
@@ -1019,6 +1021,7 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         'top_directors': top_directors,
         'favorite_people_grid_cap': FAVORITE_PEOPLE_GRID_CAP,
         'taste_grid_cap': TASTE_GRID_DISPLAY_CAP,
+        'same_year_releases_grid_cap': SAME_YEAR_RELEASES_GRID_CAP,
         'rewatch_grid_cap': REWATCH_GRID_DISPLAY_CAP,
         'recommendation_grid_cap': RECOMMENDATION_DISPLAY_CAP,
         'top_actors': top_actors,

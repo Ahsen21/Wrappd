@@ -159,12 +159,12 @@
       </div>
 
 
-      <div class="card">
+      <div class="card" data-view-more>
         <h3>Your favorite films of {{ year }} </h3>
         {% if same_year_releases.films %}
           <div class="favs favs--six">
             {% for film in same_year_releases.films %}
-              <div class="fav-card">
+              <div class="fav-card{% if forloop.counter > same_year_releases_grid_cap %} fav-card--extra{% endif %}">
                 {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
                 <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
               </div>
@@ -173,6 +173,7 @@
         {% else %}
           <p class="empty-state">None rated yet</p>
         {% endif %}
+        <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
       </div>
     {% else %}
       <div class="card">
