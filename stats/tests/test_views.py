@@ -42,6 +42,15 @@ class PersonFilmographyViewTests(TestCase):
         self.assertEqual(data['films'][0]['title'], 'Their Film')
         self.assertEqual(data['films'][0]['rating'], '4.5')
 
+    def test_rewatches_mode_returns_the_rewatched_films_with_counts(self):
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/rw', title='Their Film', year=2020,
+            watched_date='2025-01-01', movie=self.movie, rewatch=True,
+        )
+        data = json.loads(self.client.get(self._url(), {'role': 'director', 'mode': 'rewatches'}).content)
+        self.assertEqual([(f['title'], f['rewatch_count']) for f in data['films']], [('Their Film', 1)])
+        self.assertNotIn('rating', data['films'][0])
+
     def test_missing_role_returns_400(self):
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, 400)

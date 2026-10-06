@@ -98,13 +98,18 @@
           {% endif %}
         </div>
       </div>
-      <div class="stat"><div class="value">{{ total_runtime_hours|default:"0"|intcomma }}</div><div class="label">Hours watched</div></div>
-      <div class="stat"><div class="value">{{ total_films|intcomma }}</div><div class="label">Films logged</div></div>
-      <div class="stat"><div class="value">{{ films_rated|intcomma }}</div><div class="label">Films rated</div></div>
-      <div class="stat"><div class="value">{{ likes_count|intcomma }}</div><div class="label">Likes</div></div>
-      <div class="stat"><div class="value">{{ reviews_count|intcomma }}</div><div class="label">Reviews</div></div>
-      <div class="stat"><div class="value">{{ rewatch_count|intcomma }}</div><div class="label">Rewatches</div></div>
-      {% if not year %}
+      {% if year %}
+        {# Year view: one row of four (2x2 on mobile) -- the rest of the all-time tiles live in the cards below. #}
+        <div class="stat"><div class="value">{{ total_films|intcomma }}</div><div class="label">Diary entries</div></div>
+        <div class="stat"><div class="value">{{ likes_count|intcomma }}</div><div class="label">Likes</div></div>
+        <div class="stat"><div class="value">{{ total_runtime_hours|default:"0"|intcomma }}</div><div class="label">Hours watched</div></div>
+      {% else %}
+        <div class="stat"><div class="value">{{ total_runtime_hours|default:"0"|intcomma }}</div><div class="label">Hours watched</div></div>
+        <div class="stat"><div class="value">{{ total_films|intcomma }}</div><div class="label">Films logged</div></div>
+        <div class="stat"><div class="value">{{ films_rated|intcomma }}</div><div class="label">Films rated</div></div>
+        <div class="stat"><div class="value">{{ likes_count|intcomma }}</div><div class="label">Likes</div></div>
+        <div class="stat"><div class="value">{{ reviews_count|intcomma }}</div><div class="label">Reviews</div></div>
+        <div class="stat"><div class="value">{{ rewatch_count|intcomma }}</div><div class="label">Rewatches</div></div>
         <div class="stat"><div class="value">{{ watchlist_count|intcomma }}</div><div class="label">Watchlist</div></div>
       {% endif %}
     </div>
@@ -129,44 +134,35 @@
 
   <nav class="section-nav">
     {% if year %}
-      <a href="#same-year-releases" class="section-nav-link active" data-section="same-year-releases">{{ year }} Releases</a>
+      <a href="#your-year" class="section-nav-link active" data-section="your-year">Your {{ year }}</a>
     {% endif %}
-    <a href="#ratings" class="section-nav-link{% if not year %} active{% endif %}" data-section="ratings">Ratings</a>
+    {% if has_highlights %}
+      <a href="#highlights" class="section-nav-link active" data-section="highlights">Highlights</a>
+    {% endif %}
+    <a href="#ratings" class="section-nav-link{% if not year and not has_highlights %} active{% endif %}" data-section="ratings">Ratings</a>
     <a href="#what-you-watch" class="section-nav-link" data-section="what-you-watch">What You Watch</a>
     <a href="#favorite-people" class="section-nav-link" data-section="favorite-people">Favorite People</a>
     <a href="#watching-habits" class="section-nav-link" data-section="watching-habits">Watching Habits</a>
-    {% if not year %}
-      <a href="#rewatches" class="section-nav-link" data-section="rewatches">Rewatches</a>
-    {% endif %}
     {% if recommendations %}
       <a href="#watchlist" class="section-nav-link" data-section="watchlist">Watchlist</a>
     {% endif %}
   </nav>
 
   {% if year %}
-    <div class="jump-target" id="same-year-releases">
-    <h2 class="section-heading"><span class="section-heading-tick">{{ year }} Releases</span></h2>
-    <p class="muted">How caught up you were on {{ year }}'s new releases.</p>
+    <div class="jump-target" id="your-year">
+    <h2 class="section-heading"><span class="section-heading-tick">Your {{ year }}</span></h2>
+    <p class="muted">Your favorites, lists and how caught up you were on {{ year }}'s releases.</p>
 
     {% if same_year_releases.count %}
-      <div class="card">
-        <h3>Ratings</h3>
-        <p class="muted">
-          <strong>{{ same_year_releases.count }} films ({{ same_year_releases.pct }}%)</strong> of everything you watched
-          &mdash; average <strong>{% if same_year_releases.avg_rating %}{{ same_year_releases.avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong>
-        </p>
-        <canvas id="sameYearRatingDistributionChart"></canvas>
-      </div>
-
-
       <div class="card" data-view-more>
         <h3>Your favorite films of {{ year }} </h3>
         {% if same_year_releases.films %}
           <div class="favs favs--six">
             {% for film in same_year_releases.films %}
               <div class="fav-card{% if forloop.counter > same_year_releases_grid_cap %} fav-card--extra{% endif %}">
+                {% if same_year_releases.ranked %}<span class="rank-badge">#{{ film.rank }}</span>{% endif %}
                 {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-                <p class="muted">{{ film.rating|floatformat:1 }} ★</p>
+                {% if film.rating is not None %}<p class="muted">{{ film.rating|floatformat:1 }} ★</p>{% endif %}
               </div>
             {% endfor %}
           </div>
@@ -175,21 +171,68 @@
         {% endif %}
         <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
       </div>
+
+      <div class="card">
+        <h3>{{ year }} releases</h3>
+        <p class="muted">
+          <strong>{{ same_year_releases.count }} films ({{ same_year_releases.pct }}%)</strong> of everything you watched
+          &mdash; average <strong>{% if same_year_releases.avg_rating %}{{ same_year_releases.avg_rating|floatformat:2 }} ★{% else %}—{% endif %}</strong>
+        </p>
+        <canvas id="sameYearRatingDistributionChart"></canvas>
+      </div>
     {% else %}
       <div class="card">
         <p class="empty-state">No {{ year }} releases logged yet.</p>
       </div>
     {% endif %}
+
+    {% if year_lists %}
+      <div class="card" data-view-more>
+        <h3>Your {{ year }} lists</h3>
+        <p class="muted">Lists you picked for your {{ year }} year in review.</p>
+        <div class="year-lists">
+          {% for user_list in year_lists %}
+            <div class="year-list{% if forloop.counter > year_lists_grid_cap %} fav-card--extra{% endif %}">
+              <div class="year-list-head">
+                <span class="year-list-name">{{ user_list.name }}</span>
+                <span class="muted">{{ user_list.count }} film{{ user_list.count|pluralize }}</span>
+              </div>
+              <div class="year-list-strip">
+                {% for poster in user_list.posters %}
+                  {% if poster.poster_url %}<img src="{{ poster.poster_url }}" alt="{{ poster.title }}" title="{{ poster.title }} ({{ poster.year }})">{% else %}<div class="fav-placeholder" title="{{ poster.title }} ({{ poster.year }})">🎬</div>{% endif %}
+                {% endfor %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+        <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
+      </div>
+    {% endif %}
     </div>
   {% endif %}
 
-  <div class="jump-target" id="ratings">
-  <h2 class="section-heading"><span class="section-heading-tick">Ratings</span></h2>
-  <p class="muted">What you watch and how you rate it{% if year %} in {{ year }}{% endif %}.</p>
+  {% if has_highlights %}
+  <div class="jump-target" id="highlights">
+  <h2 class="section-heading"><span class="section-heading-tick">Highlights</span></h2>
+  <p class="muted">Your favorite films and standout stats.</p>
+
+  {% if all_time_favorites %}
+    <div class="card" data-view-more>
+      <h3>All-time favorites</h3>
+      <div class="favs favs--six">
+        {% for film in all_time_favorites %}
+          <div class="fav-card{% if forloop.counter > all_time_favorites_grid_cap %} fav-card--extra{% endif %}">
+            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
+    </div>
+  {% endif %}
 
   {% if insights.featured or insights.stats %}
     <div class="card">
-      <h3>Highlights</h3>
+      <h3>Insights</h3>
       <p class="muted">Some featured insights about your ratings.</p>
       {% if insights.featured %}
         <div class="ib-grid">
@@ -248,6 +291,12 @@
       {% endif %}
     </div>
   {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="jump-target" id="ratings">
+  <h2 class="section-heading{% if year or has_highlights %} section-heading--divider{% endif %}"><span class="section-heading-tick">Ratings</span></h2>
+  <p class="muted">How you rate what you watch{% if year %} in {{ year }}{% endif %}.</p>
 
   <div class="card">
     <h3>Rating distribution</h3>
@@ -358,6 +407,7 @@
     <h3>Directors</h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+      {% if not year %}<button type="button" class="toggle-btn" data-view="rewatched">Most rewatched</button>{% endif %}
       <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
       <button type="button" class="toggle-btn" data-view="true_score">True score</button>
     </div>
@@ -378,6 +428,24 @@
         <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
+    {% if not year %}
+    <div data-view-panel="rewatched" hidden>
+      {% if rewatch.most_rewatched_directors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in rewatch.most_rewatched_directors %}
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director" data-mode="rewatches">{{ row.movie__directors__name }}</button>
+              <p class="muted">{{ row.count }} rewatch{{ row.count|pluralize:"es" }}</p>
+              <p class="muted">({{ row.film_count }} film{{ row.film_count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No rewatches yet</p>
+      {% endif %}
+    </div>
+    {% endif %}
     <div data-view-panel="rated" hidden>
       {% if favorite_people.favorite_directors %}
         <div class="favs favs--six favs--headshots">
@@ -418,6 +486,7 @@
     <h3><span class="th-with-tip">Actors <span class="info-tip" tabindex="0">i<span class="tip-bubble">Cameo appearances are not counted here.</span></span></span></h3>
     <div class="toggle-group" data-toggle-group>
       <button type="button" class="toggle-btn active" data-view="watched">Most watched</button>
+      {% if not year %}<button type="button" class="toggle-btn" data-view="rewatched">Most rewatched</button>{% endif %}
       <button type="button" class="toggle-btn" data-view="rated">Highest rated</button>
       <button type="button" class="toggle-btn" data-view="true_score">True score</button>
     </div>
@@ -438,6 +507,24 @@
         <p class="empty-state">No data yet</p>
       {% endif %}
     </div>
+    {% if not year %}
+    <div data-view-panel="rewatched" hidden>
+      {% if rewatch.most_rewatched_actors %}
+        <div class="favs favs--six favs--headshots">
+          {% for row in rewatch.most_rewatched_actors %}
+            <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
+              {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.person__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
+              <button type="button" class="person-trigger" data-tmdb-id="{{ row.actor_tmdb_id }}" data-role="actor" data-mode="rewatches">{{ row.person__name }}</button>
+              <p class="muted">{{ row.count }} rewatch{{ row.count|pluralize:"es" }}</p>
+              <p class="muted">({{ row.film_count }} film{{ row.film_count|pluralize }})</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No rewatches yet</p>
+      {% endif %}
+    </div>
+    {% endif %}
     <div data-view-panel="rated" hidden>
       {% if favorite_people.favorite_actors %}
         <div class="favs favs--six favs--headshots">
@@ -483,6 +570,23 @@
       <h3>Films per year</h3>
       <canvas id="filmsPerYearChart"></canvas>
     </div>
+
+    <div class="card" data-view-more>
+      <h3>Most rewatched films</h3>
+      {% if rewatch.most_rewatched_films %}
+        <div class="favs favs--six">
+          {% for film in rewatch.most_rewatched_films %}
+            <div class="fav-card{% if forloop.counter > rewatch_grid_cap %} fav-card--extra{% endif %}">
+              {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
+              <p class="muted">{{ film.watch_count }}×</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty-state">No rewatches yet</p>
+      {% endif %}
+      <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
+    </div>
   {% elif milestones %}
     <div class="card">
       <h3>Milestones</h3>
@@ -501,11 +605,11 @@
 
   {% if year %}
     {% comment %}
-    Rewatches only gets its own section in all-time mode, where it has two
-    cards (Most rewatched films + Most rewatched directors, below). Year mode
-    drops the directors card (a director credited on one rewatched film
-    doesn't mean much on its own for a single year) and folds the sole
-    remaining card in here instead, renamed to match this section's general
+    All-time shows "Most rewatched films" here (right after Films per year; its
+    directors and actors live in the Directors/Actors cards' Most rewatched
+    toggle). Year mode drops the director/actor view (a person credited on one
+    rewatched film doesn't mean much on its own for a single year) and shows a
+    "Most watched films" card instead, renamed to match this section's general
     "how you watch" framing rather than a rewatch-specific one. Placed right
     after Milestones -- both are "which films stood out" cards, before Viewing
     calendar/Most used tags' "how you watch" ones.
@@ -590,47 +694,6 @@
     <div class="h-chart"><canvas id="tagsChart"></canvas></div>
   </div>
   </div>
-
-  {% if not year %}
-  <div class="jump-target" id="rewatches">
-  <h2 class="section-heading section-heading--divider"><span class="section-heading-tick">Rewatches</span></h2>
-  <p class="muted">Your most rewatched films and directors.</p>
-  <div class="card" data-view-more>
-    <h3>Most rewatched films</h3>
-    {% if rewatch.most_rewatched_films %}
-      <div class="favs favs--six">
-        {% for film in rewatch.most_rewatched_films %}
-          <div class="fav-card{% if forloop.counter > rewatch_grid_cap %} fav-card--extra{% endif %}">
-            {% if film.poster_url %}<img src="{{ film.poster_url }}" alt="{{ film.title }}" title="{{ film.title }} ({{ film.year }})">{% else %}<div class="fav-placeholder" title="{{ film.title }} ({{ film.year }})">🎬</div>{% endif %}
-            <p class="muted">{{ film.watch_count }}×</p>
-          </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No rewatches yet</p>
-    {% endif %}
-    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
-  </div>
-
-  <div class="card" data-view-more>
-    <h3>Most rewatched directors</h3>
-    {% if rewatch.most_rewatched_directors %}
-      <div class="favs favs--six favs--headshots">
-        {% for row in rewatch.most_rewatched_directors %}
-          <div class="fav-card{% if forloop.counter > favorite_people_grid_cap %} fav-card--extra{% endif %}">
-            {% if row.profile_url %}<img src="{{ row.profile_url }}" alt="{{ row.movie__directors__name }}">{% else %}<div class="fav-placeholder">🎬</div>{% endif %}
-            <button type="button" class="person-trigger" data-tmdb-id="{{ row.director_tmdb_id }}" data-role="director">{{ row.movie__directors__name }}</button>
-            <p class="muted">{{ row.count }}×</p>
-          </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <p class="empty-state">No data yet</p>
-    {% endif %}
-    <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
-  </div>
-  </div>
-  {% endif %}
 
   {% include 'stats/_person_drill_modal.html' with session_id=import_session.id year=year %}
 

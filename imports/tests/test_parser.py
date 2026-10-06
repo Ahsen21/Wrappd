@@ -3,11 +3,12 @@ from decimal import Decimal
 
 from django.test import TestCase
 
-from imports.models import ImportSession
+from imports.models import ImportSession, ListEntry, UserList
 from imports.services.parser import (
     ExportParseError,
     parse_diary_csv,
     parse_export,
+    parse_lists,
     parse_likes_films_csv,
     parse_ratings_csv,
     parse_reviews_csv,
@@ -154,3 +155,77 @@ class PersistParsedExportTests(TestCase):
         import_session.refresh_from_db()
 
         self.assertEqual(import_session.favorite_letterboxd_uris, ['https://boxd.it/existing'])
+
+
+LIST_CSV = """Letterboxd list export v7
+Date,Name,Tags,URL,Description
+2026-12-01,My 2026 Favorites,"top2026, Favorites",https://boxd.it/abcd,Best of the year
+
+Position,Name,Year,URL,Description
+2,Past Lives,2023,https://boxd.it/bbbb,
+1,Oppenheimer,2023,https://boxd.it/aaaa,
+3,No Year Film,,https://boxd.it/dddd,
+"""
+
+
+def _zip_with_lists(**files):
+    import io
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as zf:
+        for name, content in files.items():
+            zf.writestr(name.replace('__', '/').replace('_csv', '.csv'), content)
+    buffer.seek(0)
+    return buffer
+
+
+class ParseListsTests(TestCase):
+    def test_parses_name_lowercased_tags_and_films_in_position_order(self):
+        with zipfile.ZipFile(_zip_with_lists(lists__favs_csv=LIST_CSV)) as zf:
+            lists = parse_lists(zf)
+
+        self.assertEqual(len(lists), 1)
+        self.assertEqual(lists[0]['name'], 'My 2026 Favorites')
+        self.assertEqual(lists[0]['tags'], ['top2026', 'favorites'])
+        self.assertEqual([e['title'] for e in lists[0]['entries']], ['Oppenheimer', 'Past Lives', 'No Year Film'])
+        self.assertEqual(lists[0]['entries'][0]['year'], 2023)
+        self.assertIsNone(lists[0]['entries'][2]['year'])
+
+    def test_a_list_with_no_tags_has_an_empty_tag_list(self):
+        untagged = LIST_CSV.replace('"top2026, Favorites"', '')
+        with zipfile.ZipFile(_zip_with_lists(lists__plain_csv=untagged)) as zf:
+            self.assertEqual(parse_lists(zf)[0]['tags'], [])
+
+    def test_a_file_not_in_the_list_layout_is_skipped_not_fatal(self):
+        with zipfile.ZipFile(_zip_with_lists(lists__broken_csv='just,some,junk\n1,2,3\n', lists__favs_csv=LIST_CSV)) as zf:
+            lists = parse_lists(zf)
+
+        self.assertEqual([l['name'] for l in lists], ['My 2026 Favorites'])
+
+    def test_an_export_without_a_lists_folder_has_no_lists(self):
+        with zipfile.ZipFile(build_export_zip()) as zf:
+            self.assertEqual(parse_lists(zf), [])
+
+
+class PersistListsTests(TestCase):
+    def test_lists_and_their_films_are_saved_in_order(self):
+        import io
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(build_export_zip()) as source, zipfile.ZipFile(buffer, 'w') as target:
+            for name in source.namelist():
+                target.writestr(name, source.read(name))
+            target.writestr('lists/favs.csv', LIST_CSV)
+        buffer.seek(0)
+        with zipfile.ZipFile(buffer) as zf:
+            parsed = parse_export(zf)
+        session = ImportSession.objects.create()
+
+        persist_parsed_export(session, parsed)
+
+        saved = UserList.objects.get(import_session=session)
+        self.assertEqual(saved.tags, ['top2026', 'favorites'])
+        self.assertEqual(
+            list(ListEntry.objects.filter(user_list=saved).values_list('title', flat=True)),
+            ['Oppenheimer', 'Past Lives', 'No Year Film'],
+        )

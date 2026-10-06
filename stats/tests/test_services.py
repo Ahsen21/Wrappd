@@ -9,13 +9,17 @@ from imports.models import (
     DiaryEntry,
     ImportSession,
     LikedFilmEntry,
+    ListEntry,
     RatingEntry,
     ReviewEntry,
+    UserList,
     WatchedEntry,
     WatchlistEntry,
 )
 from stats.services.compare import build_compare_context
 from stats.services.dashboard import (
+    ALL_TIME_FAVORITES_EXPANDED_CAP,
+    YEAR_LISTS_EXPANDED_CAP,
     MILESTONE_STEP_SMALL,
     MILESTONE_TIER_2,
     MIN_COUNT_FOR_FAVORITE_ACTOR,
@@ -26,10 +30,12 @@ from stats.services.dashboard import (
     SAME_YEAR_RELEASES_GRID_CAP,
     _deduped_diary_films,
     _milestones,
+    _all_time_favorite_films,
     _same_year_releases,
+    _year_lists,
     build_dashboard_context,
 )
-from stats.services.person_filmography import build_person_filmography
+from stats.services.person_filmography import build_person_filmography, build_person_rewatches
 from tmdb.models import Country, Credit, Genre, Keyword, Movie, Person, TitleYearLookup
 
 
@@ -439,6 +445,104 @@ class MilestonesTests(TestCase):
         self.assertEqual(milestones[-1]['poster_url'], '')
 
 
+class ListCardsTests(TestCase):
+    """The year view's "Your {year} lists" and the all-time view's "All-time favorites",
+    both read from Letterboxd lists tagged yir<year> / topstats."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+        self._next_id = 9000
+
+    def _list(self, name, tags, *films):
+        user_list = UserList.objects.create(import_session=self.session, name=name, tags=tags)
+        for position, (title, year) in enumerate(films, start=1):
+            ListEntry.objects.create(user_list=user_list, position=position, title=title, year=year)
+        return user_list
+
+    def _resolved(self, title, year=2024):
+        self._next_id += 1
+        movie = Movie.objects.create(tmdb_id=self._next_id, title=title, release_year=year, poster_path='/p.jpg')
+        TitleYearLookup.objects.create(title=title, year=year, movie=movie)
+        return movie
+
+    def test_year_lists_covers_yir_lists_with_name_count_and_posters(self):
+        self._resolved('A')
+        self._resolved('B')
+        self._list('2024 First Watches', ['yir2024'], ('A', 2024), ('B', 2024), ('Never Matched', 2024))
+
+        (only,) = _year_lists(self.session, 2024)
+        self.assertEqual(only['name'], '2024 First Watches')
+        self.assertEqual(only['count'], 3)
+        self.assertEqual([p['title'] for p in only['posters']], ['A', 'B'])
+
+    def test_year_lists_leaves_out_the_top_year_list_even_if_also_tagged_yir(self):
+        self._resolved('A')
+        self._list('2024 Ranked', ['yir2024', 'top2024'], ('A', 2024))
+        self._list('Other', ['yir2024'], ('A', 2024))
+
+        self.assertEqual([l['name'] for l in _year_lists(self.session, 2024)], ['Other'])
+
+    def test_year_lists_ignores_other_years_untagged_and_empty_lists(self):
+        self._resolved('A')
+        self._list('Last year', ['yir2023'], ('A', 2024))
+        self._list('Untagged', [], ('A', 2024))
+        self._list('Empty', ['yir2024'])
+
+        self.assertEqual(_year_lists(self.session, 2024), [])
+
+    def test_year_list_poster_strip_is_capped(self):
+        for i in range(10):
+            self._resolved(f'Film {i}')
+        self._list('Big', ['yir2024'], *[(f'Film {i}', 2024) for i in range(10)])
+
+        (only,) = _year_lists(self.session, 2024)
+        self.assertEqual(len(only['posters']), 6)
+        self.assertEqual(only['count'], 10)
+
+    def test_year_lists_are_capped_at_the_expanded_cap(self):
+        self._resolved('A')
+        for i in range(YEAR_LISTS_EXPANDED_CAP + 2):
+            self._list(f'List {i:02d}', ['yir2024'], ('A', 2024))
+
+        self.assertEqual(len(_year_lists(self.session, 2024)), YEAR_LISTS_EXPANDED_CAP)
+
+    def test_all_time_favorites_uses_the_topstats_list_in_order(self):
+        self._resolved('First')
+        self._resolved('Second')
+        self._list('All Timers', ['topstats'], ('First', 2024), ('Never Matched', 2024), ('Second', 2024))
+
+        films = _all_time_favorite_films(self.session)
+        self.assertEqual([f['title'] for f in films], ['First', 'Second'])
+
+    def test_all_time_favorites_is_empty_without_a_topstats_list_and_capped_with_one(self):
+        self.assertEqual(_all_time_favorite_films(self.session), [])
+        for i in range(ALL_TIME_FAVORITES_EXPANDED_CAP + 3):
+            self._resolved(f'Film {i}')
+        self._list('All Timers', ['topstats'], *[(f'Film {i}', 2024) for i in range(ALL_TIME_FAVORITES_EXPANDED_CAP + 3)])
+
+        self.assertEqual(len(_all_time_favorite_films(self.session)), ALL_TIME_FAVORITES_EXPANDED_CAP)
+
+    def test_contexts_carry_each_card_only_in_its_own_view(self):
+        self._resolved('A')
+        self._list('All Timers', ['topstats'], ('A', 2024))
+        self._list('2024 First Watches', ['yir2024'], ('A', 2024))
+
+        all_time = build_dashboard_context(self.session)
+        self.assertEqual(len(all_time['all_time_favorites']), 1)
+        self.assertEqual(all_time['year_lists'], [])
+        year = build_dashboard_context(self.session, year=2024)
+        self.assertEqual(len(year['year_lists']), 1)
+        self.assertEqual(year['all_time_favorites'], [])
+
+    def test_has_highlights_is_true_with_a_topstats_list_and_false_with_nothing_to_show(self):
+        self.assertFalse(build_dashboard_context(self.session)['has_highlights'])
+        self._resolved('A')
+        self._list('All Timers', ['topstats'], ('A', 2024))
+
+        self.assertTrue(build_dashboard_context(self.session)['has_highlights'])
+        self.assertFalse(build_dashboard_context(self.session, year=2024)['has_highlights'])
+
+
 class SameYearReleasesTests(TestCase):
     """_same_year_releases (year view, its own top-of-page section) -- how caught
     up this person was on the selected year's own new releases: diary rows whose
@@ -464,6 +568,97 @@ class SameYearReleasesTests(TestCase):
         result = _same_year_releases(diary, 2024, films_watched_total=2, deduped_films=_deduped_diary_films(diary, self.session))
         self.assertEqual(result['count'], 1)
         self.assertEqual([f['title'] for f in result['films']], ['New Release'])
+
+    def _top_list(self, tag, *films):
+        user_list = UserList.objects.create(import_session=self.session, name='Favs', tags=[tag])
+        for position, (title, year) in enumerate(films, start=1):
+            ListEntry.objects.create(user_list=user_list, position=position, title=title, year=year)
+
+    def _resolved(self, tmdb_id, title, year=2024, poster='/p.jpg'):
+        movie = Movie.objects.create(tmdb_id=tmdb_id, title=title, release_year=year, poster_path=poster)
+        TitleYearLookup.objects.create(title=title, year=year, movie=movie)
+        return movie
+
+    def _result(self):
+        diary = DiaryEntry.objects.filter(import_session=self.session)
+        return _same_year_releases(
+            diary, 2024, films_watched_total=5, deduped_films=_deduped_diary_films(diary, self.session),
+            import_session=self.session,
+        )
+
+    def test_grid_uses_the_top_year_list_in_list_order_when_it_exists(self):
+        high = self._resolved(7101, 'Rated High')
+        low = self._resolved(7102, 'Rated Low')
+        self._log('https://boxd.it/h', 'Rated High', high, rating=5.0)
+        self._log('https://boxd.it/l', 'Rated Low', low, rating=2.0)
+        # The list deliberately puts the lower-rated film first.
+        self._top_list('top2024', ('Rated Low', 2024), ('Rated High', 2024))
+
+        self.assertEqual([f['title'] for f in self._result()['films']], ['Rated Low', 'Rated High'])
+
+    def test_list_films_carry_the_persons_rating_or_none_if_unrated(self):
+        rated = self._resolved(7101, 'Rated Film')
+        self._resolved(7102, 'Unrated Film')
+        self._log('https://boxd.it/r', 'Rated Film', rated, rating=4.5)
+        self._top_list('top2024', ('Rated Film', 2024), ('Unrated Film', 2024))
+
+        films = self._result()['films']
+        self.assertEqual([f['rating'] for f in films], [4.5, None])
+
+    def test_list_film_rated_but_not_logged_that_year_still_shows_its_rating(self):
+        # E.g. a 2024 favorite first watched in January 2025 -- rated in ratings.csv, but
+        # absent from 2024's own diary.
+        self._resolved(7101, 'Rated Elsewhere')
+        RatingEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/re', title='Rated Elsewhere', year=2024,
+            rating=Decimal('4.0'),
+        )
+        self._top_list('top2024', ('Rated Elsewhere', 2024))
+
+        self.assertEqual([f['rating'] for f in self._result()['films']], [4.0])
+
+    def test_list_films_that_never_matched_a_movie_are_skipped(self):
+        self._resolved(7101, 'Matched Film')
+        self._top_list('top2024', ('Never Matched', 2024), ('Matched Film', 2024))
+
+        self.assertEqual([f['title'] for f in self._result()['films']], ['Matched Film'])
+
+    def test_falls_back_to_highest_rated_releases_without_a_list_for_that_year(self):
+        movie = Movie.objects.create(tmdb_id=7103, title='Rated Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Rated Release', movie, rating=4.0)
+        self._resolved(7104, 'Other Year Pick', year=2023)
+        self._top_list('top2023', ('Other Year Pick', 2023))
+
+        self.assertEqual([f['title'] for f in self._result()['films']], ['Rated Release'])
+
+    def test_falls_back_when_none_of_the_lists_films_resolve(self):
+        movie = Movie.objects.create(tmdb_id=7103, title='Rated Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Rated Release', movie, rating=4.0)
+        self._top_list('top2024', ('Never Matched', 2024))
+
+        self.assertEqual([f['title'] for f in self._result()['films']], ['Rated Release'])
+
+    def test_list_grid_is_capped_at_the_expanded_cap(self):
+        for i in range(SAME_YEAR_RELEASES_EXPANDED_CAP + 3):
+            self._resolved(7200 + i, f'List Film {i}')
+        self._top_list('top2024', *[(f'List Film {i}', 2024) for i in range(SAME_YEAR_RELEASES_EXPANDED_CAP + 3)])
+
+        self.assertEqual(len(self._result()['films']), SAME_YEAR_RELEASES_EXPANDED_CAP)
+
+    def test_list_films_are_ranked_by_their_list_position(self):
+        self._resolved(7101, 'One')
+        self._resolved(7102, 'Two')
+        self._top_list('top2024', ('One', 2024), ('Never Matched', 2024), ('Two', 2024))
+
+        result = self._result()
+        self.assertTrue(result['ranked'])
+        self.assertEqual([f['rank'] for f in result['films']], [1, 3])
+
+    def test_fallback_grid_is_not_ranked(self):
+        movie = Movie.objects.create(tmdb_id=7103, title='Rated Release', release_year=2024)
+        self._log('https://boxd.it/a', 'Rated Release', movie, rating=4.0)
+
+        self.assertFalse(self._result()['ranked'])
 
     def test_count_and_pct_are_distinct_films_not_diary_rows(self):
         # Same "count every log" rule as every other rating-shaped year-view stat
@@ -867,6 +1062,7 @@ class DashboardNewStatsTests(TestCase):
         self.assertEqual(rewatch['most_rewatched_films'][0]['watch_count'], 3)
         self.assertEqual(rewatch['most_rewatched_directors'][0]['movie__directors__name'], 'Dir X')
         self.assertEqual(rewatch['most_rewatched_directors'][0]['count'], 2)
+        self.assertEqual(rewatch['most_rewatched_directors'][0]['film_count'], 1)
         self.assertEqual(
             rewatch['most_rewatched_directors'][0]['director_tmdb_id'], Person.objects.get(name='Dir X').tmdb_id
         )
@@ -935,9 +1131,9 @@ class DashboardNewStatsTests(TestCase):
         director_names = {row['movie__directors__name'] for row in year_rewatch['most_rewatched_directors']}
         self.assertNotIn('Dir Z', director_names)
 
-        # All-time, Delta genuinely has 2 watches -- Dir Z should still qualify
-        # there (paired with a 2nd rewatch, since most_rewatched_directors also
-        # requires at least 2 rewatches to appear at all).
+        # All-time, the rewatch flag alone counts -- Dir Z qualifies there (paired
+        # with a 2nd rewatch, since most_rewatched_directors also requires at least 2
+        # rewatches to appear at all).
         DiaryEntry.objects.create(
             import_session=self.session, letterboxd_uri='https://boxd.it/delta-2025', title='Delta', year=2010,
             watched_date='2025-01-01', rating=Decimal('4.0'), rewatch=True, movie=delta,
@@ -945,6 +1141,23 @@ class DashboardNewStatsTests(TestCase):
         all_time_rewatch = build_dashboard_context(self.session)['rewatch']
         director_names = {row['movie__directors__name'] for row in all_time_rewatch['most_rewatched_directors']}
         self.assertIn('Dir Z', director_names)
+
+    def test_all_time_directors_count_rewatch_flagged_films_logged_only_once(self):
+        # Seen before the diary began, so the diary holds just one (rewatch-flagged)
+        # row per film -- the flag alone is enough in the all-time view.
+        director_w, _ = Person.objects.get_or_create(tmdb_id=904, defaults={'name': 'Dir W'})
+        for i, title in enumerate(['Eps', 'Zeta']):
+            movie = Movie.objects.create(tmdb_id=310 + i, title=title, release_year=2000)
+            movie.directors.add(director_w)
+            DiaryEntry.objects.create(
+                import_session=self.session, letterboxd_uri=f'https://boxd.it/w{i}', title=title, year=2000,
+                watched_date='2026-03-01', rating=Decimal('4.0'), rewatch=True, movie=movie,
+            )
+
+        all_time = build_dashboard_context(self.session)['rewatch']['most_rewatched_directors']
+        self.assertEqual({r['movie__directors__name']: r['count'] for r in all_time}.get('Dir W'), 2)
+        year_view = build_dashboard_context(self.session, year=2026)['rewatch']['most_rewatched_directors']
+        self.assertNotIn('Dir W', {r['movie__directors__name'] for r in year_view})
 
     def test_viewing_calendar(self):
         calendar = build_dashboard_context(self.session)['calendar']
@@ -6261,6 +6474,97 @@ class PersonFilmographyTests(TestCase):
             )
         result = build_person_filmography(session, actor, 'actor', year=2025)
         self.assertEqual([f['title'] for f in result['films']], ['Year Lead Film'])
+
+
+class PersonRewatchesTests(TestCase):
+    """build_person_rewatches -- the modal behind a name on the Directors card's "Most rewatched" panel: the
+    films that make up that director's rewatch count."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+        self.director = Person.objects.create(tmdb_id=501, name='Director X')
+
+    def _film(self, tmdb_id, title, year=2010):
+        movie = Movie.objects.create(tmdb_id=tmdb_id, title=title, release_year=year)
+        movie.directors.add(self.director)
+        return movie
+
+    def _log(self, movie, date, rewatch, n=[0]):
+        n[0] += 1
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri=f'https://boxd.it/pr{n[0]}', title=movie.title,
+            year=movie.release_year, watched_date=date, rewatch=rewatch, movie=movie,
+        )
+
+    def test_lists_rewatch_flagged_films_with_their_rewatch_count_most_first(self):
+        once = self._film(1, 'Once')
+        thrice = self._film(2, 'Thrice')
+        self._log(once, '2026-01-01', True)  # first watch predates the diary: one flagged row
+        self._log(thrice, '2024-01-01', False)
+        self._log(thrice, '2025-01-01', True)
+        self._log(thrice, '2026-01-01', True)
+
+        result = build_person_rewatches(self.session, self.director)
+        self.assertEqual([(f['title'], f['rewatch_count']) for f in result['films']], [('Thrice', 2), ('Once', 1)])
+
+    def test_counts_add_up_to_the_cards_number_for_that_director(self):
+        for i, title in enumerate(['A', 'B', 'C']):
+            movie = self._film(10 + i, title)
+            self._log(movie, '2025-01-01', True)
+        self._log(Movie.objects.get(title='A'), '2026-01-01', True)
+
+        films = build_person_rewatches(self.session, self.director)['films']
+        card = build_dashboard_context(self.session)['rewatch']['most_rewatched_directors']
+        self.assertEqual(sum(f['rewatch_count'] for f in films), card[0]['count'])
+
+    def test_films_never_flagged_as_rewatches_and_other_directors_are_left_out(self):
+        watched_once = self._film(20, 'Watched Once')
+        self._log(watched_once, '2025-01-01', False)
+        other = _make_movie(21, 'Not Theirs', 2010, 100, 'Drama', 'Someone Else')
+        self._log(other, '2025-01-01', True)
+
+        self.assertEqual(build_person_rewatches(self.session, self.director)['films'], [])
+
+    def test_actor_rewatches_list_their_non_cameo_films_with_counts(self):
+        actor = Person.objects.create(tmdb_id=777, name='Actor A')
+        lead = Movie.objects.create(tmdb_id=40, title='Lead Film', release_year=2010)
+        _cast_movie(lead, actor, 0, 5)
+        # Billed last in a big cast: a cameo, so it isn't theirs for this purpose.
+        cameo = Movie.objects.create(tmdb_id=41, title='Cameo Film', release_year=2011)
+        _cast_movie(cameo, actor, 29, 30)
+        for movie in (lead, cameo):
+            self._log(movie, '2025-01-01', True)
+            self._log(movie, '2026-01-01', True)
+
+        result = build_person_rewatches(self.session, actor, 'actor')
+        self.assertEqual(result['role'], 'actor')
+        self.assertEqual([(f['title'], f['rewatch_count']) for f in result['films']], [('Lead Film', 2)])
+
+    def test_actor_leaderboard_counts_match_the_modal(self):
+        actor = Person.objects.create(tmdb_id=778, name='Actor B')
+        for i, title in enumerate(['One', 'Two']):
+            movie = Movie.objects.create(tmdb_id=50 + i, title=title, release_year=2010)
+            _cast_movie(movie, actor, 0, 4)
+            self._log(movie, '2025-01-01', True)
+
+        card = next(
+            r for r in build_dashboard_context(self.session)['rewatch']['most_rewatched_actors']
+            if r['person__name'] == 'Actor B'
+        )
+        self.assertEqual((card['count'], card['film_count']), (2, 2))
+        films = build_person_rewatches(self.session, actor, 'actor')['films']
+        self.assertEqual(sum(f['rewatch_count'] for f in films), card['count'])
+
+    def test_year_only_counts_films_logged_more_than_once_within_that_year(self):
+        single = self._film(30, 'Single In Year')
+        double = self._film(31, 'Double In Year')
+        self._log(single, '2025-03-01', True)
+        self._log(double, '2025-03-01', False)
+        self._log(double, '2025-06-01', True)
+        self._log(double, '2026-01-01', True)
+
+        films = build_person_rewatches(self.session, self.director, year=2025)['films']
+        self.assertEqual([(f['title'], f['rewatch_count']) for f in films], [('Double In Year', 1)])
 
 
 class InsightFilmsTests(TestCase):

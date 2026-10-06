@@ -9,7 +9,7 @@ from tmdb.models import Person
 from .services.compare import build_compare_context
 from .services.dashboard import build_dashboard_context
 from .services.insight_films import VALID_KINDS, build_insight_films
-from .services.person_filmography import build_person_filmography
+from .services.person_filmography import build_person_filmography, build_person_rewatches
 
 # build_dashboard_context is expensive (dozens of queries, real wall-clock cost on
 # Render's free-tier CPU), but a READY session's data never mutates in place, and
@@ -58,7 +58,7 @@ def _render_dashboard_shell(request, import_session):
     content_url = reverse('stats:dashboard_content', kwargs={'session_id': import_session.id})
     content_url += _dashboard_query_string(exclude_shorts, year)
     # year is threaded through so the skeleton can shape itself like the real page
-    # for this mode (7 vs. 8 stat tiles, "{{ year }} Releases" vs. "Ratings" as the
+    # for this mode (7 vs. 8 stat tiles, "Your {{ year }}" vs. "Ratings" as the
     # first section) without needing the actual data behind either one.
     return render(
         request, 'stats/dashboard.html', {'import_session': import_session, 'content_url': content_url, 'year': year}
@@ -115,6 +115,10 @@ def person_filmography(request, session_id, tmdb_id):
         year = int(year_param) if year_param else None
     except ValueError:
         year = None
+    # The Directors/Actors cards' "Most rewatched" panel asks for the films behind its own
+    # count instead of the person's whole filmography.
+    if request.GET.get('mode') == 'rewatches':
+        return JsonResponse(build_person_rewatches(import_session, person, role, year))
     return JsonResponse(build_person_filmography(import_session, person, role, year))
 
 

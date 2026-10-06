@@ -6,6 +6,8 @@ module is a same-page drill-down of dashboard.py's own tables, not an independen
 evolving page like compare.py, so it imports dashboard.py's helpers directly rather
 than re-implementing them a third time."""
 
+from collections import defaultdict
+
 from django.db.models import Max
 
 from imports.models import DiaryEntry, RatingEntry
@@ -110,5 +112,50 @@ def _build_person_filmography_year(import_session, person, role, year) -> dict:
         for f in person_films
     ]
     films.sort(key=lambda f: (f['rating'] is None, -float(f['rating'] or 0), f['title']))
+
+    return {'person_name': person.name, 'role': role, 'films': films}
+
+
+def build_person_rewatches(import_session, person, role='director', year=None) -> dict:
+    """The films behind a director's or actor's number on the Directors/Actors card's
+    "Most rewatched" panel: each film of theirs (non-cameo, for an actor) with at least
+    one rewatch-flagged diary row, with how many times it was rewatched (its flagged
+    rows), most rewatched first. The counts add up to the card's own number for them --
+    same rule as _rewatch_leaderboard: all-time, the rewatch flag alone counts; for a
+    year, only films logged more than once within that year do."""
+    diary = exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+    if role == 'director':
+        diary = diary.filter(movie__directors=person)
+    else:
+        movie_ids = set(Credit.objects.filter(person=person).values_list('movie_id', flat=True))
+        cameo_ids = _cameo_credit_ids(movie_ids)
+        diary = diary.filter(movie_id__in=set(
+            Credit.objects.filter(person=person, movie_id__in=movie_ids)
+            .exclude(id__in=cameo_ids).values_list('movie_id', flat=True)
+        ))
+    if year is not None:
+        diary = diary.filter(watched_date__year=year)
+
+    logs = defaultdict(int)
+    rewatches = defaultdict(int)
+    movies = {}
+    for entry in diary.select_related('movie'):
+        key = (entry.title, entry.year)
+        logs[key] += 1
+        movies[key] = entry.movie
+        if entry.rewatch:
+            rewatches[key] += 1
+
+    films = [
+        {
+            'title': movies[key].title,
+            'year': movies[key].release_year,
+            'poster_url': movies[key].poster_url,
+            'rewatch_count': count,
+        }
+        for key, count in rewatches.items()
+        if year is None or logs[key] > 1
+    ]
+    films.sort(key=lambda f: (-f['rewatch_count'], f['title']))
 
     return {'person_name': person.name, 'role': role, 'films': films}

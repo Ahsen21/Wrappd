@@ -14,7 +14,9 @@ from zipfile import ZipFile
 
 from django.db import transaction
 
-from imports.models import DiaryEntry, LikedFilmEntry, RatingEntry, ReviewEntry, WatchedEntry, WatchlistEntry
+from imports.models import (
+    DiaryEntry, LikedFilmEntry, ListEntry, RatingEntry, ReviewEntry, UserList, WatchedEntry, WatchlistEntry,
+)
 
 
 class ExportParseError(Exception):
@@ -31,6 +33,7 @@ class ParsedExport:
     liked_films: list = field(default_factory=list)
     watched: list = field(default_factory=list)
     reviews: list = field(default_factory=list)
+    lists: list = field(default_factory=list)
 
 
 def _require_columns(fieldnames, required, csv_name):
@@ -185,10 +188,71 @@ def _parse_profile(zf: ZipFile) -> tuple:
     return '', []
 
 
+def _parse_list_rows(rows):
+    """One lists/*.csv file as {'name', 'tags', 'url', 'entries': [...]}, or None if it
+    doesn't look like a list export. The layout is a metadata block (a 'Date,Name,
+    Tags,URL,Description' header and one row of values), a blank row, then a
+    'Position,Name,Year,URL,Description' header followed by one row per film. Found by
+    those header rows rather than fixed line numbers, so an extra preamble line doesn't
+    break it."""
+    meta_header = film_header = None
+    for index, row in enumerate(rows):
+        first = (row[0] if row else '').strip().lower()
+        if first == 'date' and meta_header is None:
+            meta_header = index
+        elif first == 'position' and meta_header is not None:
+            film_header = index
+            break
+    if meta_header is None or film_header is None or meta_header + 1 >= len(rows):
+        return None
+    meta = dict(zip((h.strip().lower() for h in rows[meta_header]), rows[meta_header + 1]))
+    columns = [h.strip().lower() for h in rows[film_header]]
+
+    entries = []
+    for row in rows[film_header + 1:]:
+        if not any(cell.strip() for cell in row):
+            continue
+        record = dict(zip(columns, row))
+        title = (record.get('name') or '').strip()
+        if not title:
+            continue
+        position_raw = (record.get('position') or '').strip()
+        entries.append({
+            'position': int(position_raw) if position_raw.isdigit() else len(entries) + 1,
+            'title': title,
+            'year': _parse_year(record.get('year')),
+            'letterboxd_uri': (record.get('url') or '').strip(),
+        })
+    entries.sort(key=lambda entry: entry['position'])
+    tags = [tag.strip().lower() for tag in (meta.get('tags') or '').split(',') if tag.strip()]
+    return {
+        'name': (meta.get('name') or '').strip(), 'tags': tags, 'url': (meta.get('url') or '').strip(),
+        'entries': entries,
+    }
+
+
+def parse_lists(zf: ZipFile) -> list:
+    """Every list in the export's lists/ folder. A file that can't be read or isn't in
+    the expected layout is skipped rather than failing the whole import -- lists are
+    only used for optional touches like the dashboard's hero image."""
+    lists = []
+    for name in sorted(zf.namelist()):
+        if not (name.startswith('lists/') and name.lower().endswith('.csv')):
+            continue
+        try:
+            rows = list(csv.reader(io.TextIOWrapper(zf.open(name), encoding='utf-8-sig', newline='')))
+        except (UnicodeDecodeError, csv.Error):
+            continue
+        parsed = _parse_list_rows(rows)
+        if parsed is not None:
+            lists.append(parsed)
+    return lists
+
+
 def parse_export(zf: ZipFile) -> ParsedExport:
     """
     Parse the subset of a Letterboxd export zip that v1 supports: diary, ratings,
-    watchlist, liked films, watched, reviews, and profile (display name + favorites).
+    watchlist, liked films, watched, reviews, lists, and profile (display name + favorites).
     Missing optional files (e.g. no watchlist) are treated as "no rows", not an error -- only
     a completely missing diary AND ratings file is a hard failure (checked earlier by
     validators.py).
@@ -209,6 +273,7 @@ def parse_export(zf: ZipFile) -> ParsedExport:
         parsed.watched = parse_watched_csv(zf)
     if 'reviews.csv' in names:
         parsed.reviews = parse_reviews_csv(zf)
+    parsed.lists = parse_lists(zf)
 
     return parsed
 
@@ -247,3 +312,11 @@ def persist_parsed_export(import_session, parsed: ParsedExport) -> None:
     ReviewEntry.objects.bulk_create([
         ReviewEntry(import_session=import_session, **row) for row in parsed.reviews
     ])
+    for parsed_list in parsed.lists:
+        user_list = UserList.objects.create(
+            import_session=import_session, name=parsed_list['name'], tags=parsed_list['tags'],
+            letterboxd_url=parsed_list['url'],
+        )
+        ListEntry.objects.bulk_create([
+            ListEntry(user_list=user_list, **entry) for entry in parsed_list['entries']
+        ])

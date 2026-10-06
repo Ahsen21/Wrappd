@@ -275,3 +275,36 @@ class ReviewEntry(models.Model):
 
     def __str__(self):
         return f'{self.title} ({self.year}) - review'
+
+
+class UserList(models.Model):
+    """One list from a Letterboxd export's lists/ folder. tags are stored lowercased --
+    Letterboxd gives a few of them special meaning: top[year] (that year's favorites),
+    topstats (all-time favorites) and yir[year] (lists shown in yearly stats)."""
+
+    import_session = models.ForeignKey(ImportSession, on_delete=models.CASCADE, related_name='lists')
+    name = models.CharField(max_length=300, blank=True)
+    tags = models.JSONField(default=list, blank=True)
+    letterboxd_url = models.URLField(max_length=500, blank=True)
+
+    def __str__(self):
+        return self.name or f'List {self.pk}'
+
+
+class ListEntry(models.Model):
+    """One film in a UserList, in the list's own order. Deliberately has no Movie
+    foreign key: films on a favorites list are ones the person has watched, so they're
+    already resolved via TitleYearLookup, and enrichment shouldn't spend TMDB calls on
+    every film of an arbitrarily long list."""
+
+    user_list = models.ForeignKey(UserList, on_delete=models.CASCADE, related_name='entries')
+    position = models.PositiveIntegerField()
+    title = models.CharField(max_length=500)
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
+    letterboxd_uri = models.URLField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ['position']
+
+    def __str__(self):
+        return f'{self.position}. {self.title} ({self.year})'
