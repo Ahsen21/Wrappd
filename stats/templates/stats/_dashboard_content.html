@@ -187,25 +187,27 @@
     {% endif %}
 
     {% if year_lists %}
-      <div class="card" data-view-more>
+      <div class="card">
         <h3>Your {{ year }} lists</h3>
-        <p class="muted">Lists you picked for your {{ year }} year in review.</p>
+        {% comment %} <p class="muted">Lists you made for {{ year }}.</p> {% endcomment %}
         <div class="year-lists">
           {% for user_list in year_lists %}
-            <div class="year-list{% if forloop.counter > year_lists_grid_cap %} fav-card--extra{% endif %}">
+            <div class="year-list" data-year-list>
               <div class="year-list-head">
                 <span class="year-list-name">{{ user_list.name }}</span>
                 <span class="muted">{{ user_list.count }} film{{ user_list.count|pluralize }}</span>
               </div>
-              <div class="year-list-strip">
+              <div class="year-list-grid">
                 {% for poster in user_list.posters %}
-                  {% if poster.poster_url %}<img src="{{ poster.poster_url }}" alt="{{ poster.title }}" title="{{ poster.title }} ({{ poster.year }})">{% else %}<div class="fav-placeholder" title="{{ poster.title }} ({{ poster.year }})">🎬</div>{% endif %}
+                  <div class="year-list-poster">
+                    {% if poster.poster_url %}<img src="{{ poster.poster_url }}" alt="{{ poster.title }}" title="{{ poster.title }} ({{ poster.year }})">{% else %}<div class="fav-placeholder" title="{{ poster.title }} ({{ poster.year }})">🎬</div>{% endif %}
+                  </div>
                 {% endfor %}
               </div>
+              <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
             </div>
           {% endfor %}
         </div>
-        <div class="view-more-row" hidden><button type="button" class="view-more-btn">View more</button></div>
       </div>
     {% endif %}
     </div>
@@ -799,6 +801,26 @@
       card.querySelectorAll('[data-toggle-group] .toggle-btn').forEach(function (b) {
         b.addEventListener('click', function () { setTimeout(sync, 0); });
       });
+      sync();
+    });
+
+    // "Your {year} lists": each list expands on its own. A row is 8 posters on desktop,
+    // 4 on a phone (see .year-list-grid), so whether there's anything to expand depends
+    // on the current width -- re-checked when the breakpoint flips.
+    document.querySelectorAll('[data-year-list]').forEach(function (list) {
+      const row = list.querySelector('.view-more-row');
+      const btn = row.querySelector('.view-more-btn');
+      const count = list.querySelectorAll('.year-list-poster').length;
+      const phone = window.matchMedia('(max-width: 700px)');
+      function sync() {
+        row.hidden = count <= (phone.matches ? 4 : 8);
+        btn.textContent = list.classList.contains('is-expanded') ? 'View less' : 'View more';
+      }
+      btn.addEventListener('click', function () {
+        list.classList.toggle('is-expanded');
+        sync();
+      });
+      phone.addEventListener('change', sync);
       sync();
     });
 

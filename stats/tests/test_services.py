@@ -19,7 +19,8 @@ from imports.models import (
 from stats.services.compare import build_compare_context
 from stats.services.dashboard import (
     ALL_TIME_FAVORITES_EXPANDED_CAP,
-    YEAR_LISTS_EXPANDED_CAP,
+    YEAR_LISTS_CAP,
+    YEAR_LIST_POSTER_CAP,
     MILESTONE_STEP_SMALL,
     MILESTONE_TIER_2,
     MIN_COUNT_FOR_FAVORITE_ACTOR,
@@ -490,21 +491,22 @@ class ListCardsTests(TestCase):
 
         self.assertEqual(_year_lists(self.session, 2024), [])
 
-    def test_year_list_poster_strip_is_capped(self):
-        for i in range(10):
+    def test_year_list_posters_are_capped_but_the_count_is_the_whole_list(self):
+        total = YEAR_LIST_POSTER_CAP + 5
+        for i in range(total):
             self._resolved(f'Film {i}')
-        self._list('Big', ['yir2024'], *[(f'Film {i}', 2024) for i in range(10)])
+        self._list('Big', ['yir2024'], *[(f'Film {i}', 2024) for i in range(total)])
 
         (only,) = _year_lists(self.session, 2024)
-        self.assertEqual(len(only['posters']), 6)
-        self.assertEqual(only['count'], 10)
+        self.assertEqual(len(only['posters']), YEAR_LIST_POSTER_CAP)
+        self.assertEqual(only['count'], total)
 
-    def test_year_lists_are_capped_at_the_expanded_cap(self):
+    def test_year_lists_are_capped(self):
         self._resolved('A')
-        for i in range(YEAR_LISTS_EXPANDED_CAP + 2):
+        for i in range(YEAR_LISTS_CAP + 2):
             self._list(f'List {i:02d}', ['yir2024'], ('A', 2024))
 
-        self.assertEqual(len(_year_lists(self.session, 2024)), YEAR_LISTS_EXPANDED_CAP)
+        self.assertEqual(len(_year_lists(self.session, 2024)), YEAR_LISTS_CAP)
 
     def test_all_time_favorites_uses_the_topstats_list_in_order(self):
         self._resolved('First')

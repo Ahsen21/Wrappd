@@ -88,11 +88,11 @@ FAVORITE_PEOPLE_EXPANDED_CAP = FAVORITE_PEOPLE_GRID_CAP * 2
 SAME_YEAR_RELEASES_GRID_CAP = 12
 # "View more" reveals up to this many -- double the default, extra rows start hidden.
 SAME_YEAR_RELEASES_EXPANDED_CAP = SAME_YEAR_RELEASES_GRID_CAP * 2
-# "Your {year} lists" tiles (one per yir<year> list) and each tile's poster strip, and
-# the all-time favorites grid (the topstats list).
-YEAR_LISTS_GRID_CAP = 4
-YEAR_LISTS_EXPANDED_CAP = YEAR_LISTS_GRID_CAP * 3
-YEAR_LIST_POSTER_STRIP = 6
+# "Your {year} lists": how many lists, and how many posters each ships with (the
+# template shows the first row and expands to the rest per list), and the all-time
+# favorites grid (the topstats list).
+YEAR_LISTS_CAP = 12
+YEAR_LIST_POSTER_CAP = 24
 ALL_TIME_FAVORITES_GRID_CAP = 12
 ALL_TIME_FAVORITES_EXPANDED_CAP = ALL_TIME_FAVORITES_GRID_CAP * 2
 # An "average" of a single data point isn't meaningful -- every average-producing stat
@@ -733,7 +733,7 @@ def _all_time_favorite_films(import_session) -> list:
 
 def _year_lists(import_session, year) -> list:
     """The lists tagged yir<year> (the ones Letterboxd shows in a year's stats), as a
-    name, film count and a strip of the first few posters each. A list also tagged
+    name, film count and the first posters of each. A list also tagged
     top<year> is left out: that one is already "Your favorite films of {year}"."""
     yir, top = f'yir{year}', f'top{year}'
     result = []
@@ -749,12 +749,12 @@ def _year_lists(import_session, year) -> list:
             if movie is not None:
                 posters.append({
                     'title': entry.title, 'year': entry.year,
-                    'poster_url': _tmdb_image_url(movie.poster_path, 'w185'),
+                    'poster_url': _tmdb_image_url(movie.poster_path, 'w342'),
                 })
-                if len(posters) == YEAR_LIST_POSTER_STRIP:
+                if len(posters) == YEAR_LIST_POSTER_CAP:
                     break
         result.append({'name': user_list.name, 'count': len(entries), 'posters': posters})
-        if len(result) == YEAR_LISTS_EXPANDED_CAP:
+        if len(result) == YEAR_LISTS_CAP:
             break
     return result
 
@@ -1135,7 +1135,6 @@ def build_dashboard_context(import_session, exclude_shorts=False, year=None) -> 
         'favorite_people_grid_cap': FAVORITE_PEOPLE_GRID_CAP,
         'taste_grid_cap': TASTE_GRID_DISPLAY_CAP,
         'same_year_releases_grid_cap': SAME_YEAR_RELEASES_GRID_CAP,
-        'year_lists_grid_cap': YEAR_LISTS_GRID_CAP,
         'all_time_favorites_grid_cap': ALL_TIME_FAVORITES_GRID_CAP,
         'rewatch_grid_cap': REWATCH_GRID_DISPLAY_CAP,
         'recommendation_grid_cap': RECOMMENDATION_DISPLAY_CAP,
