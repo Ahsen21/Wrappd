@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from imports.models import ImportSession, RatingEntry
+from imports.models import DiaryEntry, ImportSession, RatingEntry
 from tmdb.models import Movie, Person
 
 User = get_user_model()
@@ -108,7 +108,9 @@ class LandingRouterTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'hero-collage')
-        self.assertNotContains(response, 'stat-of-day')
+        # The card's own markup, not the bare class name -- the page's On this day script
+        # mentions that class as a string.
+        self.assertNotContains(response, '<div class="stat-of-day')
 
     def test_home_screen_shows_the_stat_of_the_day_card_when_one_qualifies(self):
         session = ImportSession.objects.create(status=ImportSession.Status.READY, display_name='Alex')
@@ -126,7 +128,7 @@ class LandingRouterTests(TestCase):
         response = self.client.get(reverse('core:landing'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'stat-of-day')
+        self.assertContains(response, '<div class="stat-of-day')
         self.assertContains(response, 'Favorite director')
         self.assertContains(response, 'Dir Home')
         self.assertContains(response, 'personModalBackdrop')
@@ -159,3 +161,45 @@ class NavProfileMenuTests(TestCase):
         # Log out lives on the Account page itself now, not a nav dropdown -- the
         # nav on an arbitrary page shouldn't be POSTing there directly anymore.
         self.assertNotContains(response, reverse('accounts:logout'))
+
+
+class OnThisDayViewTests(TestCase):
+    """core:on_this_day -- JSON behind the home screen's "On this day" card, scoped to
+    the requester's own ready session."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='alex', password='a-very-unguessable-pw1')
+        self.session = ImportSession.objects.create(owner=self.user, status=ImportSession.Status.READY)
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/otd', title='Remembered', year=2010,
+            watched_date='2025-10-13', rating=Decimal('4.0'),
+        )
+
+    def _get(self, **params):
+        return self.client.get(reverse('core:on_this_day'), params)
+
+    def test_returns_the_requesters_films_for_the_given_local_date(self):
+        self.client.force_login(self.user)
+
+        data = self._get(m=10, d=13, y=2026).json()
+
+        self.assertEqual([f['title'] for f in data['films']], ['Remembered'])
+        self.assertEqual(data['films'][0]['caption'], '1 year ago · 4.0 ★')
+
+    def test_empty_when_nothing_for_that_day(self):
+        self.client.force_login(self.user)
+
+        self.assertEqual(self._get(m=3, d=1, y=2026).json(), {'films': []})
+
+    def test_someone_without_an_upload_gets_an_empty_list_not_an_error(self):
+        other = User.objects.create_user(username='sam', password='a-very-unguessable-pw1')
+        self.client.force_login(other)
+
+        self.assertEqual(self._get(m=10, d=13, y=2026).json(), {'films': []})
+
+    def test_bad_or_out_of_range_dates_are_a_400(self):
+        self.client.force_login(self.user)
+
+        self.assertEqual(self._get(m='x', d=13, y=2026).status_code, 400)
+        self.assertEqual(self._get(m=13, d=1, y=2026).status_code, 400)
+        self.assertEqual(self.client.get(reverse('core:on_this_day')).status_code, 400)

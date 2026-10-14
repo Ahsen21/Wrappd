@@ -333,14 +333,6 @@ a { color: var(--accent-2); }
    same pattern as .compare-page's .hero override) rather than changing .hero
    itself, which the Director's Cut/Double Feature heroes still use as-is. */
 .landing-page .hero { padding: 4rem 2rem; }
-/* Single column again (greeting, stat-of-day, choices stacked top to bottom)
-   -- a two-column layout and a full-width stat-of-day card were both tried
-   and rejected; the actual fix was making the card itself substantial
-   (see .stat-of-day below), not finding something for it to match widths
-   with. .choices keeps a top margin unconditionally now that it's always
-   the block directly below the stat-of-day card, not a sibling column that
-   only needed spacing once flex-wrap stacked it. */
-.landing-page .hero .choices { margin-top: 1.5rem; }
 /* Home screen's stat-of-the-day card (see stats/services/dashboard.py's
    _stat_of_the_day) -- sized to its own content (inline-flex, not a block
    stretched to the hero's full width), with an accent tint/border so it
@@ -1072,9 +1064,7 @@ h1, h2, h3, h4 { font-weight: 700; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.choices { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 .choice-card {
-  flex: 1 1 260px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1985,4 +1975,33 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   .year-list-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; }
   .year-list:not(.is-expanded) .year-list-poster:nth-child(n+5) { display: none; }
   .year-list-poster:nth-child(n+13) { display: none; }
+}
+
+/* Home screen: one real 2x2 grid (see landing.html) -- row 1 is the stat-of-the-day card
+   and, when the person has anything for today's date, the "On this day" card (put into
+   its slot at runtime); row 2 is Director's Cut and Double Feature. Rows are pinned
+   explicitly so row 2 stays row 2 whether or not the On this day slot is filled, and a
+   lone stat card keeps the top-left cell. One column on a phone. */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+.home-grid > .stat-of-day { grid-row: 1; margin-top: 0; }
+.home-grid > .choice-card { grid-row: 2; }
+.home-otd-slot { grid-row: 1; display: flex; min-width: 0; }
+.home-otd-slot:empty { display: none; }
+.home-otd-slot > .stat-of-day { flex: 1 1 auto; margin-top: 0; }
+.on-this-day { animation: on-this-day-in 0.25s ease both; }
+@keyframes on-this-day-in { from { opacity: 0; } to { opacity: 1; } }
+/* More than one film that day: a stacked-card edge behind the poster hints at it. */
+.on-this-day-stack .stat-of-day-poster {
+  box-shadow: 6px 6px 0 -1px var(--border), 11px 11px 0 -2px var(--surface);
+  margin-right: 8px;
+}
+.on-this-day-more { margin: 0.35rem 0 0; font-size: 0.8rem; font-weight: 600; color: var(--accent); }
+@media (max-width: 700px) {
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-grid > .stat-of-day, .home-grid > .choice-card, .home-otd-slot { grid-row: auto; }
 }

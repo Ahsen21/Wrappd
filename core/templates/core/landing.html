@@ -8,6 +8,7 @@
       </div>
     {% endif %}
     <h1>Welcome to Wrappd, <span class="hero-name">{{ my_session.display_name }}</span>!</h1>
+    <div class="home-grid">
     {% if stat_of_day %}
       <div class="stat-of-day{% if stat_of_day.drill or stat_of_day.person %} stat-of-day--clickable{% endif %}"
         {% if stat_of_day.drill %}role="button" tabindex="0" data-drill-kind="{{ stat_of_day.drill.kind }}" data-drill-p1="{{ stat_of_day.drill.p1 }}" data-drill-p2="{{ stat_of_day.drill.p2 }}" data-drill-title="{{ stat_of_day.label }} · {{ stat_of_day.value }}"{% endif %}
@@ -40,7 +41,8 @@
         </div>
       </div>
     {% endif %}
-    <div class="choices">
+      {# Filled in by the script below when there's something on this day; stays empty (and hidden) otherwise. #}
+      <div class="home-otd-slot" id="homeOtdSlot" data-url="{% url 'core:on_this_day' %}"></div>
       <a class="choice-card" href="{{ my_session_url }}" data-warm-nav>
         <h3>Director's Cut</h3>
         <p>Take a deep dive into your movie watching history, with detailed insights and analytics.</p>
@@ -53,5 +55,74 @@
     </div>
   </div>
 </div>
-{% if stat_of_day %}{% include 'stats/_person_drill_modal.html' with session_id=my_session.id %}{% endif %}
+{% include 'stats/_person_drill_modal.html' with session_id=my_session.id %}
+<script>
+  // "On this day": what this person watched on today's date in earlier years. Asked
+  // with the browser's own local date (the server's is UTC), and simply not shown when
+  // there's nothing -- the stat-of-the-day card then stays exactly as it was.
+  (function () {
+    const holder = document.getElementById('homeOtdSlot');
+    if (!holder) return;
+    const now = new Date();
+    const url = holder.dataset.url + '?m=' + (now.getMonth() + 1) + '&d=' + now.getDate() + '&y=' + now.getFullYear();
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    fetch(url)
+      .then(function (resp) { return resp.ok ? resp.json() : { films: [] }; })
+      .then(function (data) {
+        const films = data.films || [];
+        if (!films.length) return;
+        const top = films[0];
+        const more = films.length - 1;
+
+        const card = el('div', 'stat-of-day on-this-day' + (more ? ' on-this-day-stack stat-of-day--clickable' : ''));
+        const media = el('div', 'stat-of-day-media');
+        const tooltip = top.title + (top.year ? ' (' + top.year + ')' : '');
+        if (top.poster_url) {
+          const img = el('img', 'stat-of-day-poster');
+          img.src = top.poster_url;
+          img.alt = top.title;
+          img.title = tooltip;
+          media.appendChild(img);
+        } else {
+          const ph = el('div', 'stat-of-day-poster stat-of-day-poster--ph', '🎬');
+          ph.title = tooltip;
+          media.appendChild(ph);
+        }
+
+        const text = el('div', 'stat-of-day-text');
+        const eyebrow = el('p', 'stat-of-day-eyebrow');
+        eyebrow.appendChild(el('span', null, '🗓'));
+        eyebrow.lastChild.setAttribute('aria-hidden', 'true');
+        eyebrow.appendChild(document.createTextNode(' On this day'));
+        text.appendChild(eyebrow);
+        text.appendChild(el('p', 'stat-of-day-label', top.title));
+        text.appendChild(el('p', 'stat-of-day-detail', top.caption));
+        if (more) text.appendChild(el('p', 'on-this-day-more', '+' + more + ' more watched on this day'));
+        card.appendChild(media);
+        card.appendChild(text);
+
+        if (more) {
+          const heading = 'On this day · ' + now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          card.setAttribute('role', 'button');
+          card.tabIndex = 0;
+          card.addEventListener('click', function () { window.showFilmList(heading, films); });
+          card.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              window.showFilmList(heading, films);
+            }
+          });
+        }
+        holder.appendChild(card);
+      })
+      .catch(function () { /* a missing card is the graceful failure */ });
+  })();
+</script>
 {% endblock %}

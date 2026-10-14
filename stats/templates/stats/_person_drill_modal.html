@@ -78,10 +78,13 @@ present in the DOM at parse time is picked up with no page-specific JS:
         const poster = film.poster_url
           ? '<img src="' + escapeHtml(film.poster_url) + '" alt="' + tooltip + '" title="' + tooltip + '">'
           : '<div class="fav-placeholder" title="' + tooltip + '">🎬</div>';
-        // Rewatch lists carry a rewatch_count; every other list shows the rating.
-        const captionText = film.rewatch_count != null
-          ? film.rewatch_count + (film.rewatch_count === 1 ? ' rewatch' : ' rewatches')
-          : (film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '');
+        // Rewatch lists carry a rewatch_count, "On this day" carries a ready-made
+        // caption; every other list shows the rating.
+        const captionText = film.caption
+          ? film.caption
+          : film.rewatch_count != null
+            ? film.rewatch_count + (film.rewatch_count === 1 ? ' rewatch' : ' rewatches')
+            : (film.rating ? parseFloat(film.rating).toFixed(1) + ' ★' : '');
         return '<div class="fav-card">' + poster + '<p class="muted">' + escapeHtml(captionText) + '</p></div>';
       }).join('');
       bodyEl.innerHTML = '<div class="modal-film-grid">' + cards + '</div>';
@@ -145,6 +148,16 @@ present in the DOM at parse time is picked up with no page-specific JS:
         }
       });
     });
+
+    // For pages that build their own film list at runtime (the home screen's "On
+    // this day" card) -- the delegated triggers above only see elements present at
+    // parse time.
+    window.showFilmList = function (title, films) {
+      lastTrigger = document.activeElement;
+      titleEl.textContent = title;
+      renderFilms({ films: films });
+      openModal();
+    };
 
     closeBtn.addEventListener('click', closeModal);
     backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });

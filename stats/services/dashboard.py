@@ -94,6 +94,8 @@ SAME_YEAR_RELEASES_EXPANDED_CAP = SAME_YEAR_RELEASES_GRID_CAP * 2
 YEAR_LISTS_CAP = 12
 YEAR_LIST_POSTER_CAP = 24
 ALL_TIME_FAVORITES_GRID_CAP = 12
+# Most films the home screen's "On this day" card hands to its modal.
+ON_THIS_DAY_CAP = 24
 ALL_TIME_FAVORITES_EXPANDED_CAP = ALL_TIME_FAVORITES_GRID_CAP * 2
 # An "average" of a single data point isn't meaningful -- every average-producing stat
 # in this file requires at least this many entries, or it's left out / shown as None
@@ -3359,6 +3361,47 @@ def _stat_of_the_day(import_session, diary, rated, avg_rating, watched_movies) -
         if label in by_label:
             return by_label[label]
     return {}
+
+
+def on_this_day(import_session, month, day, current_year) -> list:
+    """Films this person logged on this calendar day (month/day) in a year before
+    `current_year`, most recent year first, then highest rated -- the home screen's
+    "On this day" card features the first one and a modal lists the rest. The caller
+    passes the month/day/year of the *browser's* local today, not the server's: a
+    late-night watcher would otherwise see tomorrow's date, since the server runs in
+    UTC. Each film carries a ready-made caption ("2 years ago · 4.5 ★ · rewatch") in
+    the shape the shared film modal renders. [] when there's nothing -- the card
+    simply doesn't render then."""
+    entries = (
+        exclude_tv_shows(DiaryEntry.objects.filter(import_session=import_session))
+        .filter(watched_date__month=month, watched_date__day=day, watched_date__year__lt=current_year)
+        .select_related('movie')
+    )
+    seen = set()
+    films = []
+    for entry in entries:
+        # Logging the same film twice the same day (a duplicate import row) shouldn't
+        # show it twice.
+        key = (entry.title, entry.year, entry.watched_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        years_ago = current_year - entry.watched_date.year
+        parts = [f"{years_ago} year{'' if years_ago == 1 else 's'} ago"]
+        if entry.rating is not None:
+            parts.append(f'{float(entry.rating):.1f} ★')
+        if entry.rewatch:
+            parts.append('rewatch')
+        films.append({
+            'title': entry.title,
+            'year': entry.year,
+            'poster_url': entry.movie.poster_url if entry.movie else '',
+            'rating': str(entry.rating) if entry.rating is not None else None,
+            'years_ago': years_ago,
+            'caption': ' · '.join(parts),
+        })
+    films.sort(key=lambda f: (f['years_ago'], f['rating'] is None, -float(f['rating'] or 0), f['title']))
+    return films[:ON_THIS_DAY_CAP]
 
 
 def home_summary(import_session) -> dict:

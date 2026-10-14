@@ -32,6 +32,7 @@ from stats.services.dashboard import (
     _deduped_diary_films,
     _milestones,
     _all_time_favorite_films,
+    on_this_day,
     _same_year_releases,
     _year_lists,
     build_dashboard_context,
@@ -444,6 +445,71 @@ class MilestonesTests(TestCase):
         milestones = _milestones(DiaryEntry.objects.filter(import_session=self.session))
         self.assertIn('image.tmdb.org', milestones[0]['poster_url'])
         self.assertEqual(milestones[-1]['poster_url'], '')
+
+
+class OnThisDayTests(TestCase):
+    """on_this_day -- the home screen's "On this day" card: this calendar day's logs in
+    earlier years."""
+
+    def setUp(self):
+        self.session = ImportSession.objects.create(display_name='Alex')
+
+    def _log(self, title, date, rating=None, rewatch=False, movie=None):
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri=f'https://boxd.it/{title}{date}', title=title, year=2010,
+            watched_date=date, rating=Decimal(str(rating)) if rating is not None else None, rewatch=rewatch,
+            movie=movie,
+        )
+
+    def test_returns_only_earlier_years_logs_for_that_month_and_day(self):
+        self._log('Last Year', '2025-10-13')
+        self._log('Two Years', '2024-10-13')
+        self._log('Another Day', '2025-10-14')
+        self._log('This Year', '2026-10-13')
+
+        films = on_this_day(self.session, 10, 13, 2026)
+        self.assertEqual([f['title'] for f in films], ['Last Year', 'Two Years'])
+        self.assertEqual([f['years_ago'] for f in films], [1, 2])
+
+    def test_most_recent_year_first_then_highest_rated(self):
+        self._log('Old Favorite', '2023-10-13', rating=5.0)
+        self._log('Recent Low', '2025-10-13', rating=2.0)
+        self._log('Recent High', '2025-10-13', rating=4.5)
+        self._log('Recent Unrated', '2025-10-13')
+
+        titles = [f['title'] for f in on_this_day(self.session, 10, 13, 2026)]
+        self.assertEqual(titles, ['Recent High', 'Recent Low', 'Recent Unrated', 'Old Favorite'])
+
+    def test_caption_carries_years_ago_rating_and_rewatch(self):
+        self._log('Solo', '2025-10-13', rating=4.5, rewatch=True)
+        self._log('Older', '2023-10-13')
+
+        captions = {f['title']: f['caption'] for f in on_this_day(self.session, 10, 13, 2026)}
+        self.assertEqual(captions['Solo'], '1 year ago · 4.5 ★ · rewatch')
+        self.assertEqual(captions['Older'], '3 years ago')
+
+    def test_empty_when_nothing_was_watched_on_that_day(self):
+        self._log('Elsewhere', '2025-03-01')
+
+        self.assertEqual(on_this_day(self.session, 10, 13, 2026), [])
+
+    def test_the_same_film_logged_twice_on_one_day_appears_once(self):
+        self._log('Twice', '2025-10-13')
+        DiaryEntry.objects.create(
+            import_session=self.session, letterboxd_uri='https://boxd.it/other-uri', title='Twice', year=2010,
+            watched_date='2025-10-13',
+        )
+
+        self.assertEqual(len(on_this_day(self.session, 10, 13, 2026)), 1)
+
+    def test_other_sessions_logs_are_not_included(self):
+        other = ImportSession.objects.create(display_name='Sam')
+        DiaryEntry.objects.create(
+            import_session=other, letterboxd_uri='https://boxd.it/sam', title='Sams Film', year=2010,
+            watched_date='2025-10-13',
+        )
+
+        self.assertEqual(on_this_day(self.session, 10, 13, 2026), [])
 
 
 class ListCardsTests(TestCase):
